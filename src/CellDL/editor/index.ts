@@ -1196,9 +1196,18 @@ export class CellDLEditor {
                 }
                 currentObject.initialiseMove(element)  // will set moveable
                 this.currentObject = currentObject
+                // e.g. a reaction's equation
+                const hoverText = componentLibraryPlugin.hoverText(currentObject)
+                if (hoverText !== '') {
+                    this.showTooltip(hoverText)
+                } else {
+                    this.#hideTooltip()
+                }
                 if (this.#editorMode === EDITOR_MODE.Selecting) {
                     this.#setActiveEventObject(currentObject)
                 }
+            } else {
+                this.#hideTooltip()
             }
         }
     }
