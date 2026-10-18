@@ -36,7 +36,7 @@ import * as $rdf from '@celldl/rdf'
 
 //==============================================================================
 
-import { arrowMarkerDefinition } from '#root/utils/styling'
+import { arrowMarker } from '#root/utils/arrows'
 import type {
     IUiJsonDiscreteInput,
     IUiJsonDiscreteInputPossibleValue
@@ -1343,7 +1343,7 @@ export class BondgraphPlugin implements PluginInterface {
     }
 
     svgDefinitions(): string {
-        return arrowMarkerDefinition('connection-end-arrow-bondgraph', 'bondgraph')
+        return arrowMarker('connection-end-arrow-bondgraph', 'bondgraph')
     }
 
     //==========================================================================
