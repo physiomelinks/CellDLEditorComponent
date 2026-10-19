@@ -84,8 +84,8 @@ import {
     definitionToLibraryTemplate,
     svgImageData
 } from './definitions'
-import { type BondInfo, equationText, type NodeInfo, type SpeciesNode, type StepEquation, stepEquation } from './equations'
-import { type MathNode, mathmlLatex, sumText, whereText } from './lawtext'
+import { type BondInfo, equationLatex, equationText, type NodeInfo, type SpeciesNode, type StepEquation, stepEquation } from './equations'
+import { type MathNode, mathmlLatex, type SignedTerm, whereLatex, whereText } from './lawtext'
 import { ELEMENT_CLASSES, type NamingElement, variableNames } from './names'
 import { latexAsSvgString } from '#root/mathjax'
 import type {
@@ -779,6 +779,13 @@ export class BondgraphPlugin implements PluginInterface {
         const law = templateType ? this.#law(templateType) : null
         if (!law) return ''
         const id = celldlObject.uri.value
+        const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+        // an equation typeset as the law is, its text kept in data-text; the text itself if MathJax rejects it
+        const typeset = (latex: string, text: string) => {
+            let svg: string
+            try { svg = latexAsSvgString(latex) } catch { svg = escape(text) }
+            return `<div class="bg-law-line" data-text="${escape(text)}">${svg}</div>`
+        }
         const elements = this.namingElements()
         const element = elements.find(e => e.id === id)
         if (!element) return ''
@@ -793,9 +800,9 @@ export class BondgraphPlugin implements PluginInterface {
         }
         const domain = element.domain ? this.#physicalDomains.get(element.domain) : undefined
         const u = domain?.potential.name ?? 'u', v = domain?.flow.name ?? 'v'
-        const connected = new Map<string, string>()
+        const connected = new Map<string, SignedTerm[]>()
         if (element.elementClass === BGF.uri('Reaction').value) {
-            const side = (into: boolean) => sumText(bonds.flatMap(b => {
+            const side = (into: boolean) => bonds.flatMap((b): SignedTerm[] => {
                 const other = into ? (b.target === id ? b.source : undefined) : (b.source === id ? b.target : undefined)
                 if (other === undefined) return []
                 const ratio = nodes.get(other)?.transformRatio
@@ -804,28 +811,28 @@ export class BondgraphPlugin implements PluginInterface {
                     return capacitor ? [{ sign: 1, count: into ? ratio : 1 / ratio, name: portName(capacitor, 'potential') }] : []
                 }
                 return [{ sign: 1, count: b.count, name: portName(other, 'potential') }]
-            }))
+            })
             connected.set(`${u}_f`, side(true))
             connected.set(`${u}_r`, side(false))
         } else if (element.elementClass === BGF.uri('QuantityStore').value) {
-            connected.set(v, sumText(bonds.flatMap(b => b.target === id ? [{ sign: 1, count: b.count, name: portName(b.source, 'flow') }]
+            connected.set(v, bonds.flatMap((b): SignedTerm[] => b.target === id ? [{ sign: 1, count: b.count, name: portName(b.source, 'flow') }]
                                                       : b.source === id ? [{ sign: -1, count: b.count, name: portName(b.target, 'flow') }]
-                                                      : [])))
+                                                      : []))
         } else if (element.elementClass === BGF.uri('Resistance').value) {
-            connected.set(u, sumText(bonds.flatMap(b => b.target === id ? [{ sign: 1, count: 1, name: portName(b.source, 'potential') }]
+            connected.set(u, bonds.flatMap((b): SignedTerm[] => b.target === id ? [{ sign: 1, count: 1, name: portName(b.source, 'potential') }]
                                                       : b.source === id ? [{ sign: -1, count: 1, name: portName(b.target, 'potential') }]
-                                                      : [])))
+                                                      : []))
         }
-        const lines = whereText(element.variables.map(symbol => ({
+        const where = element.variables.map(symbol => ({
             symbol, name: names.get(`${id}|${symbol}`) ?? symbol, is: connected.get(symbol)
-        })))
+        }))
+        const whereLatexLines = whereLatex(where)
         const step = this.reactionEquations().find(eq => eq.id === id)
-        const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         return '<div class="bg-law">'
-            + (step ? `<div class="bg-law-equation">${escape(equationText(step))}</div>` : '')
+            + (step ? `<div class="bg-law-equation">${typeset(equationLatex(step), equationText(step))}</div>` : '')
             + (law.label ? `<div class="bg-law-label">${escape(law.label)}</div>` : '')
             + (law.svg ? `<div class="bg-law-math">${law.svg}</div>` : '')
-            + `<div class="bg-law-where">${lines.map(escape).join('<br>')}</div>`
+            + `<div class="bg-law-where">${whereText(where).map((text, k) => typeset(whereLatexLines[k]!, text)).join('')}</div>`
             + '</div>'
     }
 
