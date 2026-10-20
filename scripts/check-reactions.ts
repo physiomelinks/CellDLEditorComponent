@@ -10,7 +10,8 @@
 // a check fails.
 
 import { spawn } from 'node:child_process'
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 
 const [document, out] = process.argv.slice(2)
@@ -38,8 +39,11 @@ await new Promise<void>((resolve, reject) => {
     })
     vite.on('exit', code => reject(new Error(`Vite exited (${code})`)))
 })
+// a new profile each run: a reused one (or the user's own) serves stale modules, and the scenario then drives a
+// different editor instance from the app's
+const profile = mkdtempSync(join(tmpdir(), 'check-reactions-chrome-'))
 const browser = spawn(chrome, ['--headless=new', '--disable-gpu', '--no-sandbox', `--remote-debugging-port=${debugPort}`,
-                               '--window-size=1600,1000', 'about:blank'], { stdio: 'ignore' })
+                               `--user-data-dir=${profile}`, '--window-size=1600,1000', 'about:blank'], { stdio: 'ignore' })
 
 // The DevTools protocol, over the page's WebSocket
 async function pageSocket(): Promise<WebSocket> {
@@ -156,6 +160,21 @@ const scenario = (src: string) => `(async () => {
     const hovers = steps().filter(e => componentLibraryPlugin.hoverText(diagram.objectById(e.id.split('#').pop()))
                                        !== equationText(e))
     check('hover text is each reaction\\'s equation', hovers.length === 0, hovers.map(e => e.name))
+    // the panel is widened by dragging its left edge, and every panel takes the width
+    const openPanel = [...document.querySelectorAll('.panel')].find(p => !p.classList.contains('hidden'))
+    const resizer = openPanel?.querySelector('.panel-resizer')
+    if (resizer) {
+        const before = openPanel.getBoundingClientRect().width
+        const x = resizer.getBoundingClientRect().left + 4, y = 300
+        resizer.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, pointerId: 1, bubbles: true }))
+        resizer.dispatchEvent(new PointerEvent('pointermove', { clientX: x - 200, clientY: y, pointerId: 1, bubbles: true }))
+        resizer.dispatchEvent(new PointerEvent('pointerup', { clientX: x - 200, clientY: y, pointerId: 1, bubbles: true }))
+        await wait(200)
+        const after = openPanel.getBoundingClientRect().width
+        const others = [...document.querySelectorAll('.panel')].map(p => p.style.width)
+        check('dragging a panel\\'s left edge widens it, and every panel', Math.abs(after - before - 200) < 2
+              && others.every(w => w === others[0]), before + ' -> ' + after + 'px')
+    }
     return { checks, document: await diagram.serialise() }
 })()`
 
@@ -193,5 +212,7 @@ try {
 } finally {
     browser.kill()
     vite.kill()
+    await Bun.sleep(500)
+    rmSync(profile, { recursive: true, force: true })
 }
 process.exit(failed ? 1 : 0)
