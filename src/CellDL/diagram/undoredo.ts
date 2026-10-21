@@ -27,7 +27,7 @@ import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 
 import { Point, PointMath, type PointLike } from '#root/utils/points'
 
-import { SelectionSet } from './selectionset'
+import { type MoveGroup, SelectionSet } from './selectionset'
 import { StoredObject } from './storedobject'
 
 //==============================================================================
@@ -106,6 +106,8 @@ function setConnectionPathArray(connection: CellDLConnection, connectionPathArra
 //==============================================================================
 
 export class MoveUndoState extends UndoState {
+    // What was moved, as the selection may have changed by undo time
+    #group: MoveGroup | null
     #nextPathArrays: ConnectionPathArrayMap | null = null
     #nextPosition: Point | null = null
     #prevPathArrays: ConnectionPathArrayMap = new Map()
@@ -118,21 +120,29 @@ export class MoveUndoState extends UndoState {
     ) {
         super(UndoAction.MOVE, undoObject)
         this.selectionSet = selectionSet || null
+        this.#group = selectionSet?.moveGroup ?? null
         this.#prevPathArrays = this.#connectionPathArrays()
         this.#prevPosition = Point.fromPoint(position)
     }
 
+    // The connections whose paths a move changes
+    #movedConnections(): CellDLConnection[] {
+        const connections: Set<CellDLConnection> = new Set(this.#group?.connections)
+        for (const object of this.#group?.objects ?? [this.undoObject]) {
+            if (object.isConnectable) {
+                for (const connection of (<CellDLConnectedObject>object).connections) {
+                    connections.add(connection)
+                }
+            } else if (object.isConnection) {
+                connections.add(<CellDLConnection>object)
+            }
+        }
+        return [...connections]
+    }
+
     #connectionPathArrays(): ConnectionPathArrayMap {
         const connectionPathArrays: ConnectionPathArrayMap = new Map()
-        if (this.undoObject.isConnectable) {
-            const component = <CellDLConnectedObject>this.undoObject
-            for (const connection of component.connections) {
-                const pathElements = (connection.celldlSvgElement as SvgConnection)?.pathElements
-                const pathArrays = pathElements.map(pathElement => pathElement.pathArray)
-                connectionPathArrays.set(connection.id, pathArrays)
-            }
-        } else if (this.undoObject.isConnection) {
-            const connection = <CellDLConnection>this.undoObject
+        for (const connection of this.#movedConnections()) {
             const pathElements = (connection.celldlSvgElement as SvgConnection)?.pathElements
             const pathArrays = pathElements.map(pathElement => pathElement.pathArray)
             connectionPathArrays.set(connection.id, pathArrays)
@@ -158,8 +168,8 @@ export class MoveUndoState extends UndoState {
             if (position && startPosition && connectionPathArrays
              && !PointMath.equals(startPosition, position)) {
                 const movedObject = this.undoObject as CellDLObject
-                if (this.selectionSet) {
-                    this.selectionSet.reposition(movedObject, startPosition, position)
+                if (this.selectionSet && this.#group) {
+                    this.selectionSet.reposition(movedObject, startPosition, position, this.#group)
                 } else {
                     movedObject.reposition(startPosition, position)
                 }
@@ -169,13 +179,8 @@ export class MoveUndoState extends UndoState {
     }
 
     #restoreConnectionPaths(pathArrays: ConnectionPathArrayMap) {
-        if (this.undoObject.isConnectable) {
-            const component = <CellDLConnectedObject>this.undoObject
-            for (const connection of component.connections) {
-                setConnectionPathArray(connection, pathArrays)
-            }
-        } else if (this.undoObject.isConnection) {
-            setConnectionPathArray(<CellDLConnection>this.undoObject, pathArrays)
+        for (const connection of this.#movedConnections()) {
+            setConnectionPathArray(connection, pathArrays)
         }
     }
 }

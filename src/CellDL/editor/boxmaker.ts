@@ -48,6 +48,8 @@ export class BoxMaker {
     #editor: CellDLEditor
     #editorFrame: EditorFrame
     #movePoint: ControlPoint | null = null
+    #movedObject: CellDLObject | null = null
+    #movedObjectStart: Point | null = null
     #panStart: Point | null = null
     #panTopLeft: Point | null = null
     #selectedObjects: Map<string, CellDLObject> = new Map()
@@ -114,7 +116,7 @@ export class BoxMaker {
         }
     }
 
-    #updateSelectionRect(resized = true) {
+    #updateSelectionRect(resized = true, reselect = true) {
         if (resized) {
             this.#size = new Point(this.#bottomRight.x - this.#topLeft.x, this.#bottomRight.y - this.#topLeft.y)
         }
@@ -133,7 +135,41 @@ export class BoxMaker {
                 this.#doubleBoundary[1] = this.#createRect('selection-rect-inner', -offset)
             }
         }
-        this.#setSelectedObjects()
+        if (reselect) {
+            this.#setSelectedObjects()
+        }
+    }
+
+    /**
+     * Whether an event is on the drawn box itself, rather than on a resize handle.
+     */
+    isInterior(event: PointerEvent): boolean {
+        const element = event.target as SVGGraphicsElement
+        return !this.#drawing
+            && element === this.#selectionRect
+            && element.parentElement?.id === EDITOR_FRAME_ID
+    }
+
+    /**
+     * Start following a move of the selected objects, tracking `movedObject`.
+     */
+    startMove(movedObject: CellDLObject) {
+        this.#movedObject = movedObject
+        this.#movedObjectStart = Point.fromPoint(movedObject.celldlSvgElement?.centroid as Point)
+        this.#panTopLeft = Point.fromPoint(this.#topLeft.point)
+    }
+
+    /**
+     * Move the box by as much as the tracked object has moved, keeping its selection.
+     */
+    followMove() {
+        if (this.#movedObject && this.#movedObjectStart && this.#panTopLeft) {
+            const delta = Point.fromPoint(this.#movedObject.celldlSvgElement?.centroid as Point).subtract(this.#movedObjectStart)
+            this.#topLeft.point = this.#panTopLeft.add(delta)
+            this.#bottomRight.point = this.#topLeft.point.add(this.#size)
+            this.#updateSelectionRect(false, false)
+            this.#redrawControlHandles()
+        }
     }
 
     pointInside(point: DOMPoint): boolean {
