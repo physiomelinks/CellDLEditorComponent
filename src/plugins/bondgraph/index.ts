@@ -445,7 +445,9 @@ export class BondgraphPlugin implements PluginInterface {
             statements.push(`<${this.#currentDocumentUri}> bgf:hasBondElement ${r.get('uri')!.toString()} .`)
         })
 
-        // Find the JunctionStructures in the diagram
+        // Find the JunctionStructures in the diagram. Composite elements (e.g. a
+        // bgf:ZeroStorageNode) are both, but are listed only as BondElements, as
+        // in BG-RDF's own examples
 
         rdfStore.query(`${SPARQL_PREFIXES}
             PREFIX : <${this.#currentDocumentUri}#>
@@ -454,6 +456,10 @@ export class BondgraphPlugin implements PluginInterface {
             WHERE {
                 ?uri a ?type .
                 ?type rdfs:subClassOf* bgf:JunctionStructure
+                FILTER NOT EXISTS {
+                    ?type rdfs:subClassOf* ?composite .
+                    ?composite a bgf:CompositeElement
+                }
             }`, true)
         .forEach((r: Map<string, $rdf.Term>) => {
             statements.push(`<${this.#currentDocumentUri}> bgf:hasJunctionStructure ${r.get('uri')!.toString()} .`)
