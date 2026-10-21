@@ -22,6 +22,7 @@ import type { NormalArray } from 'svg-path-commander'
 
 import { type CellDLConnectedObject, type CellDLConnection, CellDLObject } from '#editor/celldlObjects'
 import type { CellDLDiagram } from '#editor/diagram'
+import { notifyChanges } from '#editor/editor'
 import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 
 import { Point, PointMath, type PointLike } from '#root/utils/points'
@@ -294,6 +295,7 @@ class UndoRedo {
             } else if (undoState.action === UndoAction.MOVE) {
                 (undoState as MoveUndoState).reposition('forwards')
             }
+            notifyChanges()
         }
     }
 
@@ -308,6 +310,7 @@ class UndoRedo {
             } else if (undoState.action === UndoAction.MOVE) {
                 (undoState as MoveUndoState).reposition('backwards')
             }
+            notifyChanges()
         }
     }
 }

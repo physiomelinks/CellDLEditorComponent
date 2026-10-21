@@ -269,10 +269,10 @@ export class CellDLDiagram {
         }
     }
 
-    #saveDiagramProperties() {
+    #saveDiagramProperties(touchModified: boolean = true) {
         if (!('created' in this.#diagramProperties)) {
             this.#diagramProperties.created = new Date(Date.now()).toISOString()
-        } else {
+        } else if (touchModified) {
             this.#diagramProperties.modified = new Date(Date.now()).toISOString()
         }
         for (const [key, property] of Object.entries(this.#diagramMetadata)) {
@@ -576,6 +576,19 @@ export class CellDLDiagram {
             return svgData
         }
         return ''
+    }
+
+    /**
+     * The diagram's metadata as Turtle, as `serialise()` embeds it in `<metadata>`,
+     * but without changing selection or the `modified` timestamp.
+     */
+    async rdf(): Promise<string> {
+        if (!this.#svgDiagram) {
+            return ''
+        }
+        componentLibraryPlugin.addPluginMetadataToStore(this.rdfStore)
+        this.#saveDiagramProperties(false)
+        return await this.#serialiseMetadata($rdf.TurtleContentType)
     }
 
     async #serialiseMetadata(metadataFormat: $rdf.ContentType): Promise<string> {
