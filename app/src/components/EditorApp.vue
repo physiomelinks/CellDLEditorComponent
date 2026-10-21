@@ -54,6 +54,7 @@
             CellDLEditor.grow(
                 :editorCommand="editorCommand"
                 :theme="editorTheme"
+                @diagramChanged="onDiagramChanged"
                 @editorData="onEditorData"
                 @error="onError"
             )
@@ -123,7 +124,7 @@ import * as vueCommon from '../utils/vueCommon'
 
 import CellDLEditor from '../../../src'
 
-import type { CellDLEditorCommand, EditorData, FileStatus, Theme, ViewState } from '../../../src'
+import type { CellDLEditorCommand, DiagramChange, EditorData, FileStatus, Theme, ViewState } from '../../../src'
 import { editorInitialised, EditorStatus } from '../../../src'
 import { DEFAULT_VIEW_STATE } from '../../../src'
 
@@ -312,6 +313,12 @@ vueusecore.useEventListener(document, 'file-edited', (_: Event) => {
         windowTitle.value += ' *'
     }
 })
+
+//==============================================================================
+
+function onDiagramChanged(change: DiagramChange) {
+    console.debug(`diagram-changed: revision ${change.revision}, ${change.rdf.length} bytes of RDF`)
+}
 
 //==============================================================================
 

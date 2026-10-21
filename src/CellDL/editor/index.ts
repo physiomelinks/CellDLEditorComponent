@@ -299,6 +299,11 @@ export class CellDLEditor {
         return this.#celldlDiagram
     }
 
+    /** Is an object or selection being dragged? */
+    get dragging(): boolean {
+        return this.moving
+    }
+
     get dirty() {
         return this.#dirty
     }
