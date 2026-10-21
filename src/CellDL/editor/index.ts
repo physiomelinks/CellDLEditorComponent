@@ -148,6 +148,7 @@ export class CellDLEditor {
     protected moving: boolean = false
     protected moved: boolean = false
     #moveSelection: boolean = false
+    #movingBoxContents: boolean = false
 
     #editorMode: EDITOR_MODE = DEFAULT_EDITOR_MODE
     #dirty: boolean = false
@@ -835,7 +836,9 @@ export class CellDLEditor {
             this.#celldlDiagram === null ||
             !this.#svgDiagram?.contains(element) ||
             // clickTolerance = 1px ? to set pointerMoved?
-            (this.pointerMoved && Date.now() - this.#pointerDownTime > MAX_POINTER_CLICK_TIME)
+            (this.pointerMoved && Date.now() - this.#pointerDownTime > MAX_POINTER_CLICK_TIME) ||
+            // Drawing, resizing or moving a selection box, however quickly, is not a click
+            (this.#boxMaker && this.#pointerDragged(event))
         ) {
             return
         }
@@ -1074,7 +1077,10 @@ export class CellDLEditor {
             this.moved = false
         } else if (this.#editorMode === EDITOR_MODE.Selecting) {
             if (this.#boxMaker) {
-                this.#boxMaker.pointerEvent(event, svgPoint)
+                // Dragging inside a selection box moves what it selects, or with shift, just the box
+                if (event.shiftKey || !this.#boxMaker.isInterior(event) || !this.#startBoxContentsMove(svgPoint)) {
+                    this.#boxMaker.pointerEvent(event, svgPoint)
+                }
             } else if (event.shiftKey) {
                 this.unsetSelectedObjects()
                 this.#boxMaker = new BoxMaker(this, svgPoint)
@@ -1102,6 +1108,22 @@ export class CellDLEditor {
         }
     }
 
+    #startBoxContentsMove(svgPoint: DOMPoint): boolean {
+        const movedObject = this.selectionSet.objects.find(object => object.isMoveable)
+        if (!movedObject) {
+            return false
+        }
+        this.#moveSelection = true
+        this.#movingBoxContents = true
+        this.#moveUndoState = undoRedo.setMoveUndoState(movedObject, svgPoint, this.selectionSet)
+        this.selectionSet.startMove(svgPoint, movedObject)
+        this.#boxMaker?.startMove(movedObject)
+        this.currentObject = movedObject
+        this.moving = true
+        this.moved = false
+        return true
+    }
+
     #pointerMoveEvent(event: PointerEvent) {
         if (this.#handlePointerEvents(event)) {
             return
@@ -1126,7 +1148,9 @@ export class CellDLEditor {
                 this.#celldlDiagram?.objectMoved(this.currentObject)
             }
             this.moved = true
-            if (this.#boxMaker) {
+            if (this.#movingBoxContents) {
+                this.#boxMaker?.followMove()
+            } else if (this.#boxMaker) {
                 this.#boxMaker.updateSelectedObjects()
             }
         } else if (this.#editorMode === EDITOR_MODE.Selecting
@@ -1172,6 +1196,10 @@ export class CellDLEditor {
                     undoRedo.resetActiveUndoState()
                     this.#moveUndoState.reposition('backwards')
                     this.#moveUndoState = null
+                }
+                if (this.#movingBoxContents) {
+                    this.#movingBoxContents = false
+                    this.currentObject = null
                 }
             } else if (this.#editorMode === EDITOR_MODE.Selecting
                     || this.#editorMode === EDITOR_MODE.DrawCompartment) {
@@ -1220,8 +1248,11 @@ export class CellDLEditor {
             && (isMacOs() && event.metaKey
             || !isMacOs() && event.ctrlKey)) {
             if (event.key === 'z' && !event.shiftKey) {
+                // A selection box would no longer surround what it selects
+                this.#closeBoxMaker()
                 undoRedo.undo(this.#celldlDiagram!)
             } else if (event.key === 'Z' || event.key === 'z' && event.shiftKey) {
+                this.#closeBoxMaker()
                 undoRedo.redo(this.#celldlDiagram!)
             }
         }
