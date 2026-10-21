@@ -113,8 +113,8 @@ function styleEvent(toolId: string, styling: Styling) {
 </style>
 
 <style>
-.p-toolbar.vertical,
-.p-toolbar.vertical > .p-toolbar-start {
+.celldl-editor .p-toolbar.vertical,
+.celldl-editor .p-toolbar.vertical > .p-toolbar-start {
     flex-direction: column !important;
     width: 38px !important;
     padding: 0 !important;
