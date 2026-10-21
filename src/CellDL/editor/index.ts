@@ -849,8 +849,11 @@ export class CellDLEditor {
         } else if (this.#editorMode === EDITOR_MODE.Selecting) {
             // Report unselections once the click's selection changes are complete
             this.#selectionClicking = true
-            this.#selectionClickEvent(event, element, clickedObject)
-            this.#selectionClicking = false
+            try {
+                this.#selectionClickEvent(event, element, clickedObject)
+            } finally {
+                this.#selectionClicking = false
+            }
             this.#emitUnselectEvents()
             if (clickedObject && this.selectionSet.has(clickedObject) && !this.#pointerDragged(event)) {
                 this.#selectedEventObjects.set(clickedObject.id, clickedObject)
@@ -1009,6 +1012,10 @@ export class CellDLEditor {
             if (this.#pathMaker === null) {
                 this.#unsetActiveObjects()
             }
+        }
+        // Leaving the editor straight from a component makes it inactive
+        if (!this.#container?.contains(event.relatedTarget as Node | null)) {
+            this.#setActiveEventObject(null)
         }
     }
 
