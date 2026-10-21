@@ -135,6 +135,15 @@ export type EditorData = {
     kind?: string
 }
 
+/**
+ * The diagram's RDF (Turtle) after an edit that changed it. `revision`
+ * increases with each change, so a host can drop stale conversions.
+ */
+export type DiagramChange = {
+    revision: number
+    rdf: string
+}
+
 //==============================================================================
 //==============================================================================
 
@@ -184,6 +193,7 @@ const celldlEditor: CellDLEditor = new CellDLEditor()
 const props = defineProps<CellDLEditorProps>()
 
 const emit = defineEmits<{
+    'diagram-changed': [change: DiagramChange],
     'editor-data': [data: EditorData],
     'editor-state': [state: {
         error: string
@@ -218,6 +228,74 @@ vue.watch(
         celldlEditor.setAnnotations(props.annotations, props.options)
     }
 )
+
+//==============================================================================
+
+// Report the diagram's RDF after each edit that changes it, without touching
+// selection (unlike `serialise()`). Bursts of edits are coalesced, and nothing
+// is read while dragging, since geometry is not part of the RDF.
+
+let rdfRevision = 0
+let lastRdf: string|undefined
+let rdfQueued = false
+let rdfReading = false
+let rdfReadAgain = false
+let rdfReadCount = 0
+let rdfAfterDrag = false
+
+function diagramEdited() {
+    if (rdfReading) {
+        rdfReadAgain = true
+    } else if (!rdfQueued) {
+        rdfQueued = true
+        queueMicrotask(reportDiagramChange)
+    }
+}
+
+async function reportDiagramChange() {
+    rdfQueued = false
+    const diagram = celldlDiagram
+    if (!diagram) {
+        return
+    }
+    if (celldlEditor.dragging) {
+        // Read once the drag ends, unless ending it reports an edit itself
+        if (!rdfAfterDrag) {
+            rdfAfterDrag = true
+            const readCount = rdfReadCount
+            document.addEventListener('pointerup', () => {
+                rdfAfterDrag = false
+                if (rdfReadCount === readCount) {
+                    diagramEdited()
+                }
+            }, { once: true })
+        }
+        return
+    }
+    rdfReadCount += 1
+    rdfReading = true
+    try {
+        const rdf = await diagram.rdf()
+        if (diagram === celldlDiagram && rdf !== lastRdf) {
+            lastRdf = rdf
+            rdfRevision += 1
+            emit('diagram-changed', { revision: rdfRevision, rdf })
+        }
+    } finally {
+        rdfReading = false
+    }
+    if (rdfReadAgain) {
+        rdfReadAgain = false
+        diagramEdited()
+    }
+}
+
+async function setRdfBaseline() {
+    lastRdf = await celldlDiagram?.rdf()
+}
+
+vue.onMounted(() => document.addEventListener('file-edited', diagramEdited))
+vue.onUnmounted(() => document.removeEventListener('file-edited', diagramEdited))
 
 //==============================================================================
 
@@ -336,12 +414,14 @@ vue.watch(
                 resetToolBars()
                 celldlDiagram = new CellDLDiagram('', '', celldlEditor)
                 await celldlEditor.editDiagram(celldlDiagram)
+                await setRdfBaseline()
             } else if (options.action === 'open') {
                 resetToolBars()
                 if (options.data !== undefined) {
                     try {
                         celldlDiagram = new CellDLDiagram(options?.name || '', options.data, celldlEditor)
                         await celldlEditor.editDiagram(celldlDiagram)
+                        await setRdfBaseline()
                     } catch(err) {
                         emit('editor-state', {
                             error: `Cannot open ${options?.name} -- invalid CellDL file?\n\n${err}`
@@ -354,6 +434,12 @@ vue.watch(
                     data: celldl,
                     kind: options.kind
                 } as EditorData)
+            } else if (options.action === 'rdf') {
+                // The current RDF (Turtle), without changing selection
+                emit('editor-data', {
+                    data: await celldlDiagram?.rdf() ?? '',
+                    kind: options.kind ?? 'rdf'
+                })
             }
         } else if (props.editorCommand?.command === 'edit') {
             const command = props.editorCommand as EditorEditCommand
@@ -388,6 +474,7 @@ vue.onMounted(async () => {
             // Create a new diagram in the editor's window
             celldlDiagram = new CellDLDiagram('', '', celldlEditor)
             await celldlDiagram.edit()
+            await setRdfBaseline()
 
 //            testEditor(celldlEditor)
         })
