@@ -34,7 +34,7 @@ import { type MoveUndoState, undoRedo } from '#editor/diagram/undoredo'
 import { round } from '#editor/utils'
 
 import { isMacOs } from '#root/utils/common'
-import { PANEL_ID } from '#root/utils/editor-types'
+import { type Annotations, PANEL_ID, type SvgViewerOptions, type ViewerEvent } from '#root/utils/editor-types'
 import { type Point, type PointLike, PointMath } from '#root/utils/points'
 import type { StringProperties } from '#root/utils/types'
 import { componentLibraryPlugin } from '#root/plugins'
@@ -73,6 +73,7 @@ WIP ****/
 //==============================================================================
 
 const MAX_POINTER_CLICK_TIME = 200 // milliseconds
+const MAX_POINTER_CLICK_DISTANCE = 4 // pixels
 
 //==============================================================================
 
@@ -125,6 +126,7 @@ export function getElementId(element: SVGGraphicsElement): string {
 
 const SVG_PANEL_ID = 'svg-panel'
 type PointerEventHandler = (eventType: string, svgElement: SVGGraphicsElement, svgCoords: PointLike) => boolean
+export type ViewerEventHandler = (event: ViewerEvent) => void
 
 
 export class CellDLEditor {
@@ -174,6 +176,7 @@ export class CellDLEditor {
     #boxMaking: boolean = false
 
     #pointerDownTime: number = 0
+    #pointerDownPosn: PointLike = { x: 0, y: 0 }
     #pointerEventHandlers: Map<string, PointerEventHandler> = new Map()
 
     #openPanel: ObjectPropertiesPanel | undefined = undefined
@@ -199,6 +202,15 @@ export class CellDLEditor {
     #tooltip: vue.Ref|undefined
     #tooltipElement: HTMLElement|undefined
     #tooltipStyle: string = ''
+
+    // Viewer compatible annotations and events
+    #annotations: Annotations = {}
+    #tooltipField: string | undefined = undefined
+    #annotationTooltip: boolean = false
+    #viewerEventHandler: ViewerEventHandler | null = null
+    #activeEventObject: CellDLObject | null = null
+    #selectedEventObjects: Map<string, CellDLObject> = new Map()
+    #selectionClicking: boolean = false
 
     constructor() {
         CellDLEditor.instance = this
@@ -267,6 +279,7 @@ export class CellDLEditor {
         }
         // Handle context menu events
         this.#container.addEventListener('contextmenu', (event) => {
+            this.#hideAnnotationTooltip()
             const element = event.target as SVGGraphicsElement
             const clickedObject = this.#celldlDiagram!.objectById(getElementId(element))
             if (clickedObject && clickedObject === this.currentObject) {
@@ -333,6 +346,60 @@ export class CellDLEditor {
         }
     }
 
+    setAnnotations(annotations: Annotations | undefined, options: SvgViewerOptions | undefined) {
+        this.#annotations = annotations || {}
+        this.#tooltipField = options?.tooltip
+    }
+
+    setViewerEventHandler(handler: ViewerEventHandler | null) {
+        this.#viewerEventHandler = handler
+    }
+
+    #emitViewerEvent(type: ViewerEvent['type'], object: CellDLObject | null = null) {
+        if (this.#viewerEventHandler) {
+            const event: ViewerEvent = { type }
+            if (object) {
+                event.component = { id: object.id }
+                if (Object.hasOwn(this.#annotations, object.id)) {
+                    event.component.annotation = this.#annotations[object.id]
+                }
+            }
+            this.#viewerEventHandler(event)
+        }
+    }
+
+    #setActiveEventObject(object: CellDLObject | null) {
+        if (object === this.#activeEventObject) {
+            return
+        }
+        if (this.#activeEventObject) {
+            this.#activeEventObject = null
+            this.#hideAnnotationTooltip()
+            this.#emitViewerEvent('unactive')
+        }
+        if (object) {
+            this.#activeEventObject = object
+            this.#showAnnotationTooltip(object)
+            this.#emitViewerEvent('active', object)
+        }
+    }
+
+    // Called by the selection set whenever the selection changes
+    selectionChanged() {
+        if (!this.#selectionClicking) {
+            this.#emitUnselectEvents()
+        }
+    }
+
+    #emitUnselectEvents() {
+        for (const object of [...this.#selectedEventObjects.values()]) {
+            if (!this.selectionSet.has(object)) {
+                this.#selectedEventObjects.delete(object.id)
+                this.#emitViewerEvent('unselect', object)
+            }
+        }
+    }
+
     async editDiagram(celldlDiagram: CellDLDiagram) {
         if (this.#celldlDiagram !== null) {
             this.closeDiagram()
@@ -370,6 +437,9 @@ export class CellDLEditor {
         this.currentObject = null
         this.pointerMoved = false
         this.#activeObjects.clear()
+        this.#activeEventObject = null
+        this.#selectedEventObjects.clear()
+        this.#hideAnnotationTooltip()
         this.selectionSet.clear()
     }
 
@@ -517,6 +587,7 @@ export class CellDLEditor {
     }
 
     showTooltip(msg: string, style: string = '') {
+        this.#annotationTooltip = false
         if (msg === '') {
             this.#hideTooltip()
         } else if (this.#tooltip) {
@@ -533,6 +604,26 @@ export class CellDLEditor {
                     this.#tooltipStyle = tooltipStyle
                 }
             }
+        }
+    }
+
+    #showAnnotationTooltip(object: CellDLObject) {
+        const annotation = Object.hasOwn(this.#annotations, object.id) ? this.#annotations[object.id] : undefined
+        if (this.#tooltipField === undefined || !annotation || !Object.hasOwn(annotation, this.#tooltipField)) {
+            return
+        }
+        // Don't replace an error tooltip that is being shown
+        if (this.#tooltipStyle === 'tooltip-error' && this.#tooltip?.value.state.isVisible) {
+            return
+        }
+        this.showTooltip(String(annotation[this.#tooltipField]), 'info')
+        this.#annotationTooltip = true
+    }
+
+    #hideAnnotationTooltip() {
+        if (this.#annotationTooltip) {
+            this.#annotationTooltip = false
+            this.#hideTooltip()
         }
     }
 
@@ -568,6 +659,7 @@ export class CellDLEditor {
         }
         this.#activeObjects.clear()
         this.currentObject = null
+        this.#setActiveEventObject(null)
     }
 
     // Used by selection box and diagram undo/redo code
@@ -755,8 +847,26 @@ export class CellDLEditor {
                 }
             }
         } else if (this.#editorMode === EDITOR_MODE.Selecting) {
-            this.#selectionClickEvent(event, element, clickedObject)
+            // Report unselections once the click's selection changes are complete
+            this.#selectionClicking = true
+            try {
+                this.#selectionClickEvent(event, element, clickedObject)
+            } finally {
+                this.#selectionClicking = false
+            }
+            this.#emitUnselectEvents()
+            if (clickedObject && this.selectionSet.has(clickedObject) && !this.#pointerDragged(event)) {
+                this.#selectedEventObjects.set(clickedObject.id, clickedObject)
+                this.#emitViewerEvent('select', clickedObject)
+            }
         }
+    }
+
+    #pointerDragged(event: MouseEvent): boolean {
+        return (
+            Math.abs(event.clientX - this.#pointerDownPosn.x) > MAX_POINTER_CLICK_DISTANCE ||
+            Math.abs(event.clientY - this.#pointerDownPosn.y) > MAX_POINTER_CLICK_DISTANCE
+        )
     }
 
     #selectionClickEvent(event: MouseEvent, _element: SVGGraphicsElement, clickedObject: CellDLObject|null) {
@@ -880,6 +990,9 @@ export class CellDLEditor {
                 }
                 currentObject.initialiseMove(element)  // will set moveable
                 this.currentObject = currentObject
+                if (this.#editorMode === EDITOR_MODE.Selecting) {
+                    this.#setActiveEventObject(currentObject)
+                }
             }
         }
     }
@@ -900,9 +1013,15 @@ export class CellDLEditor {
                 this.#unsetActiveObjects()
             }
         }
+        // Leaving the editor straight from a component makes it inactive
+        if (!this.#container?.contains(event.relatedTarget as Node | null)) {
+            this.#setActiveEventObject(null)
+        }
     }
 
     #pointerDownEvent(event: PointerEvent) {
+        this.#pointerDownPosn = { x: event.clientX, y: event.clientY }
+        this.#hideAnnotationTooltip()
         if (this.#handlePointerEvents(event)) {
             return
         }

@@ -133,6 +133,7 @@ export class SelectionSet {
         } else {
             this.#editor.setPropertiesPanelObject(undefined)
         }
+        this.#editor.selectionChanged()
     }
 
     //==========================================================================
