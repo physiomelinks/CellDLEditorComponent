@@ -242,6 +242,7 @@ let rdfReading = false
 let rdfReadAgain = false
 let rdfReadCount = 0
 let rdfAfterDrag = false
+let rdfDragReadCount = 0
 
 function diagramEdited() {
     if (rdfReading) {
@@ -252,6 +253,25 @@ function diagramEdited() {
     }
 }
 
+function watchDragEnd(watch: boolean) {
+    rdfAfterDrag = watch
+    for (const event of ['pointerup', 'pointercancel']) {
+        if (watch) {
+            document.addEventListener(event, dragEnded)
+        } else {
+            document.removeEventListener(event, dragEnded)
+        }
+    }
+}
+
+function dragEnded() {
+    watchDragEnd(false)
+    // Read now, unless ending the drag has reported an edit itself
+    if (rdfReadCount === rdfDragReadCount) {
+        diagramEdited()
+    }
+}
+
 async function reportDiagramChange() {
     rdfQueued = false
     const diagram = celldlDiagram
@@ -259,16 +279,9 @@ async function reportDiagramChange() {
         return
     }
     if (celldlEditor.dragging) {
-        // Read once the drag ends, unless ending it reports an edit itself
         if (!rdfAfterDrag) {
-            rdfAfterDrag = true
-            const readCount = rdfReadCount
-            document.addEventListener('pointerup', () => {
-                rdfAfterDrag = false
-                if (rdfReadCount === readCount) {
-                    diagramEdited()
-                }
-            }, { once: true })
+            rdfDragReadCount = rdfReadCount
+            watchDragEnd(true)
         }
         return
     }
@@ -281,6 +294,8 @@ async function reportDiagramChange() {
             rdfRevision += 1
             emit('diagram-changed', { revision: rdfRevision, rdf })
         }
+    } catch (err) {
+        console.error('Cannot read the diagram\'s RDF:', err)
     } finally {
         rdfReading = false
     }
@@ -295,7 +310,10 @@ async function setRdfBaseline() {
 }
 
 vue.onMounted(() => document.addEventListener('file-edited', diagramEdited))
-vue.onUnmounted(() => document.removeEventListener('file-edited', diagramEdited))
+vue.onUnmounted(() => {
+    document.removeEventListener('file-edited', diagramEdited)
+    watchDragEnd(false)
+})
 
 //==============================================================================
 
