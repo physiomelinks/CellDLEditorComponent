@@ -1058,7 +1058,10 @@ export class CellDLDiagram {
 
     undoInsert(undoState: UndoState) {
         for (const storedObject of undoState.storedObjects.values()) {
-            this.#removeObject(storedObject.celldlObject)
+            // Removing a component also removes its connections, which are stored too
+            if (this.#objects.has(storedObject.celldlObject.id)) {
+                this.#removeObject(storedObject.celldlObject)
+            }
         }
     }
 
