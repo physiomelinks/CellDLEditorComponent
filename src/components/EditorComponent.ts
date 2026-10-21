@@ -1,7 +1,8 @@
 //==============================================================================
 
-import { initialise as initialiseRdf } from '@celldl/rdf'
 import { defineAsyncComponent } from 'vue'
+
+import { initialiseRdf } from '#root/utils'
 
 // Initialise the RDF store backend before the editor is imported
 
