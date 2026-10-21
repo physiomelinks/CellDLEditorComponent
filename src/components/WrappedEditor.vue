@@ -45,7 +45,13 @@ import { DEFAULT_EDITOR_TOOL_ID, EDITOR_TOOL_IDS } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
 import { undoRedo } from '#editor/diagram/undoredo'
 
-import { type EditorToolButton, PANEL_ID } from '#root/utils/editor-types'
+import {
+    type Annotations,
+    type EditorToolButton,
+    PANEL_ID,
+    type SvgViewerOptions,
+    type ViewerEvent
+} from '#root/utils/editor-types'
 
 import { componentLibraryPlugin } from '#root/plugins'
 
@@ -119,7 +125,9 @@ export type CellDLEditorCommand = EditorEditCommand
 //==============================================================================
 
 export interface CellDLEditorProps {
+    annotations?: Annotations
     editorCommand?: CellDLEditorCommand
+    options?: SvgViewerOptions
     theme?: Theme
 }
 export type EditorData = {
@@ -179,7 +187,8 @@ const emit = defineEmits<{
     'editor-data': [data: EditorData],
     'editor-state': [state: {
         error: string
-    }]
+    }],
+    'event': [detail: ViewerEvent]
 }>()
 
 //==============================================================================
@@ -190,6 +199,23 @@ vue.watch(
     () => props.theme,
     () => {
         vueCommon.useTheme().setTheme(props.theme)
+    }
+)
+
+//==============================================================================
+
+// Annotate diagram components and report pointer events, as `@celldl/viewer` does
+
+celldlEditor.setViewerEventHandler((event: ViewerEvent) => {
+    emit('event', event)
+})
+
+celldlEditor.setAnnotations(props.annotations, props.options)
+
+vue.watch(
+    () => [props.annotations, props.options],
+    () => {
+        celldlEditor.setAnnotations(props.annotations, props.options)
     }
 )
 

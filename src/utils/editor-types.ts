@@ -145,4 +145,26 @@ export type ViewState = {
 }
 
 //==============================================================================
+
+// Component annotations and events, the same as `@celldl/viewer`'s
+
+export type AnnotationValue = string | number | boolean | object
+export type Annotation = Record<string, AnnotationValue>
+
+// Annotations keyed by the id of a diagram's component
+export type Annotations = Record<string, Annotation>
+
+export type SvgViewerOptions = {
+    tooltip?: string // The annotation field to show as a component's tooltip
+}
+
+export type ViewerEvent = {
+    type: 'select' | 'unselect' | 'active' | 'unactive'
+    component?: {
+        id: string
+        annotation?: Annotation
+    }
+}
+
+//==============================================================================
 //==============================================================================

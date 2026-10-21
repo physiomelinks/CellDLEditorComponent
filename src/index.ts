@@ -25,9 +25,14 @@ import CellDLEditor from '#root/components/EditorComponent'
 export { DEFAULT_VIEW_STATE } from '#editor/editor/editguides'
 
 export {
+    type Annotation,
+    type Annotations,
+    type AnnotationValue,
     type EditorState,
     EditorStatus,
     type FileStatus,
+    type SvgViewerOptions,
+    type ViewerEvent,
     type ViewState
 } from '#root/utils/editor-types'
 
