@@ -45,6 +45,8 @@ export type {
 
 export { bgRdfStatements } from '#root/plugins/bondgraph/bgrdf'
 
+export { type BgRdfFramework, bgRdfFramework } from '#root/plugins/bondgraph/bgrdf-sources'
+
 export { editorInitialised } from '#root/utils'
 
 export { version } from '../package.json'

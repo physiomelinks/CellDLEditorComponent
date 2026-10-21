@@ -13,8 +13,13 @@ const _dirname = path.dirname(url.fileURLToPath(import.meta.url))
 export default vite.defineConfig({
     build: {
         lib: {
-            entry: './src/index.ts',
-            fileName: (format: string) => `CellDLEditor.${format}.js`,
+            // `bgrdf` has only the BG-RDF Turtle, so a worker can import it without the editor
+            entry: {
+                index: './src/index.ts',
+                bgrdf: './src/bgrdf.ts'
+            },
+            fileName: (format: string, entryName: string) =>
+                `${entryName === 'index' ? 'CellDLEditor' : entryName}.${format}.js`,
             formats: ['es'],
             name: 'CellDLEditor'
         },
