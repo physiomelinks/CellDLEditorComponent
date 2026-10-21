@@ -127,15 +127,17 @@ export class MoveUndoState extends UndoState {
 
     // The connections whose paths a move changes
     #movedConnections(): CellDLConnection[] {
-        const connections: CellDLConnection[] = []
+        const connections: Set<CellDLConnection> = new Set(this.#group?.connections)
         for (const object of this.#group?.objects ?? [this.undoObject]) {
             if (object.isConnectable) {
-                connections.push(...(<CellDLConnectedObject>object).connections)
+                for (const connection of (<CellDLConnectedObject>object).connections) {
+                    connections.add(connection)
+                }
             } else if (object.isConnection) {
-                connections.push(<CellDLConnection>object)
+                connections.add(<CellDLConnection>object)
             }
         }
-        return connections
+        return [...connections]
     }
 
     #connectionPathArrays(): ConnectionPathArrayMap {
