@@ -40,11 +40,13 @@ export type {
     CellDLEditorCommand,
     CellDLEditorProps,
     DiagramChange,
+    EditorChrome,
     EditorData,
     EditorEditCommand,
     EditorExportCommand,
     EditorFileCommand,
     EditorSetStateCommand,
+    EditorToolName,
     EditorViewCommand,
     Theme
 } from '#root/components/WrappedEditor.vue'
