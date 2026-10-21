@@ -70,7 +70,7 @@ function updateProperties(itemId: string, oldValue: number | string, newValue: n
 
 <style>
 /* Allow for FloatLabel text of InputWidget */
-.p-accordioncontent-content {
+.celldl-editor .p-accordioncontent-content {
     padding-top: 8px !important;
 }
 </style>

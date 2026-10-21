@@ -183,7 +183,7 @@ function emitChange() {
 
 <style>
 /* Otherwise the tick mark is not obvious */
-.p-checkbox-checked .p-checkbox-icon {
+.celldl-editor .p-checkbox-checked .p-checkbox-icon {
     color: red !important;
 }
 </style>

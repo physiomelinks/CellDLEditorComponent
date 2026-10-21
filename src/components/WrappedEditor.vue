@@ -1,5 +1,5 @@
 <template lang="pug">
-    .flex.flex-col.h-full
+    .celldl-editor.flex.flex-col.h-full
         main.editor-pane.relative.flex.grow
             EditorToolbar.editor-bar(
                 :buttons="toolButtons"

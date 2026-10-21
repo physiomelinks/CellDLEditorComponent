@@ -19,7 +19,8 @@ export default vite.defineConfig({
             name: 'CellDLEditor'
         },
         rollupOptions: {
-            external: ['vue'],
+            // The host app provides Vue and PrimeVue, so that both share one copy
+            external: ['vue', /^primevue(\/|$)/, /^@primevue\//, /^@primeuix\//],
             output: {
                 dir: 'dist',
                 exports: 'named',
