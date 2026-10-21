@@ -51,6 +51,8 @@ export type {
 
 export { bgRdfStatements } from '#root/plugins/bondgraph/bgrdf'
 
+export { type BgRdfFramework, bgRdfFramework } from '#root/plugins/bondgraph/bgrdf-sources'
+
 export { editorInitialised, initialiseRdf, type OxigraphModule } from '#root/utils'
 
 export { version } from '../package.json'
