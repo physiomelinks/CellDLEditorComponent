@@ -549,7 +549,7 @@ async function saveCellML(celldl: string) {
                 summary: 'CellML created',
                 detail: `Saved as ${fileHandle.name}`
             })
-        } else if (cellmlObject.issues) {
+        } else if (cellmlObject.issues?.length) {
             issues.value = cellmlObject.issues
             issuesVisible.value = true
         } else {

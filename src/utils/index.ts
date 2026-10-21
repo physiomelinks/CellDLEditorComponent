@@ -21,7 +21,12 @@ let rdfReady: Promise<OxigraphModule> | undefined
  */
 export function initialiseRdf(): Promise<OxigraphModule> {
     if (rdfReady === undefined) {
-        rdfReady = initialise().then(() => (globalThis as unknown as { rdfModule: OxigraphModule }).rdfModule)
+        rdfReady = initialise()
+            .then(() => (globalThis as unknown as { rdfModule: OxigraphModule }).rdfModule)
+            .catch((error) => {
+                rdfReady = undefined
+                throw error
+            })
     }
     return rdfReady
 }
