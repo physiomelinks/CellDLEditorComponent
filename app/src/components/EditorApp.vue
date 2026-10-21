@@ -117,6 +117,7 @@ import '../assets/app.css'
 import AboutDialog from './dialogs/AboutDialog.vue'
 
 import { SHORT_DELAY } from '../utils/constants'
+import { celldl2cellml } from '../utils/cellml'
 import { isCompatibleBrowser } from '../utils/common'
 import * as version from '../utils/version'
 import * as vueCommon from '../utils/vueCommon'
@@ -317,9 +318,7 @@ vueusecore.useEventListener(document, 'file-edited', (_: Event) => {
 
 async function onEditorData(data: EditorData) {
     if (data.kind === 'export') {
-        if (pythonOk) {
-            await saveCellML(data.data)
-        }
+        await saveCellML(data.data)
     } else if (data.kind === 'save-as' || !currentFileHandle) {
         await saveFile(data.data)
     } else if (currentFileHandle) {
@@ -538,9 +537,8 @@ async function saveCellML(celldl: string) {
         suggestedName: fileName
     }
     const fileHandle = await window.showSaveFilePicker(options).catch(() => {})
-/*
     if (fileHandle) {
-        const cellmlObject = celldl2cellml(`https://celldl.org/cellml/${fileHandle.name}`, celldl)
+        const cellmlObject = await celldl2cellml(`https://celldl.org/cellml/${encodeURIComponent(fileHandle.name)}`, celldl)
         if (cellmlObject.cellml) {
             const writableStream = await fileHandle.createWritable()
             await writableStream.write(cellmlObject.cellml)
@@ -555,10 +553,9 @@ async function saveCellML(celldl: string) {
             issues.value = cellmlObject.issues
             issuesVisible.value = true
         } else {
-            window.alert('Unexpected exception generating CellML...')
+            window.alert(cellmlObject.exception ?? 'Unexpected exception generating CellML...')
         }
     }
-*/
 }
 
 //==============================================================================

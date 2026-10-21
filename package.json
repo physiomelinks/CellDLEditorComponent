@@ -80,6 +80,7 @@
     },
     "devDependencies": {
         "@biomejs/biome": "^2.3.11",
+        "@physiomelinks/bg2cellml": "^0.2.0",
         "@primeuix/themes": "^2.0.2",
         "@primevue/auto-import-resolver": "4.2.5",
         "@tailwindcss/postcss": "^4.1.18",
@@ -91,6 +92,7 @@
         "@vitejs/plugin-vue": "^6.0.8",
         "@vue/tsconfig": "^0.8.1",
         "autoprefixer": "^10.5.4",
+        "libcellml.js": "^0.7.2",
         "pug": "^3.0.3",
         "pug-plain-loader": "^1.1.0",
         "tailwindcss": "^4.3.3",
