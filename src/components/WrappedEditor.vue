@@ -2,7 +2,8 @@
     .celldl-editor.flex.flex-col.h-full
         main.editor-pane.relative.flex.grow
             EditorToolbar.editor-bar(
-                :buttons="toolButtons"
+                v-if="shownToolButtons.length"
+                :buttons="shownToolButtons"
                 type="popover"
                 @button-event="buttonEvent"
             )
@@ -18,7 +19,7 @@
             )
         footer.status-bar
             span#status-msg
-            span#status-pos
+            span#status-pos(v-show="props.chrome?.statusPosition !== false")
 </template>
 
 <script setup lang="ts">
@@ -124,8 +125,24 @@ export type CellDLEditorCommand = EditorEditCommand
 
 //==============================================================================
 
+/**
+ * Which of the editor's own controls to show when embedded. All are shown
+ * when a field is absent.
+ */
+export type EditorChrome = {
+    /** The left toolbar's tools: `false` hides the toolbar, a list shows just those tools */
+    tools?: boolean | EditorToolName[]
+    /** The cursor's grid position at the right of the status bar */
+    statusPosition?: boolean
+}
+
+export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
+
+//==============================================================================
+
 export interface CellDLEditorProps {
     annotations?: Annotations
+    chrome?: EditorChrome
     editorCommand?: CellDLEditorCommand
     options?: SvgViewerOptions
     theme?: Theme
@@ -373,6 +390,31 @@ const toolButtons = vue.ref<EditorToolButton[]>([
         panel: vue.markRaw(DrawingPopover)
     }
 ])
+
+const TOOL_NAMES: Record<string, EditorToolName> = {
+    [EDITOR_TOOL_IDS.SelectTool]: 'select',
+    [EDITOR_TOOL_IDS.BondgraphTool]: 'bondgraph',
+    [EDITOR_TOOL_IDS.DrawingTool]: 'drawing'
+}
+
+const shownToolButtons = vue.computed(() => {
+    const tools = props.chrome?.tools
+    if (tools === false) {
+        return []
+    } else if (Array.isArray(tools)) {
+        return toolButtons.value.filter(button => tools.includes(TOOL_NAMES[button.toolId] as EditorToolName))
+    }
+    return toolButtons.value
+})
+
+// Leave a tool's mode when its button is hidden, as it could not be left otherwise
+vue.watch(shownToolButtons, (shown) => {
+    const hiddenActive = toolButtons.value.some(button => button.active && !shown.includes(button))
+    if (hiddenActive) {
+        resetToolBars()
+        despatchToolbarEvent('state', DEFAULT_EDITOR_TOOL_ID, true)
+    }
+})
 
 //==============================================================================
 
