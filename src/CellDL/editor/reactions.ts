@@ -33,7 +33,7 @@ import { type CellDLConnectedObject, CellDLConnection, type CellDLObject } from 
 import { componentLibraryPlugin } from '#root/plugins'
 import type { BondgraphPlugin } from '#root/plugins/bondgraph'
 import {
-    type EquationEdit, findSpeciesNode, parseEquation, planEquationEdit, type Side, type SpeciesNode
+    type EquationEdit, findSpeciesNode, parseEquation, planEquationEdit, type Side, type SpeciesNode, type StepEquation
 } from '#root/plugins/bondgraph/equations'
 import { Point, type PointLike } from '#root/utils/points'
 import { CONNECTION_COLOUR, CONNECTION_WIDTH } from '#root/utils/styling'
@@ -167,7 +167,7 @@ function sourceCopy(node: SpeciesNode): { type: string, value?: $rdf.Literal } {
     return { type: type ?? `${BGF}ChemicalPotential`, value }
 }
 
-async function applyEdit(step: CellDLConnectedObject, edit: EquationEdit, taken: Point[]) {
+async function applyEdit(step: CellDLConnectedObject, current: StepEquation, edit: EquationEdit, taken: Point[]) {
     const plugin = bondgraphPlugin()
     if (edit.op === 'count') {
         const bond = objectByUri(edit.bond)
@@ -185,9 +185,13 @@ async function applyEdit(step: CellDLConnectedObject, edit: EquationEdit, taken:
     } else {
         const found = findSpeciesNode(plugin.speciesNodes(), edit.species, edit.location)
         const location = edit.location ?? found?.location
+        // a step drawn with side junctions is bonded through them, and a store drawn with its species' 0-junction
+        // through that, which takes any number of bonds
+        const sideJunction = current.sides?.[edit.side]
+        const joinTo = (sideJunction ? objectByUri(sideJunction) : null) as CellDLConnectedObject|null
         let node: CellDLConnectedObject|null = null
         if (found && !found.isSource) {
-            node = objectByUri(found.id) as CellDLConnectedObject|null
+            node = objectByUri(plugin.speciesJunction(found.id) ?? found.id) as CellDLConnectedObject|null
         }
         if (!node) {
             const place = placeBeside(centroidOf(step), edit.side, taken)
@@ -198,8 +202,9 @@ async function applyEdit(step: CellDLConnectedObject, edit: EquationEdit, taken:
                 node = await addElement(NEW_STORE_TYPE, place, edit.species, location ?? stepLocation(step))
             }
         }
-        if (edit.side === 'substrate') addBond(node, step, edit.count)
-        else addBond(step, node, edit.count)
+        const target = joinTo ?? step
+        if (edit.side === 'substrate') addBond(node, target, edit.count)
+        else addBond(target, node, edit.count)
     }
 }
 
@@ -226,7 +231,7 @@ export async function applyEquation(stepUri: string, text: string): Promise<numb
     }
     const taken = componentCentroids()
     for (const edit of edits) {
-        await applyEdit(step, edit, taken)
+        await applyEdit(step, current, edit, taken)
     }
     if (edits.length) notifyChanges()     // a changed bondCount alone touches only the RDF
     return edits.length

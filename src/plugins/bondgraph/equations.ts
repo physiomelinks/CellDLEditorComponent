@@ -34,7 +34,8 @@ export interface Participant {
     location?: string
     count: number
     node?: string               // the store or source it is
-    bond?: string               // the bond joining it to the step
+    bond?: string               // the bond joining it to the step (or to the step's side junction)
+    junction?: string           // the species' 0-junction, when the step has side junctions
 }
 
 export type StepKind = 'reaction' | 'transport' | 'flow'
@@ -46,6 +47,7 @@ export interface StepEquation {
     substrates: Participant[]
     products: Participant[]
     charge?: { count: number, location?: string }   // positive charges moved into location per turnover
+    sides?: Partial<Record<Side, string>>           // the step's side 1-junctions, when it has them
 }
 
 export interface BondInfo {
@@ -60,6 +62,7 @@ export interface NodeInfo {
     location?: string
     symbol?: string
     transformRatio?: number     // for a transformer node
+    junction?: 'one' | 'zero'   // for a plain 1- or 0-junction (not a composite element)
 }
 
 //==============================================================================
@@ -136,16 +139,37 @@ export function isTransport(substrates: Participant[], products: Participant[]):
     return [...where(products)].some(w => !wa.has(w))
 }
 
+// What a node bonded to a step (or to its side junction) is: a store or source, or a species' 0-junction, which
+// stands for the store or source bonded to it
+function participantOf(other: string, bond: BondInfo, bonds: BondInfo[], nodes: Map<string, NodeInfo>): Participant {
+    const node = nodes.get(other) ?? {}
+    if (node.junction === 'zero') {
+        for (const d of bonds) {
+            const store = d.source === other ? d.target : d.target === other ? d.source : undefined
+            const info = store !== undefined ? nodes.get(store) : undefined
+            if (store !== undefined && info && info.junction === undefined && info.species) {
+                return { species: info.species, location: info.location, count: bond.count, node: store, bond: bond.id,
+                         junction: other }
+            }
+        }
+    }
+    return { species: node.species ?? node.symbol ?? other, location: node.location, count: bond.count, node: other,
+             bond: bond.id }
+}
+
 /**
  * The equation of a reaction or resistance element `id`, from the diagram's bonds and its nodes' labels: what is
  * bonded into it is on its left, what it bonds to on its right; a transformer between it and a capacitor gives the
- * charge it moves (from the forward-side transformer's ratio, -q F / 2, into the capacitor's location).
+ * charge it moves (from the forward-side transformer's ratio, -q F / 2, into the capacitor's location). A step
+ * bonded to side 1-junctions (a reaction with its reactants' and products' junctions) takes its participants from
+ * what is bonded to those junctions, with the counts of those bonds.
  */
 export function stepEquation(id: string, isResistance: boolean, bonds: BondInfo[],
                              nodes: Map<string, NodeInfo>): StepEquation {
     const substrates: Participant[] = []
     const products: Participant[] = []
     let charge: StepEquation['charge']
+    const sides: Partial<Record<Side, string>> = {}
     for (const b of bonds) {
         const other = b.target === id ? b.source : b.source === id ? b.target : undefined
         if (other === undefined) continue
@@ -160,15 +184,23 @@ export function stepEquation(id: string, isResistance: boolean, bonds: BondInfo[
             }
             continue
         }
-        const participant: Participant = {
-            species: node.species ?? node.symbol ?? other, location: node.location, count: b.count, node: other, bond: b.id
+        const side: Participant[] = (b.target === id) ? substrates : products
+        if (node.junction === 'one') {
+            sides[b.target === id ? 'substrate' : 'product'] = other
+            for (const c of bonds) {
+                if (c === b || c.source === id || c.target === id) continue
+                const joined = c.source === other ? c.target : c.target === other ? c.source : undefined
+                if (joined !== undefined) side.push(participantOf(joined, c, bonds, nodes))
+            }
+            continue
         }
-        if (b.target === id) substrates.push(participant)
-        else products.push(participant)
+        side.push(participantOf(other, b, bonds, nodes))
     }
     const kind: StepKind = isResistance ? 'flow' : isTransport(substrates, products) ? 'transport' : 'reaction'
     const name = nodes.get(id)?.species ?? id
-    return { id, name, kind, substrates, products, charge }
+    const equation: StepEquation = { id, name, kind, substrates, products, charge }
+    if (sides.substrate || sides.product) equation.sides = sides
+    return equation
 }
 
 //==============================================================================

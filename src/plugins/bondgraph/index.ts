@@ -606,6 +606,8 @@ export class BondgraphPlugin implements PluginInterface {
             if (transforms.has(type) && r.get('value')) {
                 info.transformRatio = parseFloat(r.get('value')!.value)
             }
+            if (type === BGF.uri('OneNode').value) info.junction = 'one'
+            else if (type === BGF.uri('ZeroNode').value) info.junction = 'zero'
             nodes.set(node, info)
             if ((reactions.has(type) || resistances.has(type)) && !steps.some(([n]) => n === node)) {
                 steps.push([node, resistances.has(type)])
@@ -614,6 +616,8 @@ export class BondgraphPlugin implements PluginInterface {
                 species.push({ id: node, species: info.species, location: info.location, isSource: sources.has(type) })
             }
         }
+        // in the order they were drawn
+        bonds.sort((a, b) => (a.id ?? '') < (b.id ?? '') ? -1 : (a.id ?? '') > (b.id ?? '') ? 1 : 0)
         return { bonds, nodes, steps, species }
     }
 
@@ -624,6 +628,15 @@ export class BondgraphPlugin implements PluginInterface {
     reactionEquations(): StepEquation[] {
         const { bonds, nodes, steps } = this.#diagramGraph()
         return steps.map(([node, isResistance]) => stepEquation(node, isResistance, bonds, nodes))
+    }
+
+    /** The 0-junction a store or source is bonded to, if any (a species' junction in a diagram drawn with them). */
+    speciesJunction(node: string): string|undefined {
+        const { bonds, nodes } = this.#diagramGraph()
+        for (const b of bonds) {
+            const other = b.source === node ? b.target : b.target === node ? b.source : undefined
+            if (other !== undefined && nodes.get(other)?.junction === 'zero') return other
+        }
     }
 
     /** The diagram's species stores and sources. */
