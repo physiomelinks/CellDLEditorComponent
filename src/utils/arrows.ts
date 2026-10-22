@@ -18,6 +18,10 @@ limitations under the License.
 
 ******************************************************************************/
 
+import { arrowMarkerDefinition } from '#root/utils/styling'
+
+//==============================================================================
+
 // PhLynx's arrowhead (its CouplingEdge, a copy of Vue Flow's closed arrow): one head at a connection's target end,
 // its tip where the path ends, sized in stroke widths. As a <marker> for documents the editor draws, and as a plain
 // shape for exported figures (PhLynx's SVG export draws heads as shapes too: some editors mishandle <marker>).
@@ -45,4 +49,41 @@ export function arrowShape(x1: number, y1: number, x2: number, y2: number, strok
     return `<polyline points="${ARROW_POINTS}" fill="${colour}" stroke="${colour}" stroke-width="${r(1 / scale)}" `
          + `stroke-linecap="round" stroke-linejoin="round" `
          + `transform="translate(${r(x2)},${r(y2)}) rotate(${r(angle)}) scale(${r(scale)})"/>`
+}
+
+//==============================================================================
+
+// How bonds' arrowheads are shown, whatever marker a document saved: `'bond'`, the editor's own notched head, as it
+// drew bonds before PhLynx's, or `'classic'`, PhLynx's closed arrow. The choice is the viewer's, so it is applied
+// with display-only markers and style rules outside the document's SVG, and a saved document keeps its own marker.
+
+export type ArrowStyle = 'bond' | 'classic'
+
+export const ARROW_STYLES: readonly ArrowStyle[] = ['bond', 'classic']
+export const DEFAULT_ARROW_STYLE: ArrowStyle = 'bond'
+
+/** The class, on the editor's root element, that selects arrow style `style` */
+export const arrowStyleClass = (style: ArrowStyle) => `celldl-arrow-${style}`
+
+/** The id of the display-only marker for arrow style `style` */
+export const displayArrowId = (style: ArrowStyle) => `celldl-display-arrow-${style}`
+
+/** `style` if it is an arrow style, else the default */
+export function arrowStyleOrDefault(style: string | undefined | null): ArrowStyle {
+    return ARROW_STYLES.includes(style as ArrowStyle) ? style as ArrowStyle : DEFAULT_ARROW_STYLE
+}
+
+/**
+ * The display-only markers and the rules that draw bonds with them, as the content of an `<svg>` in the page beside
+ * (not inside) the diagram. The rules are more specific than a document's own `.celldl-Connection.bondgraph.arrow`.
+ */
+export function displayArrowDefinitions(): string {
+    const markers = [
+        arrowMarkerDefinition(displayArrowId('bond'), 'bondgraph'),
+        arrowMarker(displayArrowId('classic'), 'bondgraph')
+    ]
+    const rules = ARROW_STYLES.map((style) =>
+        `.celldl-editor.${arrowStyleClass(style)} .celldl-Connection.bondgraph.arrow{marker-end:url(#${displayArrowId(style)})}`
+    )
+    return `<defs>${markers.join('')}</defs><style>${rules.join('')}</style>`
 }
