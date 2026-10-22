@@ -120,6 +120,15 @@ export type EditorToolButton = {
     props?: vue.Ref<PropertyGroup[]>
 }
 
+/** A toolbar button that runs a command, such as Undo, rather than arming a tool */
+export type EditorToolAction = {
+    actionId: string
+    prompt: string
+    icon: string
+    disabled?: boolean
+    run: () => void
+}
+
 //==============================================================================
 
 export type PopoverEventData = {

@@ -2,8 +2,9 @@
     .celldl-editor.flex.flex-col.h-full
         main.editor-pane.relative.flex.grow
             EditorToolbar.editor-bar(
-                v-if="shownToolButtons.length"
+                v-if="shownToolButtons.length || shownActions.length"
                 :buttons="shownToolButtons"
+                :actions="shownActions"
                 type="popover"
                 @button-event="buttonEvent"
             )
@@ -11,6 +12,10 @@
                 EditorContextMenu(
                     :contextMenuProps="contextMenuProps"
                 )
+                .armed-tool-chip(
+                    v-if="armedTool"
+                    role="status"
+                ) {{ armedTool }} · Esc to stop
                 <!-- context-menu(id="context-menu")  -->
             EditorToolbar.editor-bar(
                 :buttons="panelButtons"
@@ -44,10 +49,12 @@ import { CellDLDiagram } from '#editor/diagram'
 import { CellDLEditor } from '#editor/editor'
 import { DEFAULT_EDITOR_TOOL_ID, EDITOR_TOOL_IDS } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
-import { undoRedo } from '#editor/diagram/undoredo'
+import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
+import { isMacOs } from '#root/utils/common'
 
 import {
     type Annotations,
+    type EditorToolAction,
     type EditorToolButton,
     PANEL_ID,
     type SvgViewerOptions,
@@ -134,6 +141,8 @@ export type EditorChrome = {
     tools?: boolean | EditorToolName[]
     /** The cursor's grid position at the right of the status bar */
     statusPosition?: boolean
+    /** The Undo and Redo buttons below the left toolbar's tools (hidden with the toolbar when `tools` is `false`) */
+    undo?: boolean
 }
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
@@ -418,6 +427,58 @@ vue.watch(shownToolButtons, (shown) => {
 
 //==============================================================================
 
+// Undo and Redo, which work whichever tool is armed
+
+const MOD_KEY = isMacOs() ? '⌘' : 'Ctrl+'
+
+const shownActions = vue.computed<EditorToolAction[]>(() => {
+    if (props.chrome?.tools === false || props.chrome?.undo === false) {
+        return []
+    }
+    return [
+        {
+            actionId: 'editor-undo',
+            prompt: `Undo (${MOD_KEY}Z)`,
+            icon: 'lucide-Undo2',
+            disabled: !undoRedoState.canUndo,
+            run: () => celldlEditor.undo()
+        },
+        {
+            actionId: 'editor-redo',
+            prompt: isMacOs() ? 'Redo (⇧⌘Z)' : 'Redo (Ctrl+Y)',
+            icon: 'lucide-Redo2',
+            disabled: !undoRedoState.canRedo,
+            run: () => celldlEditor.redo()
+        }
+    ]
+})
+
+//==============================================================================
+
+// Show which tool is armed, as clicks on the canvas then add rather than select
+
+const armedTool = vue.ref('')
+
+function editorModeEvent(event: Event) {
+    armedTool.value = (<CustomEvent>event).detail.label
+}
+
+// Escape has returned the editor to selecting, so show the Selection tool as active
+function resetToolsEvent() {
+    resetToolBars()
+}
+
+vue.onMounted(() => {
+    document.addEventListener('editor-mode', editorModeEvent)
+    document.addEventListener('editor-reset-tools', resetToolsEvent)
+})
+vue.onUnmounted(() => {
+    document.removeEventListener('editor-mode', editorModeEvent)
+    document.removeEventListener('editor-reset-tools', resetToolsEvent)
+})
+
+//==============================================================================
+
 const panelButtons = vue.ref<EditorToolButton[]>([
     {
         toolId: PANEL_ID.PROPERTIES_PANEL,
@@ -558,6 +619,22 @@ vue.onMounted(async () => {
     border: 2px solid var(--editor-border-color);
     flex: 1;
     overflow: hidden;
+    position: relative;
+}
+.armed-tool-chip {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    white-space: nowrap;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    pointer-events: none;
+    color: #fff;
+    background-color: #2f6fd6;
+    opacity: 0.9;
 }
 .hidden {
     display: none;

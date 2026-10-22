@@ -95,6 +95,15 @@ vue.onMounted(() => {
     }
 })
 
+// Escape closes a tool's popover, leaving its tool armed
+function closePopover() {
+    if (props.type === 'popover') {
+        panelVisible.value = false
+    }
+}
+vue.onMounted(() => document.addEventListener('close-tool-popover', closePopover))
+vue.onUnmounted(() => document.removeEventListener('close-tool-popover', closePopover))
+
 // Make sure popover is closed when button is deactivated
 vue.watch(
     () => props.active,
@@ -130,7 +139,8 @@ async function toolButtonClick(e: MouseEvent) {
                 }
             }
         } else {
-            if (!target.classList.contains('active')) {
+            // An active tool's button reopens its closed popover
+            if (!target.classList.contains('active') || (panelElement && !panelVisible.value)) {
                 target.classList.add('active')
                 if (panelElement) {
                     if (!panelVisible.value) {

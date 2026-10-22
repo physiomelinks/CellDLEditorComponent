@@ -38,6 +38,15 @@ vue.watch(
     }
 )
 
+// Escape closes the menu even when it doesn't have focus
+function keyDownEvent(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+        menu.value?.hide()
+    }
+}
+vue.onMounted(() => document.addEventListener('keydown', keyDownEvent))
+vue.onUnmounted(() => document.removeEventListener('keydown', keyDownEvent))
+
 function contextMenuEvent(id: string) {
     document.dispatchEvent(
         new CustomEvent('context-menu-click', {
