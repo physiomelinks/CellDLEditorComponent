@@ -15,7 +15,9 @@ import {
     arrowStyleOrDefault,
     DEFAULT_ARROW_STYLE,
     displayArrowDefinitions,
-    displayArrowId
+    displayArrowId,
+    HARPOON_PATH,
+    harpoonMarker
 } from '#root/utils/arrows'
 import { BondgraphPlugin } from '#root/plugins/bondgraph'
 
@@ -51,18 +53,42 @@ describe('arrows', () => {
         expect(arrowStyleOrDefault('harpoon')).toBe('bond')
     })
 
-    test('each style has a display-only marker, \'bond\' the editor\'s notched head', () => {
+    test('the bond head is a half arrow: one barb, on the bond\'s left, its tip at the bond\'s end', () => {
+        const marker = parse(harpoonMarker('end', 'bondgraph'))
+        // One user unit per stroke width, so the barb is as heavy as the bond at any thickness and zoom
+        const viewBox = marker.getAttribute('viewBox')!.split(' ').map(Number)
+        expect(marker.getAttribute('markerUnits')).toBe('strokeWidth')
+        expect([Number(marker.getAttribute('markerWidth')), Number(marker.getAttribute('markerHeight'))]).toEqual([viewBox[2]!, viewBox[3]!])
+        expect([marker.getAttribute('refX'), marker.getAttribute('refY')]).toEqual(['0', '0'])
+        // Turned with the bond's end, never mirrored
+        expect(marker.getAttribute('orient')).toBe('auto')
+        const path = marker.getElementsByTagName('path')[0]!
+        expect(path.getAttribute('d')).toBe(HARPOON_PATH)
+        expect(path.getAttribute('fill')).toBe('none')
+        expect(path.getAttribute('stroke')).toBe('context-stroke')
+        expect(path.getAttribute('stroke-width')).toBe('1')
+        // From the tip, its round cap reaching the bond's end, back along the bond to a barb on its left (-y)
+        const [tip, barb] = HARPOON_PATH.slice(1).split(' L').map((p) => p.split(',').map(Number)) as [number[], number[]]
+        expect(tip).toEqual([-0.5, 0])
+        expect(barb[0]!).toBeLessThan(tip[0]!)
+        expect(barb[1]!).toBeLessThan(0)
+        // and inside the marker's viewBox, caps included
+        const [x, y, w, h] = viewBox as [number, number, number, number]
+        for (const [px, py] of [tip, barb]) {
+            expect(px! - 0.5).toBeGreaterThanOrEqual(x)
+            expect(px! + 0.5).toBeLessThanOrEqual(x + w)
+            expect(py! - 0.5).toBeGreaterThanOrEqual(y)
+            expect(py! + 0.5).toBeLessThanOrEqual(y + h)
+        }
+    })
+
+    test('each style has a display-only marker, \'bond\' the half arrow and \'classic\' PhLynx\'s', () => {
         const svg = parse(`<svg xmlns="http://www.w3.org/2000/svg">${displayArrowDefinitions()}</svg>`)
         const markers = Array.from(svg.getElementsByTagName('marker'))
         expect(markers.map((m) => m.getAttribute('id'))).toEqual([displayArrowId('bond'), displayArrowId('classic')])
-        // The head the editor drew before PhLynx's: viewBox 0 0 5.5 5, tip at (5, 2.5), notched back
-        const bond = markers[0]!
-        expect(bond.getAttribute('viewBox')).toBe('0 0 5.5 5')
-        expect([bond.getAttribute('refX'), bond.getAttribute('refY')]).toEqual(['5', '2.5'])
-        expect(bond.getElementsByTagName('path')[0]!.getAttribute('d')).toBe('M0,0 L5.05,2.2 L5.05,2.8 L0,5 L1,2.5 z')
-        // PhLynx's closed arrow
-        const classic = markers[1]!
-        expect(classic.getElementsByTagName('polyline')[0]!.getAttribute('points')).toBe(ARROW_POINTS)
+        expect(markers[0]!.getElementsByTagName('path')[0]!.getAttribute('d')).toBe(HARPOON_PATH)
+        expect(markers[0]!.getElementsByTagName('polyline').length).toBe(0)
+        expect(markers[1]!.getElementsByTagName('polyline')[0]!.getAttribute('points')).toBe(ARROW_POINTS)
     })
 
     test('the style rules outrank a document\'s own marker rule', () => {
