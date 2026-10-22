@@ -46,6 +46,7 @@ export type {
     EditorElementCommand,
     EditorExportCommand,
     EditorFileCommand,
+    EditorPanelName,
     EditorSetStateCommand,
     EditorToolName,
     EditorViewCommand,

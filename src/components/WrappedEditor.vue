@@ -18,7 +18,8 @@
                 ) {{ armedTool }} · Esc to stop
                 <!-- context-menu(id="context-menu")  -->
             EditorToolbar.editor-bar(
-                :buttons="panelButtons"
+                v-if="shownPanelButtons.length"
+                :buttons="shownPanelButtons"
                 type="panel"
                 @button-event="buttonEvent"
             )
@@ -192,9 +193,18 @@ export type EditorChrome = {
     values?: ValuesMode
     /** A hint shown above read-only values, such as where to set them */
     valuesHint?: string
+    /**
+     * The right-hand panels: `false` hides the panel bar, a list shows just
+     * those panels. When absent, or `true`, Properties, Metadata, Style and
+     * Reactions are shown. `variables` and `annotations` are accepted for panels
+     * still to come, which are only shown when listed.
+     */
+    panels?: boolean | EditorPanelName[]
 }
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
+
+export type EditorPanelName = 'properties' | 'metadata' | 'style' | 'reactions' | 'variables' | 'annotations'
 
 //==============================================================================
 
@@ -582,6 +592,35 @@ const panelButtons = vue.ref<EditorToolButton[]>([
         panel: vue.markRaw(ReactionsPanel)
     }
 ])
+
+// The panels shown when `chrome.panels` is absent or `true`
+const DEFAULT_EDITOR_PANELS: readonly EditorPanelName[] = ['properties', 'metadata', 'style', 'reactions']
+
+const PANEL_NAMES: Record<string, EditorPanelName> = {
+    [PANEL_ID.PROPERTIES_PANEL]: 'properties',
+    [PANEL_ID.METADATA_PANEL]: 'metadata',
+    [PANEL_ID.STYLE_PANEL]: 'style',
+    [PANEL_ID.REACTIONS_PANEL]: 'reactions'
+}
+
+const shownPanelButtons = vue.computed(() => {
+    const panels = props.chrome?.panels
+    if (panels === false) {
+        return []
+    }
+    const shown: readonly EditorPanelName[] = Array.isArray(panels) ? panels : DEFAULT_EDITOR_PANELS
+    return panelButtons.value.filter(button => shown.includes(PANEL_NAMES[button.toolId] as EditorPanelName))
+})
+
+// Close a panel whose button is hidden, as it could not be closed otherwise
+vue.watch(shownPanelButtons, (shown) => {
+    for (const button of panelButtons.value) {
+        if (button.active && !shown.includes(button)) {
+            button.active = false
+            despatchToolbarEvent('state', button.toolId, false)
+        }
+    }
+})
 
 //==============================================================================
 
