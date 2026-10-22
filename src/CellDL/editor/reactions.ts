@@ -25,22 +25,18 @@ limitations under the License.
 // step, and a new equation a new reaction. New elements are placed beside the step, substrates to its left and
 // products to its right.
 
-import { CELLDL, MetadataPropertiesMap } from '@celldl/metadata'
-import * as $rdf from '@celldl/rdf'
+import type * as $rdf from '@celldl/rdf'
 
-import { type CellDLConnectedObject, CellDLConnection, type CellDLObject } from '#editor/celldlObjects'
+import type { CellDLConnectedObject, CellDLConnection, CellDLObject } from '#editor/celldlObjects'
 import { undoRedo } from '#editor/diagram/undoredo'
 
-import { componentLibraryPlugin } from '#root/plugins'
-import type { BondgraphPlugin } from '#root/plugins/bondgraph'
 import {
     type EquationEdit, findSpeciesNode, parseEquation, planEquationEdit, type Side, type SpeciesNode, type StepEquation
 } from '#root/plugins/bondgraph/equations'
 import { Point, type PointLike } from '#root/utils/points'
-import { CONNECTION_COLOUR, CONNECTION_WIDTH } from '#root/utils/styling'
-import { svgPathElement } from '#root/utils/svgUtils'
 
-import { CellDLEditor, notifyChanges } from '.'
+import { notifyChanges } from '.'
+import { addBond, addElement as placeElement, asOneStep, bondgraphPlugin, centroidOf, editorParts } from './placing'
 
 //==============================================================================
 
@@ -54,28 +50,9 @@ const CLEARANCE = 40        // from other components
 
 //==============================================================================
 
-function bondgraphPlugin(): BondgraphPlugin {
-    const plugin = componentLibraryPlugin.getPlugin('bondgraph-components')
-    if (!plugin) throw new Error('The bond graph plugin is not loaded')
-    return plugin as unknown as BondgraphPlugin
-}
-
-function editorParts() {
-    const editor = CellDLEditor.instance
-    const diagram = editor?.celldlDiagram
-    const frame = editor?.editorFrame
-    if (!editor || !diagram || !frame) throw new Error('No diagram is open')
-    return { editor, diagram, frame }
-}
-
 function objectByUri(uri: string): CellDLObject|null {
     const { diagram } = editorParts()
     return diagram.objectById(uri.split('#').pop() ?? uri)
-}
-
-function centroidOf(object: CellDLObject): Point {
-    // biome-ignore lint/style/noNonNullAssertion: a diagram's component has an SVG element
-    return object.celldlSvgElement!.centroid
 }
 
 function componentCentroids(): Point[] {
@@ -106,20 +83,7 @@ function placeBeside(centre: PointLike, side: Side|'step', taken: Point[]): Poin
 
 async function addElement(elementType: string, centre: PointLike, species?: string, location?: string,
                           value?: $rdf.Literal): Promise<CellDLConnectedObject> {
-    const { diagram, frame } = editorParts()
-    const plugin = bondgraphPlugin()
-    const templateId = plugin.libraryTemplateId(elementType)
-    const template = templateId ? componentLibraryPlugin.getObjectTemplateById(templateId) : undefined
-    if (!template) throw new Error(`No library template draws a ${$rdf.getFragment(elementType)}`)
-    const group = frame.addSvgElementFromTemplate(template, centre)
-    const object = diagram.addConnectedObject(group, template)
-    if (!object) throw new Error(`Cannot add a ${$rdf.getFragment(elementType)}`)
-    await plugin.setElement(object, elementType, species, location, value)
-    // centre it where asked: a template is placed by its top left corner
-    const at = centroidOf(object)
-    object.initialiseMove(group)
-    object.reposition(at, centre)
-    object.finaliseMove()
+    const object = await placeElement(elementType, centre, species, location, value)
     if (!value) {
         added.push(`${elementType === NEW_REACTION_TYPE ? 'reaction' : 'store'} ${species ?? object.id}`
                    + (location ? `[${location}]` : ''))
@@ -133,46 +97,12 @@ function removeObject(object: CellDLObject) {
     diagram.removeObject(object, undoRedo.setDeleteUndoState(object))
 }
 
-// Changes made by `edit` undone and redone as one step, even if it fails part way through
-async function asOneStep<T>(edit: () => Promise<T>): Promise<T> {
-    undoRedo.beginGroup()
-    try {
-        return await edit()
-    } finally {
-        undoRedo.endGroup()
-    }
-}
-
 // The elements added since the last call of takeAddedElements(): their parameters are for the user to set
 const added: string[] = []
 
 /** The new elements an edit made (e.g. `store Xnew[c]`), which still need their parameters' values. */
 export function takeAddedElements(): string[] {
     return added.splice(0)
-}
-
-function addBond(source: CellDLConnectedObject, target: CellDLConnectedObject, count: number): CellDLConnection {
-    const { diagram } = editorParts()
-    const from = centroidOf(source)
-    const to = centroidOf(target)
-    const start = source.celldlSvgElement?.boundaryIntersections(to)[0] ?? from
-    const end = target.celldlSvgElement?.boundaryIntersections(from)[0] ?? to
-    const path = svgPathElement([start, end], {
-        class: 'bondgraph linear arrow',
-        stroke: CONNECTION_COLOUR,
-        'stroke-width': String(CONNECTION_WIDTH)
-    })
-    const connection = diagram.addNewConnection(path, {
-        CellDLClass: CellDLConnection,
-        metadataProperties: MetadataPropertiesMap.fromProperties([
-            [$rdf.RDF.uri('type'), CELLDL.uri('Connection')],
-            [CELLDL.uri('hasSource'), source.uri],
-            [CELLDL.uri('hasTarget'), target.uri],
-            [CELLDL.uri('hasIntermediate'), []]
-        ])
-    })
-    bondgraphPlugin().setBondCount(connection, count)
-    return connection
 }
 
 /** A potential source's type and value, to copy it beside another step. */
