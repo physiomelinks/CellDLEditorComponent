@@ -24,6 +24,9 @@
         FloatLabel(variant="on")
             InputText(
                 :modelValue="scalarValue"
+                :readonly="readonly"
+                :class="{ 'readonly-value': readonly }"
+                :title="readonly ? 'Read-only' : undefined"
                 v-keyfilter.num
                 v-on:focusout="inputTextFocusOut"
                 v-on:keypress="inputTextKeyPress"
@@ -35,6 +38,8 @@
         FloatLabel(variant="on")
             InputText(
                 :modelValue="value"
+                :readonly="readonly"
+                :class="{ 'readonly-value': readonly }"
                 @value-change="inputTextChange"
                 class="w-full"
                 size="small"
@@ -72,6 +77,8 @@ const props = defineProps<{
     possibleValues?: locApi.IUiJsonDiscreteInputPossibleValue[]
     stepValue?: number
     stored?: boolean
+    /** Shown but not editable */
+    readonly?: boolean
 }>()
 
 const nameUnits = vue.computed(() => props.units ? `${props.name} (${props.units})` : props.name)
@@ -148,6 +155,9 @@ function selectChange(event: ISelectChangeEvent) {
 }
 
 function inputTextChange(newValueString: string) {
+    if (props.readonly) {
+        return
+    }
     if (scalarType && newValueString === '') {
         newValueString = String(props.minimumValue)
     }
@@ -181,6 +191,12 @@ function inputTextKeyPress(event: KeyboardEvent) {
 <style scoped>
     .bottom-margin {
         margin-bottom: 30px;
+    }
+    .readonly-value {
+        background: var(--p-inputtext-disabled-background);
+        color: var(--p-inputtext-disabled-color);
+        border-style: dashed;
+        cursor: default;
     }
     .emphasise {
         font-style: italic;
