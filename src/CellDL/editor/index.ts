@@ -212,6 +212,8 @@ export class CellDLEditor {
     #pointerEventHandlers: Map<string, PointerEventHandler> = new Map()
 
     #openPanel: ObjectPropertiesPanel | undefined = undefined
+    // Property edits run one after another, so each is its own undo step
+    #propertiesEditing: Promise<void> = Promise.resolve()
     #panels: Map<PANEL_ID, ObjectPropertiesPanel> = new Map([
         [
             PANEL_ID.METADATA_PANEL, new ObjectPropertiesPanel(PANEL_ID.METADATA_PANEL, [
@@ -597,15 +599,102 @@ export class CellDLEditor {
 
     async #panelEvent(event: Event) {
         const detail = (<CustomEvent>event).detail
-        if (detail.source === this.#openPanel?.panelId) {
-            if (this.#openPanel && this.selectionSet.size === 1) {
+        const panel = this.#openPanel
+        if (panel && detail.source === panel.panelId) {
+            if (this.selectionSet.size === 1) {
                 const values = detail.value
                 if (values.oldValue !== values.newValue) {
-                    await this.#openPanel.updateObjectProperties(this.selectionSet.objects[0]!, detail.itemId, detail.value)
-                    notifyChanges()
+                    const object = this.selectionSet.objects[0]!
+                    if (panel.panelId === PANEL_ID.PROPERTIES_PANEL) {
+                        // Undoable, as the host's `element` command's edits are
+                        await this.editProperties([object], async () => {
+                            await panel.updateObjectProperties(object, detail.itemId, detail.value)
+                        })
+                    } else {
+                        await panel.updateObjectProperties(object, detail.itemId, detail.value)
+                        notifyChanges()
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * Edits objects' properties as one undoable step, reporting the change.
+     *
+     * Edits are made one at a time, in the order asked for.
+     *
+     * @param objects The objects whose properties `edit` changes.
+     * @param edit Makes the changes.
+     * @param rebindPanel Reload the Properties panel if it shows an edited object.
+     * @returns Whether any property changed.
+     */
+    editProperties(objects: CellDLObject[], edit: () => Promise<void>, rebindPanel: boolean=false): Promise<boolean> {
+        const run = async () => {
+            if (objects.length === 0) {
+                return false
+            }
+            const undoState = undoRedo.setPropertiesUndoState(objects)
+            let changed = false
+            try {
+                await edit()
+            } finally {
+                // An edit that fails part way through is still undone as one step
+                changed = undoRedo.endPropertiesEdit(undoState)
+            }
+            if (changed) {
+                notifyChanges()
+                if (rebindPanel) {
+                    this.refreshPropertiesPanel(objects)
+                }
+            }
+            return changed
+        }
+        const result = this.#propertiesEditing.then(run, run)
+        this.#propertiesEditing = result.then(() => undefined, () => undefined)
+        return result
+    }
+
+    /** Reloads the panels if they show one of the objects, e.g. after its properties changed elsewhere. */
+    refreshPropertiesPanel(objects: CellDLObject[]) {
+        if (this.selectionSet.size === 1) {
+            const selected = this.selectionSet.objects[0]!
+            if (objects.some(object => object.id === selected.id)) {
+                this.setPropertiesPanelObject(undefined)
+                this.setPropertiesPanelObject(selected)
+            }
+        }
+    }
+
+    /**
+     * Selects just one object, as clicking it would, or clears the selection.
+     *
+     * @param id The object's id, or `null` to clear the selection.
+     * @param centre Pan to centre the object: always, never, or only when it is not wholly in view.
+     * @returns Whether the object was found (always `true` when clearing).
+     */
+    selectObjectById(id: string|null, centre: boolean|'if-hidden'=false): boolean {
+        if (this.#celldlDiagram === null) {
+            return false
+        }
+        const object = (id === null) ? null : this.#celldlDiagram.objectById(id)
+        if (id !== null && object === null) {
+            return false
+        }
+        this.#closeBoxMaker()
+        this.selectionSet.clear()     // Reports unselections
+        if (object) {
+            this.setSelectedObject(object)
+            this.#selectedEventObjects.set(object.id, object)
+            this.#emitViewerEvent('select', object)
+            const svgElement = object.celldlSvgElement
+            if (svgElement && this.#panzoom && centre !== false) {
+                if (centre === true || !this.#panzoom.inView(svgElement.svgBounds())) {
+                    this.#panzoom.centreOn(svgElement.centroid)
+                }
+            }
+        }
+        return true
     }
 
     async #styleEvent(event: Event) {

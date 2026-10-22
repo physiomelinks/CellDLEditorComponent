@@ -43,13 +43,25 @@ export type {
     EditorChrome,
     EditorData,
     EditorEditCommand,
+    EditorElementCommand,
     EditorExportCommand,
     EditorFileCommand,
     EditorSetStateCommand,
     EditorToolName,
     EditorViewCommand,
+    ElementResult,
+    ElementsChange,
     Theme
 } from '#root/components/WrappedEditor.vue'
+
+export type {
+    DiagramElement,
+    ElementEdit,
+    ElementError,
+    ElementField,
+    ElementValue,
+    NamedElementValue
+} from '#root/plugins/bondgraph/elements'
 
 export { bgRdfStatements } from '#root/plugins/bondgraph/bgrdf'
 

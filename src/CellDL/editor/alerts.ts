@@ -23,8 +23,22 @@ import { CellDLEditor } from '#editor/editor'
 //==============================================================================
 
 export namespace alert {
+    let holding = 0
+
     export function clear() {
-        CellDLEditor.instance?.showMessage('')
+        if (holding === 0) {
+            CellDLEditor.instance?.showMessage('')
+        }
+    }
+
+    /** Runs `fn` without clearing the message shown, e.g. when reading properties for the host. */
+    export function keepShown<T>(fn: () => T): T {
+        holding += 1
+        try {
+            return fn()
+        } finally {
+            holding -= 1
+        }
     }
 
     export function error(msg: string) {

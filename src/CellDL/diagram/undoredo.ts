@@ -21,11 +21,14 @@ limitations under the License.
 import type { NormalArray } from 'svg-path-commander'
 import * as vue from 'vue'
 
+import { isBlankNode, type Statement } from '@celldl/rdf'
+
 import { type CellDLConnectedObject, type CellDLConnection, CellDLObject } from '#editor/celldlObjects'
 import type { CellDLDiagram } from '#editor/diagram'
-import { notifyChanges } from '#editor/editor'
+import { CellDLEditor, notifyChanges } from '#editor/editor'
 import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 
+import { componentLibraryPlugin } from '#root/plugins'
 import { Point, PointMath, type PointLike } from '#root/utils/points'
 
 import { type MoveGroup, SelectionSet } from './selectionset'
@@ -36,7 +39,8 @@ import { StoredObject } from './storedobject'
 enum UndoAction {
     DELETE = 1,
     INSERT = 2,
-    MOVE = 3
+    MOVE = 3,
+    PROPERTIES = 4
 }
 
 type UndoObject = CellDLObject | SelectionSet
@@ -188,6 +192,116 @@ export class MoveUndoState extends UndoState {
 
 //==============================================================================
 
+/**
+ * An object's property statements: those with it as subject, and those of the
+ * blank nodes they reach, such as its `bgf:parameterValue` and `bgf:VariableValue`
+ * nodes.
+ */
+function propertyStatements(celldlObject: CellDLObject): Statement[] {
+    const statements: Statement[] = []
+    const subjects = [celldlObject.uri] as Statement['subject'][]
+    const seen: Set<string> = new Set()
+    while (subjects.length) {
+        // biome-ignore lint/style/noNonNullAssertion: `subjects` is not empty
+        const subject = subjects.pop()!
+        if (seen.has(subject.toString())) {
+            continue
+        }
+        seen.add(subject.toString())
+        for (const statement of celldlObject.rdfStore.statementsMatching(subject, null, null, null)) {
+            statements.push(statement)
+            if (isBlankNode(statement.object)) {
+                subjects.push(statement.object as Statement['subject'])
+            }
+        }
+    }
+    return statements
+}
+
+/** A statement as text, blank nodes included as they are */
+function statementKey(statement: Statement): string {
+    return `${statement.subject.toString()} ${statement.predicate.toString()} ${statement.object.toString()}`
+}
+
+/** The statements as text, with blank nodes named by position, so equal statements compare equal. */
+function statementsKey(statements: Statement[]): string {
+    const blankNodes: Map<string, string> = new Map()
+    const term = (t: Statement['subject']|Statement['object']) => {
+        if (isBlankNode(t)) {
+            const id = t.toString()
+            if (!blankNodes.has(id)) {
+                blankNodes.set(id, `_:b${blankNodes.size}`)
+            }
+            return blankNodes.get(id)
+        }
+        return t.toString()
+    }
+    return statements.map(st => `${term(st.subject)} ${st.predicate.toString()} ${term(st.object)}`)
+                     .sort()
+                     .join('\n')
+}
+
+/**
+ * Undoes and redoes changes to objects' properties, as the Properties panel or
+ * the host's `element` command makes them, by swapping the objects' property
+ * statements.
+ */
+export class PropertiesUndoState extends UndoState {
+    #after: Map<string, Statement[]> = new Map()
+    #before: Map<string, Statement[]> = new Map()
+    #objects: CellDLObject[]
+
+    constructor(objects: CellDLObject[]) {
+        // biome-ignore lint/style/noNonNullAssertion: there is at least one object
+        super(UndoAction.PROPERTIES, objects[0]!)
+        this.#objects = objects
+        for (const object of objects) {
+            this.#before.set(object.id, propertyStatements(object))
+        }
+    }
+
+    get objects() {
+        return this.#objects
+    }
+
+    /** Notes the objects' properties once edited, returning whether any changed. */
+    endEdit(): boolean {
+        let changed = false
+        for (const object of this.#objects) {
+            const after = propertyStatements(object)
+            this.#after.set(object.id, after)
+            // biome-ignore lint/style/noNonNullAssertion: set in the constructor
+            changed ||= statementsKey(after) !== statementsKey(this.#before.get(object.id)!)
+        }
+        return changed
+    }
+
+    /**
+     * Restores the objects' properties to before or after the edit.
+     *
+     * Only the statements the edit removed or added are swapped, so a later change
+     * that isn't undoable (e.g. to an object's metadata) is kept.
+     */
+    async restore(direction: Direction) {
+        const [from, to] = (direction === 'backwards') ? [this.#after, this.#before] : [this.#before, this.#after]
+        for (const object of this.#objects) {
+            const fromStatements = from.get(object.id) ?? []
+            const toStatements = to.get(object.id) ?? []
+            const fromKeys = new Set(fromStatements.map(statementKey))
+            const toKeys = new Set(toStatements.map(statementKey))
+            object.rdfStore.removeStatements(fromStatements.filter(st => !toKeys.has(statementKey(st))))
+            object.rdfStore.addStatementList(toStatements.filter(st => !fromKeys.has(statementKey(st))))
+        }
+        // Bring every object's plugin data up to date before any (slower) SVG update
+        for (const object of this.#objects) {
+            await componentLibraryPlugin.refreshObject(object)
+        }
+        CellDLEditor.instance?.refreshPropertiesPanel(this.#objects)
+    }
+}
+
+//==============================================================================
+
 /** Whether there is anything to undo or redo, for the toolbar's buttons */
 export const undoRedoState = vue.reactive({
     canUndo: false,
@@ -249,6 +363,29 @@ class UndoRedo {
         return this.#setActiveUndoState(new UndoState(UndoAction.INSERT, undoObject))
     }
 
+    /**
+     * Starts an undoable edit of objects' properties; pass it to `endPropertiesEdit()`
+     * once they are edited. Nothing is put on the undo stack (and the redo stack
+     * is kept) until the edit is known to have changed something, and the edit is
+     * not the active undo state, so a move ending meanwhile can't remove it.
+     */
+    setPropertiesUndoState(objects: CellDLObject[]): PropertiesUndoState {
+        return new PropertiesUndoState(objects)
+    }
+
+    /**
+     * Ends an edit of objects' properties, keeping it to undo only if it changed them.
+     *
+     * @returns Whether the edit changed the objects' properties.
+     */
+    endPropertiesEdit(undoState: PropertiesUndoState): boolean {
+        const changed = undoState.endEdit()
+        if (changed) {
+            this.#pushUndoStack(undoState, false)
+        }
+        return changed
+    }
+
     setMoveUndoState(undoObject: UndoObject, position: PointLike, selectionSet: SelectionSet|undefined=undefined): MoveUndoState {
         return this.#setActiveUndoState(new MoveUndoState(undoObject as CellDLObject, position, selectionSet)) as MoveUndoState
     }
@@ -308,6 +445,10 @@ class UndoRedo {
                 diagram.undoDelete(undoState)
             } else if (undoState.action === UndoAction.MOVE) {
                 (undoState as MoveUndoState).reposition('forwards')
+            } else if (undoState.action === UndoAction.PROPERTIES) {
+                // Report the change once the objects are up to date with their RDF
+                void (undoState as PropertiesUndoState).restore('forwards').finally(notifyChanges)
+                return
             }
             notifyChanges()
         }
@@ -323,6 +464,10 @@ class UndoRedo {
                 diagram.undoInsert(undoState)
             } else if (undoState.action === UndoAction.MOVE) {
                 (undoState as MoveUndoState).reposition('backwards')
+            } else if (undoState.action === UndoAction.PROPERTIES) {
+                // Report the change once the objects are up to date with their RDF
+                void (undoState as PropertiesUndoState).restore('backwards').finally(notifyChanges)
+                return
             }
             notifyChanges()
         }

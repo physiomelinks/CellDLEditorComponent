@@ -18,10 +18,10 @@ limitations under the License.
 
 ******************************************************************************/
 
-import type { Extent } from '#editor/geometry'
+import type { Bounds, Extent } from '#editor/geometry'
 
 import { getViewbox } from '#root/utils/svgUtils'
-import { Point } from '#root/utils/points'
+import { Point, type PointLike } from '#root/utils/points'
 
 import { editGuides } from './editguides'
 
@@ -110,6 +110,26 @@ export default class PanZoom {
         this.#svgDiagram = null
         this.#panning = false
         this.#scale = 1.0
+    }
+
+    /** Pans so that a point is at the centre of the view, without zooming. */
+    centreOn(point: PointLike) {
+        if (this.#svgDiagram) {
+            const viewbox = this.#currentViewbox()
+            viewbox[0] = point.x - viewbox[2] / 2
+            viewbox[1] = point.y - viewbox[3] / 2
+            this.#setViewbox(viewbox)
+        }
+    }
+
+    /** Whether bounds, in SVG coordinates, are wholly in view. */
+    inView(bounds: Bounds): boolean {
+        if (!this.#svgDiagram) {
+            return false
+        }
+        const [x, y, width, height] = this.#currentViewbox()
+        return bounds.left >= x && bounds.right <= x + width
+            && bounds.top >= y && bounds.bottom <= y + height
     }
 
     pointerDown(event: PointerEvent) {
