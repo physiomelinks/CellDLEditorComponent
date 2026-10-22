@@ -41,6 +41,7 @@ import { componentLibraryPlugin } from '#root/plugins'
 
 //==============================================================================
 
+import { drawBondCounts } from './bondcounts'
 import { EditorFrame } from './editorframe'
 import { DEFAULT_VIEW_STATE, editGuides, EDITOR_GRID_CLASS } from './editguides'
 import PanZoom from './panzoom'
@@ -97,6 +98,25 @@ enum EDITOR_MODE {
 const DEFAULT_EDITOR_MODE = EDITOR_MODE.Selecting
 
 //==============================================================================
+
+/**
+ * What a tooltip shows, highest priority first: an error, a hint while drawing
+ * (e.g. hover-to-bond), a plugin's hover (e.g. an element's law), and the
+ * host's annotation tooltip. A tooltip only replaces one of the same or lower
+ * priority, and hiding one kind leaves the others shown.
+ */
+type TooltipKind = 'error' | 'hint' | 'hover' | 'annotation'
+
+const TOOLTIP_PRIORITY: Record<TooltipKind, number> = {
+    error: 3,
+    hint: 2,
+    hover: 1,
+    annotation: 0
+}
+
+function escapeHtml(text: string): string {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
 
 /** Whether a PrimeVue overlay (a dropdown, menu or popover) is open, which closes itself on Escape. */
 function popupOpen(): boolean {
@@ -240,11 +260,14 @@ export class CellDLEditor {
     // Viewer compatible annotations and events
     #annotations: Annotations = {}
     #tooltipField: string | undefined = undefined
-    #annotationTooltip: boolean = false
+    #tooltipKind: TooltipKind | null = null
     #viewerEventHandler: ViewerEventHandler | null = null
     #activeEventObject: CellDLObject | null = null
     #selectedEventObjects: Map<string, CellDLObject> = new Map()
     #selectionClicking: boolean = false
+
+    // Events about this editor's diagram, for code that must not hear another editor's
+    #events = new EventTarget()
 
     constructor() {
         CellDLEditor.instance = this
@@ -255,6 +278,9 @@ export class CellDLEditor {
         document.addEventListener('component-drag', this.#componentTemplateDragEvent.bind(this))
         document.addEventListener('connection-style', this.#connectionStyleEvent.bind(this))
         document.addEventListener('celldl-drawing', this.#celldlDrawingEvent.bind(this))
+
+        // Redraw bond counts after a change, in this editor's diagram
+        document.addEventListener('file-edited', () => this.#scheduleBondCounts())
 
         // Add handler for events from panels
         document.addEventListener('panel-event', this.#panelEvent.bind(this))
@@ -480,6 +506,39 @@ export class CellDLEditor {
         this.#selectedEventObjects.clear()
         this.#hideAnnotationTooltip()
         this.selectionSet.clear()
+
+        this.#events.dispatchEvent(new CustomEvent('diagram-opened', { detail: { diagram: celldlDiagram } }))
+        this.#scheduleBondCounts()
+    }
+
+    #bondCountsTimer: ReturnType<typeof setTimeout> | undefined
+
+    // Shortly, so a burst of changes redraws once
+    #scheduleBondCounts() {
+        if (this.#bondCountsTimer !== undefined) {
+            clearTimeout(this.#bondCountsTimer)
+        }
+        this.#bondCountsTimer = setTimeout(() => {
+            this.#bondCountsTimer = undefined
+            if (this.#celldlDiagram !== null && this.#svgDiagram !== null) {
+                drawBondCounts(this.#celldlDiagram)
+            }
+        }, 50)
+    }
+
+    /**
+     * Listens for an event about this editor's diagram, rather than any editor's,
+     * as a host may have several editors.
+     *
+     * `'diagram-opened'`: a diagram has been opened (or a new one started) and
+     * is ready to edit; its `detail.diagram` is the `CellDLDiagram`.
+     */
+    addEventListener(type: 'diagram-opened', listener: EventListener) {
+        this.#events.addEventListener(type, listener)
+    }
+
+    removeEventListener(type: 'diagram-opened', listener: EventListener) {
+        this.#events.removeEventListener(type, listener)
     }
 
     closeDiagram() {
@@ -761,46 +820,96 @@ export class CellDLEditor {
         if (this.#tooltip) {
             this.#tooltip.value.hide()
         }
+        this.#tooltipKind = null
     }
 
-    showTooltip(msg: string, style: string = '') {
-        this.#annotationTooltip = false
+    /** Hides the tooltip if it shows `kind`. */
+    #hideTooltipOf(kind: TooltipKind) {
+        if (this.#tooltipKind === kind) {
+            this.#hideTooltip()
+        }
+    }
+
+    /**
+     * Shows a message in the tooltip, unless one of higher priority is shown.
+     *
+     * @param msg The message; `''` hides the tooltip.
+     * @param style `'error'` shows an error, any other style a hint.
+     * @param html Whether `msg` is HTML (from a plugin), never user text unescaped.
+     */
+    showTooltip(msg: string, style: string = '', html: boolean = false) {
         if (msg === '') {
             this.#hideTooltip()
-        } else if (this.#tooltip) {
-            this.#tooltip.value.setContent(msg)
-            this.#tooltip.value.show()
-            if (this.#tooltipElement) {
-                if (this.#tooltipStyle !== '') {
-                    this.#tooltipElement.classList.remove(this.#tooltipStyle)
-                    this.#tooltipStyle = ''
-                }
-                if (style !== '') {
-                    const tooltipStyle = `tooltip-${style}`
-                    this.#tooltipElement.classList.add(tooltipStyle)
-                    this.#tooltipStyle = tooltipStyle
-                }
+        } else {
+            this.#showTooltipOf(style === 'error' ? 'error' : 'hint', msg, style, html)
+        }
+    }
+
+    #showTooltipOf(kind: TooltipKind, msg: string, style: string = '', html: boolean = false): boolean {
+        if (!this.#tooltip) {
+            return false
+        }
+        if (this.#tooltipKind !== null && this.#tooltip.value.state.isVisible
+         && TOOLTIP_PRIORITY[this.#tooltipKind] > TOOLTIP_PRIORITY[kind]) {
+            return false
+        }
+        this.#tooltip.value.setProps({ allowHTML: html, maxWidth: html ? 640 : 350 })
+        this.#tooltip.value.setContent(msg)
+        this.#tooltip.value.show()
+        this.#tooltipKind = kind
+        if (this.#tooltipElement) {
+            if (this.#tooltipStyle !== '') {
+                this.#tooltipElement.classList.remove(this.#tooltipStyle)
+                this.#tooltipStyle = ''
+            }
+            if (style !== '') {
+                const tooltipStyle = `tooltip-${style}`
+                this.#tooltipElement.classList.add(tooltipStyle)
+                this.#tooltipStyle = tooltipStyle
             }
         }
+        return true
+    }
+
+    /** The host's annotation tooltip for an object, or `''`. */
+    #annotationTooltipText(object: CellDLObject): string {
+        const annotation = Object.hasOwn(this.#annotations, object.id) ? this.#annotations[object.id] : undefined
+        if (this.#tooltipField === undefined || !annotation || !Object.hasOwn(annotation, this.#tooltipField)) {
+            return ''
+        }
+        return String(annotation[this.#tooltipField])
     }
 
     #showAnnotationTooltip(object: CellDLObject) {
-        const annotation = Object.hasOwn(this.#annotations, object.id) ? this.#annotations[object.id] : undefined
-        if (this.#tooltipField === undefined || !annotation || !Object.hasOwn(annotation, this.#tooltipField)) {
-            return
+        const text = this.#annotationTooltipText(object)
+        if (text !== '') {
+            this.#showTooltipOf('annotation', text, 'info')
         }
-        // Don't replace an error tooltip that is being shown
-        if (this.#tooltipStyle === 'tooltip-error' && this.#tooltip?.value.state.isVisible) {
-            return
-        }
-        this.showTooltip(String(annotation[this.#tooltipField]), 'info')
-        this.#annotationTooltip = true
     }
 
     #hideAnnotationTooltip() {
-        if (this.#annotationTooltip) {
-            this.#annotationTooltip = false
-            this.#hideTooltip()
+        this.#hideTooltipOf('annotation')
+    }
+
+    /**
+     * Shows a plugin's hover for an object (e.g. an element's law), with the
+     * host's annotation tooltip above it, so that is still seen. Without a
+     * hover, any hover shown is hidden and the annotation tooltip is left.
+     */
+    #showHover(object: CellDLObject) {
+        const hoverHtml = componentLibraryPlugin.hoverHtml(object)
+        const hoverText = hoverHtml === '' ? componentLibraryPlugin.hoverText(object) : ''
+        if (hoverHtml === '' && hoverText === '') {
+            this.#hideTooltipOf('hover')
+            return
+        }
+        const annotation = (this.#editorMode === EDITOR_MODE.Selecting) ? this.#annotationTooltipText(object) : ''
+        if (annotation === '' && hoverHtml === '') {
+            this.#showTooltipOf('hover', hoverText)
+        } else {
+            const note = annotation ? `<div class="tooltip-annotation">${escapeHtml(annotation)}</div>` : ''
+            const body = hoverHtml || `<div>${escapeHtml(hoverText)}</div>`
+            this.#showTooltipOf('hover', `${note}${body}`, '', true)
         }
     }
 
@@ -1196,9 +1305,14 @@ export class CellDLEditor {
                 }
                 currentObject.initialiseMove(element)  // will set moveable
                 this.currentObject = currentObject
+                // e.g. an element's constitutive law, else a reaction's equation;
+                // first, so a host's annotation tooltip shows when there's none
+                this.#showHover(currentObject)
                 if (this.#editorMode === EDITOR_MODE.Selecting) {
                     this.#setActiveEventObject(currentObject)
                 }
+            } else {
+                this.#hideTooltipOf('hover')
             }
         }
     }
@@ -1230,6 +1344,7 @@ export class CellDLEditor {
         this.#clickDoneOnPointerUp = false
         this.#pointerDownPosn = { x: event.clientX, y: event.clientY }
         this.#hideAnnotationTooltip()
+        this.#hideTooltipOf('hover')
         if (this.#handlePointerEvents(event)) {
             return
         }

@@ -188,3 +188,35 @@
 .tooltip-error > .tippy-box > .tippy-arrow {
     color: var(--editor-tooltip-error);
 }
+
+/* a host's annotation tooltip, above a plugin's hover */
+.tooltip-annotation {
+    margin-bottom: 6px;
+}
+
+/* an element's constitutive law in its hover (plugins/bondgraph hoverHtml) */
+.bg-law {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 2px 0;
+}
+.bg-law-label {
+    font-size: 0.75rem;
+    opacity: 0.75;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.bg-law-math svg {
+    max-width: 100%;
+    height: auto;
+}
+.bg-law-where {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.bg-law-line svg {
+    max-width: 100%;
+    height: auto;
+}

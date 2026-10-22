@@ -36,7 +36,7 @@ import * as $rdf from '@celldl/rdf'
 
 //==============================================================================
 
-import { arrowMarkerDefinition } from '#root/utils/styling'
+import { arrowMarker } from '#root/utils/arrows'
 import type {
     IUiJsonDiscreteInput,
     IUiJsonDiscreteInputPossibleValue
@@ -84,6 +84,10 @@ import {
     definitionToLibraryTemplate,
     svgImageData
 } from './definitions'
+import { type BondInfo, equationLatex, equationText, type NodeInfo, type SpeciesNode, type StepEquation, stepEquation } from './equations'
+import { type MathNode, mathmlLatex, type SignedTerm, whereLatex, whereText } from './lawtext'
+import { ELEMENT_CLASSES, type NamingElement, variableNames } from './names'
+import { latexAsSvgString } from '#root/mathjax'
 import type {
     BGComponentLibrary,
     BGLibraryComponentTemplate,
@@ -334,6 +338,7 @@ export class BondgraphPlugin implements PluginInterface {
     }
     #componentTemplates: Map<string, BGLibraryComponentTemplate> = new Map()
     #currentDocumentUri: string = ''
+    #documentStore: MetadataStore|undefined
     #physicalDomains: Map<string, PhysicalDomain> = new Map()
     #rdfStore: $rdf.RdfStore = new $rdf.RdfStore()
     #transformNodeType = BGF.uri('TransformNode').value
@@ -421,6 +426,7 @@ export class BondgraphPlugin implements PluginInterface {
         rdfStore.add($rdf.namedNode(uri), $rdf.RDF.uri('type'), BGF.uri('BondgraphModel'))
 
         this.#currentDocumentUri = uri
+        this.#documentStore = rdfStore
 
         // Add a copy of the BG-RDF framework as a **named graph**, to use when
         // finding BondElements and JunctionStructures
@@ -546,6 +552,309 @@ export class BondgraphPlugin implements PluginInterface {
 
         }
         return {}
+    }
+
+    //==========================================================================
+
+    #subclassesOf(base: string): Set<string> {
+        const rows = this.#rdfStore.query(`${SPARQL_PREFIXES}
+            SELECT DISTINCT ?type WHERE { ?type rdfs:subClassOf* <${base}> }`)
+        return new Set([base, ...rows.map((r: Map<string, $rdf.Term>) => r.get('type')!.value)])
+    }
+
+    // The diagram's bonds and nodes, as ./equations.ts uses them
+    #diagramGraph() {
+        const bonds: BondInfo[] = []
+        const nodes: Map<string, NodeInfo> = new Map()
+        const steps: [string, boolean][] = []
+        const species: SpeciesNode[] = []
+        const store = this.#documentStore
+        if (!store) return { bonds, nodes, steps, species }
+        const prefix = `${this.#currentDocumentUri}#`
+        const reactions = this.#subclassesOf(BGF.uri('Reaction').value)
+        const resistances = this.#subclassesOf(BGF.uri('Resistance').value)
+        const transforms = this.#subclassesOf(this.#transformNodeType)
+        const stores = this.#subclassesOf(BGF.uri('QuantityStore').value)
+        const sources = this.#subclassesOf(BGF.uri('PotentialSource').value)
+        for (const r of store.query(`${SPARQL_PREFIXES}
+            SELECT ?bond ?source ?target ?count WHERE {
+                ?bond bgf:hasSource ?source ; bgf:hasTarget ?target .
+                OPTIONAL { ?bond bgf:bondCount ?count }
+            }`) as Map<string, $rdf.Term>[]) {
+            if (!r.get('bond')!.value.startsWith(prefix)) continue
+            bonds.push({
+                id: r.get('bond')!.value,
+                source: r.get('source')!.value,
+                target: r.get('target')!.value,
+                count: r.get('count') ? Number(r.get('count')!.value) : 1
+            })
+        }
+        for (const r of store.query(`${SPARQL_PREFIXES}
+            SELECT ?node ?type ?species ?location ?symbol ?value WHERE {
+                ?node a ?type .
+                OPTIONAL { ?node bgf:hasSpecies ?species }
+                OPTIONAL { ?node bgf:hasLocation ?location }
+                OPTIONAL { ?node bgf:hasSymbol ?symbol }
+                OPTIONAL { ?node bgf:hasValue ?value }
+            }`) as Map<string, $rdf.Term>[]) {
+            const node = r.get('node')!.value
+            if (!node.startsWith(prefix)) continue
+            const type = r.get('type')!.value
+            const info: NodeInfo = nodes.get(node) ?? {
+                species: r.get('species')?.value, location: r.get('location')?.value, symbol: r.get('symbol')?.value
+            }
+            if (transforms.has(type) && r.get('value')) {
+                info.transformRatio = parseFloat(r.get('value')!.value)
+            }
+            if (type === BGF.uri('OneNode').value) info.junction = 'one'
+            else if (type === BGF.uri('ZeroNode').value) info.junction = 'zero'
+            nodes.set(node, info)
+            if ((reactions.has(type) || resistances.has(type)) && !steps.some(([n]) => n === node)) {
+                steps.push([node, resistances.has(type)])
+            }
+            if ((stores.has(type) || sources.has(type)) && info.species && !species.some(n => n.id === node)) {
+                species.push({ id: node, species: info.species, location: info.location, isSource: sources.has(type) })
+            }
+        }
+        // in the order they were drawn
+        bonds.sort((a, b) => (a.id ?? '') < (b.id ?? '') ? -1 : (a.id ?? '') > (b.id ?? '') ? 1 : 0)
+        return { bonds, nodes, steps, species }
+    }
+
+    /**
+     * The diagram's reactions, transport steps and flows as equations in their usual form, from its bonds (see
+     * ./equations.ts), in the order of the diagram's elements.
+     */
+    reactionEquations(): StepEquation[] {
+        const { bonds, nodes, steps } = this.#diagramGraph()
+        return steps.map(([node, isResistance]) => stepEquation(node, isResistance, bonds, nodes))
+    }
+
+    /** The 0-junction a store or source is bonded to, if any (a species' junction in a diagram drawn with them). */
+    speciesJunction(node: string): string|undefined {
+        const { bonds, nodes } = this.#diagramGraph()
+        for (const b of bonds) {
+            const other = b.source === node ? b.target : b.target === node ? b.source : undefined
+            if (other !== undefined && nodes.get(other)?.junction === 'zero') return other
+        }
+    }
+
+    /** The diagram's species stores and sources. */
+    speciesNodes(): SpeciesNode[] {
+        return this.#diagramGraph().species
+    }
+
+    /**
+     * The diagram's bond elements with the variables bg2cellml gives them (./names.ts): its flow and potential
+     * (a reaction's u_f and u_r), its template's parameters and variables, then its own quantity.
+     */
+    namingElements(): NamingElement[] {
+        const store = this.#documentStore
+        if (!store) return []
+        const prefix = `${this.#currentDocumentUri}#`
+        const classes = ELEMENT_CLASSES.map(uri => ({ uri, types: this.#subclassesOf(uri) }))
+        const elements = new Map<string, NamingElement>()
+        for (const r of store.query(`${SPARQL_PREFIXES}
+            SELECT ?node ?type ?symbol ?species ?location WHERE {
+                ?node a ?type .
+                OPTIONAL { ?node bgf:hasSymbol ?symbol }
+                OPTIONAL { ?node bgf:hasSpecies ?species }
+                OPTIONAL { ?node bgf:hasLocation ?location }
+            }`) as Map<string, $rdf.Term>[]) {
+            const node = r.get('node')!.value
+            const template = this.#elementTemplates.get(r.get('type')!.value)
+            if (!node.startsWith(prefix) || !template || elements.has(node)) continue
+            const elementClass = classes.find(c => c.types.has(template.type))?.uri
+            const domain = this.#physicalDomains.get(template.domain)
+            const flow = domain?.flow.name ?? 'v', potential = domain?.potential.name ?? 'u'
+            const ports = elementClass === BGF.uri('Reaction').value ? [flow, `${potential}_f`, `${potential}_r`]
+                        : [flow, potential]
+            // a store's quantity takes the element's own name (a source's potential doesn't)
+            const value = template.value?.name
+            const intrinsic = value !== undefined && value === (domain?.quantity.name ?? 'q') ? value : undefined
+            const variables = [...ports, ...template.parameters.keys(), ...template.variables.keys()]
+                              .filter(v => v !== intrinsic)
+            if (intrinsic) variables.push(intrinsic)
+            elements.set(node, {
+                id: node, identifier: node.slice(prefix.length), elementClass, domain: template.domain,
+                label: r.get('symbol')?.value, species: r.get('species')?.value, location: r.get('location')?.value,
+                variables: [...new Set(variables)], intrinsic
+            })
+        }
+        return [...elements.values()]
+    }
+
+    /** The element type of a component (its template's, else its base component's). */
+    elementType(celldlObject: CellDLObject): string|undefined {
+        const pluginData = <PluginData>celldlObject.pluginData(this.id)
+        return pluginData.elementTemplate?.type ?? pluginData.baseComponent?.type
+    }
+
+    /** The id of the component library template to draw a new element of `elementType` from. */
+    libraryTemplateId(elementType: string): string|undefined {
+        const baseType = this.#elementTemplates.get(elementType)?.baseComponent.type ?? elementType
+        for (const [id, template] of this.#componentTemplates) {
+            if (template.type === baseType) return `${this.id}/${id}`
+        }
+    }
+
+    /**
+     * Give a component just added from a library template its element type, species and location, as the
+     * properties panel does, and optionally an initial value (an RDF literal, copied as it is).
+     */
+    async setElement(celldlObject: CellDLObject, elementType: string, species?: string, location?: string,
+                     value?: $rdf.Literal) {
+        const pluginData = <PluginData>celldlObject.pluginData(this.id)
+        const current = this.elementType(celldlObject)
+        if (current !== elementType) {
+            await this.#updateElementType(<ItemDetails>{}, { oldValue: current ?? '', newValue: elementType },
+                                          celldlObject)
+        }
+        if (species !== undefined) {
+            updateItemProperty(BGF.uri('hasSpecies').value, { oldValue: pluginData.species ?? '', newValue: species },
+                               celldlObject)
+            pluginData.species = species
+        }
+        if (location !== undefined) {
+            updateItemProperty(BGF.uri('hasLocation').value,
+                               { oldValue: pluginData.location ?? '', newValue: location }, celldlObject)
+            pluginData.location = location
+        }
+        if (value) {
+            const objectUri = celldlObject.uri.toString()
+            celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+                DELETE WHERE { ${objectUri} bgf:hasValue ?value }`)
+            celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+                INSERT DATA { ${objectUri} bgf:hasValue ${value.toString()} }`)
+        }
+        await this.#updateSvgElement(celldlObject, pluginData.species, pluginData.location)
+    }
+
+    /** Set a bond's bgf:bondCount (1 is left implicit). */
+    setBondCount(connection: CellDLConnection, count: number) {
+        const uri = connection.uri.toString()
+        connection.rdfStore.update(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            DELETE WHERE { ${uri} bgf:bondCount ?count }`)
+        if (count !== 1) {
+            connection.rdfStore.update(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+                INSERT DATA { ${uri} bgf:bondCount ${Math.round(count)} }`)
+        }
+    }
+
+    #lawCache = new Map<string, { label: string, latex: string, svg: string }|null>()
+
+    // a template's constitutive relation (its own or the nearest superclass's) as LaTeX and typeset SVG, and its label
+    #law(templateType: string): { label: string, latex: string, svg: string }|null {
+        if (this.#lawCache.has(templateType)) return this.#lawCache.get(templateType)!
+        let found: { label: string, latex: string, svg: string }|null = null
+        const queue = [templateType], seen = new Set<string>()
+        let label = ''
+        while (queue.length && !found) {
+            const type = queue.shift()!
+            if (seen.has(type)) continue
+            seen.add(type)
+            for (const r of this.#rdfStore.query(`${SPARQL_PREFIXES}
+                SELECT ?relation ?label WHERE {
+                    OPTIONAL { <${type}> bgf:constitutiveRelation ?relation }
+                    OPTIONAL { <${type}> rdfs:label ?label }
+                }`) as Map<string, $rdf.Term>[]) {
+                if (!label && r.get('label')) label = r.get('label')!.value
+                const relation = r.get('relation')?.value
+                if (relation && !found) {
+                    const math = new DOMParser().parseFromString(relation.trim(), 'text/xml').documentElement
+                    const latex = mathmlLatex(math as unknown as MathNode)
+                    found = { label, latex, svg: latex ? latexAsSvgString(latex, true) : '' }
+                }
+            }
+            for (const r of this.#rdfStore.query(`${SPARQL_PREFIXES}
+                SELECT ?super WHERE { <${type}> rdfs:subClassOf ?super }`) as Map<string, $rdf.Term>[]) {
+                queue.push(r.get('super')!.value)
+            }
+        }
+        if (found && !found.label) found.label = label
+        this.#lawCache.set(templateType, found)
+        return found
+    }
+
+    /**
+     * What an element's hover shows (./lawtext.ts): its constitutive law, typeset in its template's symbols, and
+     * each symbol's CellML name (./names.ts) with what the bonds make it: a reaction's u_f and u_r (the potentials
+     * bonded to each side, a transformer's scaled by its ratio), a store's flow (its reactions' flows), a
+     * resistance's potential (the difference across it). '' for an element without a law.
+     */
+    hoverHtml(celldlObject: CellDLObject): string {
+        if (celldlObject.isConnection) return ''
+        const templateType = (<PluginData>celldlObject.pluginData(this.id)).elementTemplate?.type
+        const law = templateType ? this.#law(templateType) : null
+        if (!law) return ''
+        const id = celldlObject.uri.value
+        const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+        // an equation typeset as the law is, its text kept in data-text; the text itself if MathJax rejects it
+        const typeset = (latex: string, text: string) => {
+            let svg: string
+            try { svg = latexAsSvgString(latex, true) } catch { svg = escape(text) }
+            return `<div class="bg-law-line" data-text="${escape(text)}">${svg}</div>`
+        }
+        const elements = this.namingElements()
+        const element = elements.find(e => e.id === id)
+        if (!element) return ''
+        const names = variableNames(elements)
+        const { bonds, nodes } = this.#diagramGraph()
+        const byId = new Map(elements.map(e => [e.id, e]))
+        const portName = (node: string, port: 'flow'|'potential') => {
+            const e = byId.get(node)
+            const domain = e?.domain ? this.#physicalDomains.get(e.domain) : undefined
+            const symbol = port === 'flow' ? (domain?.flow.name ?? 'v') : (domain?.potential.name ?? 'u')
+            return names.get(`${node}|${symbol}`) ?? ''
+        }
+        // what the bonds make a symbol, left out when it is bonded to something unnamed, such as a junction
+        const knownTerms = (terms?: SignedTerm[]) => terms?.every(t => t.name !== '') ? terms : undefined
+        const domain = element.domain ? this.#physicalDomains.get(element.domain) : undefined
+        const u = domain?.potential.name ?? 'u', v = domain?.flow.name ?? 'v'
+        const connected = new Map<string, SignedTerm[]>()
+        if (element.elementClass === BGF.uri('Reaction').value) {
+            const side = (into: boolean) => bonds.flatMap((b): SignedTerm[] => {
+                const other = into ? (b.target === id ? b.source : undefined) : (b.source === id ? b.target : undefined)
+                if (other === undefined) return []
+                const ratio = nodes.get(other)?.transformRatio
+                if (ratio !== undefined) {      // a transformer between this step and a capacitor
+                    const capacitor = into ? bonds.find(c => c.target === other)?.source : bonds.find(c => c.source === other)?.target
+                    return capacitor ? [{ sign: 1, count: into ? ratio : 1 / ratio, name: portName(capacitor, 'potential') }] : []
+                }
+                return [{ sign: 1, count: b.count, name: portName(other, 'potential') }]
+            })
+            connected.set(`${u}_f`, side(true))
+            connected.set(`${u}_r`, side(false))
+        } else if (element.elementClass === BGF.uri('QuantityStore').value) {
+            connected.set(v, bonds.flatMap((b): SignedTerm[] => b.target === id ? [{ sign: 1, count: b.count, name: portName(b.source, 'flow') }]
+                                                      : b.source === id ? [{ sign: -1, count: b.count, name: portName(b.target, 'flow') }]
+                                                      : []))
+        } else if (element.elementClass === BGF.uri('Resistance').value) {
+            connected.set(u, bonds.flatMap((b): SignedTerm[] => b.target === id ? [{ sign: 1, count: 1, name: portName(b.source, 'potential') }]
+                                                      : b.source === id ? [{ sign: -1, count: 1, name: portName(b.target, 'potential') }]
+                                                      : []))
+        }
+        const where = element.variables.map(symbol => ({
+            symbol, name: names.get(`${id}|${symbol}`) ?? symbol, is: knownTerms(connected.get(symbol))
+        }))
+        const whereLatexLines = whereLatex(where)
+        const step = this.reactionEquations().find(eq => eq.id === id)
+        return '<div class="bg-law">'
+            + (step ? `<div class="bg-law-equation">${typeset(equationLatex(step), equationText(step))}</div>` : '')
+            + (law.label ? `<div class="bg-law-label">${escape(law.label)}</div>` : '')
+            + (law.svg ? `<div class="bg-law-math">${law.svg}</div>` : '')
+            + `<div class="bg-law-where">${whereText(where).map((text, k) => typeset(whereLatexLines[k]!, text)).join('')}</div>`
+            + '</div>'
+    }
+
+    hoverText(celldlObject: CellDLObject): string {
+        if (celldlObject.isConnection) return ''
+        const step = this.reactionEquations().find(eq => eq.id === celldlObject.uri.value)
+        return step ? equationText(step) : ''
     }
 
     statusText(celldlObject: CellDLObject): string {
@@ -1196,7 +1505,7 @@ export class BondgraphPlugin implements PluginInterface {
     }
 
     svgDefinitions(): string {
-        return arrowMarkerDefinition('connection-end-arrow-bondgraph', 'bondgraph')
+        return arrowMarker('connection-end-arrow-bondgraph', 'bondgraph')
     }
 
     //==========================================================================

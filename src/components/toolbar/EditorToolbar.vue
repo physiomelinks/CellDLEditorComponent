@@ -3,6 +3,7 @@
         template(#start)
             ToolButton(
                 v-for="button in buttons"
+                :key="button.toolId"
                 :toolId="button.toolId"
                 :active="button?.active"
                 :prompt="button.prompt"

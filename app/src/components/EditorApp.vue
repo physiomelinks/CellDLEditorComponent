@@ -54,6 +54,8 @@
             CellDLEditor.grow(
                 :editorCommand="editorCommand"
                 :options="editorOptions"
+                :chrome="devChrome"
+                :annotations="devAnnotations"
                 :theme="editorTheme"
                 @diagramChanged="onDiagramChanged"
                 @elements="onElements"
@@ -131,7 +133,9 @@ import * as vueCommon from '../utils/vueCommon'
 import CellDLEditor from '../../../src'
 
 import type {
+    Annotations,
     CellDLEditorCommand,
+    EditorChrome,
     DiagramChange,
     EditorData,
     ElementResult,
@@ -346,6 +350,28 @@ function onDiagramChanged(change: DiagramChange) {
 // `results` collect what the editor emits
 
 const editorOptions: SvgViewerOptions = { elementList: import.meta.env.DEV }
+
+// and set the editor's `chrome` and `annotations` (with `options.tooltip`)
+// from `?chrome=<json>` and `?annotations=<json>`, as a host would
+
+function devParameter<T>(name: string): T|undefined {
+    if (!import.meta.env.DEV) {
+        return undefined
+    }
+    const value = new URLSearchParams(window.location.search).get(name)
+    try {
+        return value ? JSON.parse(value) as T : undefined
+    } catch {
+        console.error(`?${name} is not JSON`)
+        return undefined
+    }
+}
+
+const devChrome = devParameter<EditorChrome>('chrome')
+const devAnnotations = devParameter<Annotations>('annotations')
+if (devAnnotations) {
+    editorOptions.tooltip = 'tooltip'
+}
 
 const devElements: ElementsChange[] = []
 const devResults: ElementResult[] = []
