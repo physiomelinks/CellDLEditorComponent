@@ -218,6 +218,11 @@ function propertyStatements(celldlObject: CellDLObject): Statement[] {
     return statements
 }
 
+/** A statement as text, blank nodes included as they are */
+function statementKey(statement: Statement): string {
+    return `${statement.subject.toString()} ${statement.predicate.toString()} ${statement.object.toString()}`
+}
+
 /** The statements as text, with blank nodes named by position, so equal statements compare equal. */
 function statementsKey(statements: Statement[]): string {
     const blankNodes: Map<string, string> = new Map()
@@ -271,13 +276,23 @@ export class PropertiesUndoState extends UndoState {
         return changed
     }
 
-    /** Restores the objects' properties to before or after the edit. */
+    /**
+     * Restores the objects' properties to before or after the edit.
+     *
+     * Only the statements the edit removed or added are swapped, so a later change
+     * that isn't undoable (e.g. to an object's metadata) is kept.
+     */
     async restore(direction: Direction) {
-        const statements = (direction === 'backwards') ? this.#before : this.#after
+        const [from, to] = (direction === 'backwards') ? [this.#after, this.#before] : [this.#before, this.#after]
         for (const object of this.#objects) {
-            object.rdfStore.removeStatements(propertyStatements(object))
-            object.rdfStore.addStatementList(statements.get(object.id) ?? [])
+            const fromStatements = from.get(object.id) ?? []
+            const toStatements = to.get(object.id) ?? []
+            const fromKeys = new Set(fromStatements.map(statementKey))
+            const toKeys = new Set(toStatements.map(statementKey))
+            object.rdfStore.removeStatements(fromStatements.filter(st => !toKeys.has(statementKey(st))))
+            object.rdfStore.addStatementList(toStatements.filter(st => !fromKeys.has(statementKey(st))))
         }
+        // Bring every object's plugin data up to date before any (slower) SVG update
         for (const object of this.#objects) {
             await componentLibraryPlugin.refreshObject(object)
         }
@@ -348,9 +363,14 @@ class UndoRedo {
         return this.#setActiveUndoState(new UndoState(UndoAction.INSERT, undoObject))
     }
 
-    /** Starts an undoable edit of objects' properties; call its `endEdit()` once they are edited. */
+    /**
+     * Starts an undoable edit of objects' properties; pass it to `endPropertiesEdit()`
+     * once they are edited. Nothing is put on the undo stack (and the redo stack
+     * is kept) until the edit is known to have changed something, and the edit is
+     * not the active undo state, so a move ending meanwhile can't remove it.
+     */
     setPropertiesUndoState(objects: CellDLObject[]): PropertiesUndoState {
-        return this.#setActiveUndoState(new PropertiesUndoState(objects)) as PropertiesUndoState
+        return new PropertiesUndoState(objects)
     }
 
     /**
@@ -360,11 +380,8 @@ class UndoRedo {
      */
     endPropertiesEdit(undoState: PropertiesUndoState): boolean {
         const changed = undoState.endEdit()
-        if (!changed && this.#undoStack.at(-1) === undoState) {
-            this.#popUndoStack()
-        }
-        if (this.#activeUndoState === undoState) {
-            this.#activeUndoState = null
+        if (changed) {
+            this.#pushUndoStack(undoState, false)
         }
         return changed
     }
@@ -429,7 +446,9 @@ class UndoRedo {
             } else if (undoState.action === UndoAction.MOVE) {
                 (undoState as MoveUndoState).reposition('forwards')
             } else if (undoState.action === UndoAction.PROPERTIES) {
-                void (undoState as PropertiesUndoState).restore('forwards')
+                // Report the change once the objects are up to date with their RDF
+                void (undoState as PropertiesUndoState).restore('forwards').finally(notifyChanges)
+                return
             }
             notifyChanges()
         }
@@ -446,7 +465,9 @@ class UndoRedo {
             } else if (undoState.action === UndoAction.MOVE) {
                 (undoState as MoveUndoState).reposition('backwards')
             } else if (undoState.action === UndoAction.PROPERTIES) {
-                void (undoState as PropertiesUndoState).restore('backwards')
+                // Report the change once the objects are up to date with their RDF
+                void (undoState as PropertiesUndoState).restore('backwards').finally(notifyChanges)
+                return
             }
             notifyChanges()
         }

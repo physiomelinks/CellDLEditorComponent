@@ -5,6 +5,8 @@ import { countEdits, editor, openFixture, settle, viewerEvents } from './support
 import type { CellDLDiagram } from '#editor/diagram'
 import { type DiagramElement, listElements, setElements } from '#root/plugins/bondgraph/elements'
 import { PANEL_ID } from '#root/utils/editor-types'
+import { updateItemProperty } from '#editor/components/properties'
+import { DCT } from '@celldl/rdf'
 
 //==============================================================================
 
@@ -214,6 +216,36 @@ describe('set', () => {
         await settle()
         expect(await diagram.rdf()).toBe(before)
         expect(element(listElements(diagram), STORE_S).species).toBe('S')
+    })
+
+    test('keeps a later change that isn\'t undoable, such as a description', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        await setElements(editor, diagram, [{ id: STORE_S, field: 'species', value: 'Glc' }])
+        const object = diagram.objectById(STORE_S)
+        expect(object).not.toBeNull()
+        // biome-ignore lint/style/noNonNullAssertion: checked above
+        updateItemProperty(DCT.uri('description').value, { oldValue: '', newValue: 'Glucose' }, object!)
+        editor.undo()
+        await settle()
+        const rdf = await diagram.rdf()
+        expect(element(listElements(diagram), STORE_S).species).toBe('S')
+        expect(rdf).toContain('Glucose')
+        editor.redo()
+        await settle()
+        expect(element(listElements(diagram), STORE_S).species).toBe('Glc')
+        expect(await diagram.rdf()).toContain('Glucose')
+    })
+
+    test('of an unchanged value keeps what redo can reapply', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        await setElements(editor, diagram, [{ id: STORE_S, field: 'species', value: 'Glc' }])
+        const after = await diagram.rdf()
+        editor.undo()
+        await settle()
+        await setElements(editor, diagram, [{ id: STORE_S, field: 'species', value: 'S' }])
+        editor.redo()
+        await settle()
+        expect(await diagram.rdf()).toBe(after)
     })
 
     test('reports a species that can\'t be typeset, and leaves the RDF unchanged', async () => {
