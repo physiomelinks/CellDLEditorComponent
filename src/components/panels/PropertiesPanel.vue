@@ -9,11 +9,14 @@
             template(
                 v-else
             )
+                //- Keyed by the object, so each selection gets fresh widgets rather than the last one's state
                 .group(
                     v-for="group in properties.groups"
+                    :key="`${properties.objectId}/${group.groupId}`"
                 )
                     InputWidget(
                         v-for="item in group.items"
+                        :key="`${properties.objectId}/${item.itemId}`"
                         v-model="item.value"
                         :itemId="item.itemId"
                         :name="item.name"
@@ -24,6 +27,7 @@
                         :minimumValue="item.minimumValue"
                         :possibleValues="item.possibleValues"
                         :stepValue="item.stepValue"
+                        :stored="item.stored"
                         @change="updateProperties"
                     )
 </template>

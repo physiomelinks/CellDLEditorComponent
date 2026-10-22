@@ -42,6 +42,8 @@ export type ItemDetails = locApi.IUiJsonInput & {
     units?: string
     optional?: boolean
     numeric?: boolean
+    /** `false` when the shown value is a default the object doesn't store */
+    stored?: boolean
 }
 
 export interface PropertyGroup {

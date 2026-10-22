@@ -93,7 +93,8 @@ export function getItemProperty(celldlObject: CellDLObject,
         if (!itemTemplate.optional) {
             return Object.assign({
                 ...itemTemplate,
-                value: itemTemplate.defaultValue || ''
+                value: itemTemplate.defaultValue || '',
+                stored: false
             })
         }
         return undefined
