@@ -1342,7 +1342,7 @@ export class CellDLEditor {
     }
 
     #keyDownEvent(event: KeyboardEvent) {
-        if (this.#celldlDiagram === null || event.defaultPrevented) {
+        if (this.#celldlDiagram === null || event.defaultPrevented || this.#focusElsewhere(event.target)) {
             return
         }
         // Keys in a text field are the field's, wherever it is
@@ -1368,6 +1368,18 @@ export class CellDLEditor {
                 }
             }
         }
+    }
+
+    /**
+     * Whether a key went to something focused outside the editor, such as a host's table or button, whose keys
+     * aren't the editor's. The canvas takes no focus, so its keys go to the body.
+     */
+    #focusElsewhere(target: EventTarget|null): boolean {
+        if (!(target instanceof Element) || target === document.body || target === document.documentElement) {
+            return false
+        }
+        const root = this.#container?.closest('.celldl-editor') ?? this.#container
+        return !root?.contains(target)
     }
 
     /** Escape closes just the innermost thing open: a popup, a partial bond, a selection box, then the armed tool. */
