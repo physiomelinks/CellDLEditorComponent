@@ -121,6 +121,7 @@ import { OPEN_LINK_DELAY, SHORT_DELAY } from '../utils/constants'
 import { celldl2cellml } from '../utils/cellml'
 import { isCompatibleBrowser } from '../utils/common'
 import { decodeCellDLLink, loadFromLink } from '../utils/openLink'
+import { safeCellDL } from '../utils/safeCellDL'
 import * as version from '../utils/version'
 import * as vueCommon from '../utils/vueCommon'
 
@@ -462,7 +463,8 @@ async function openLinkedDocument() {
     const name = new URLSearchParams(window.location.search).get('name') || 'Linked diagram'
     await loadFromLink({
         celldl: (data: string) => {
-            openDocument(decodeCellDLLink(data), name)
+            // A link's document may come from anywhere, so nothing in it may run
+            openDocument(safeCellDL(decodeCellDLLink(data)), name)
         }
     }, onError)
 }
