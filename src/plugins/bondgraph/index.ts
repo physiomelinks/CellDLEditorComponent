@@ -293,6 +293,10 @@ const BG_STYLING_TEMPLATE: PropertyGroup = {
 //==============================================================================
 
 const DEFAULT_TRANSFORM_RATIO = 1
+
+/** The value a parameter gets when its element's template is chosen */
+const DEFAULT_PARAMETER_VALUE = 1
+
 const TRANSFORM_NODE_PROMPT = 'Ratio'
 
 //==============================================================================
@@ -757,8 +761,24 @@ export class BondgraphPlugin implements PluginInterface {
                 const valueUnits = values.get(varName)!.split(' ')
                 item.value = valueUnits[0]
                 item.units = valueUnits[1]
+                item.stored = true
+            } else {
+                item.stored = false
             }
         })
+    }
+
+    /** Stores `DEFAULT_PARAMETER_VALUE` for each parameter shown with an unstored default. */
+    #storeDefaultParameters(celldlObject: CellDLObject, group: PropertyGroup, elementTemplate: ElementTemplate) {
+        for (const item of group.items) {
+            if (item.stored === false) {
+                const value = String(DEFAULT_PARAMETER_VALUE)
+                this.#updateVariableProperties({ oldValue: '', newValue: value }, group.groupId,
+                                               item.itemId, celldlObject, elementTemplate)
+                item.value = value
+                item.stored = true
+            }
+        }
     }
 
     //==========================================================================
@@ -896,6 +916,8 @@ export class BondgraphPlugin implements PluginInterface {
                         if (elementTemplate?.parameters) {
                             this.#setVariableItems(elementTemplate.parameters, componentGroup)
                             this.#loadVariableItems(celldlObject, componentGroup)
+                            // A new template's parameters start at a stored value, not an unstored 0
+                            this.#storeDefaultParameters(celldlObject, componentGroup, elementTemplate)
                         }
                     } else if (componentGroup.groupId === BG_PROPERTY_GROUP_ID.ElementVariables) {
                         // Remove any existing variable values

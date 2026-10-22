@@ -71,15 +71,26 @@ const props = defineProps<{
     numeric?: boolean
     possibleValues?: locApi.IUiJsonDiscreteInputPossibleValue[]
     stepValue?: number
+    stored?: boolean
 }>()
 
 const nameUnits = vue.computed(() => props.units ? `${props.name} (${props.units})` : props.name)
 
 const scalarType = !!props.numeric
 
-let oldValue = (props.possibleValues === undefined)
-             ? inputValue.value
-             : (inputValue.value as locApi.IUiJsonDiscreteInputPossibleValue).value
+// Whether this widget has committed a value, which the object then stores
+let committed = false
+
+/** The value the object stores; a shown default that isn't stored has none, so committing it stores it. */
+function storedValue(): ValueType|undefined {
+    return (props.stored === false && !committed)
+         ? undefined
+         : (props.possibleValues === undefined)
+         ? inputValue.value
+         : (inputValue.value as locApi.IUiJsonDiscreteInputPossibleValue)?.value
+}
+
+let oldValue = storedValue()
 
 const discreteValue = vue.computed<locApi.IUiJsonDiscreteInputPossibleValue>({
     get() {
@@ -93,18 +104,23 @@ const scalarValue = vue.ref<number>(Number(inputValue.value))
 const stringValue = vue.ref<string>(String(inputValue.value))
 
 vue.watch(
-    () => props.value,
+    () => [props.value, props.stored],
     () => {
         if (scalarType) {
             scalarValue.value = Number(props.value)
             stringValue.value = String(inputValue.value)
         }
+        // The value was set from outside, e.g. by choosing a template
+        oldValue = storedValue()
     }
 )
 
 // Some methods to handle a scalar value using an input text and a slider.
 
 function emitChange(newValue: number | string) {
+    const previousValue = oldValue
+    oldValue = newValue
+    committed = true
     void vue.nextTick().then(() => {
         if (scalarType && props.possibleValues === undefined) {
             inputValue.value = newValue
@@ -112,8 +128,7 @@ function emitChange(newValue: number | string) {
             stringValue.value = String(newValue) // This will properly format the input text.
         }
 
-        emits('change', props.itemId, oldValue, newValue)
-        oldValue = newValue
+        emits('change', props.itemId, previousValue, newValue)
     })
 }
 
@@ -127,6 +142,8 @@ interface ISelectChangeEvent {
 function selectChange(event: ISelectChangeEvent) {
     if (event.value.value !== oldValue) {
         emitChange(event.value.value)
+        // Show the choice, which a later reload would otherwise replace with the old one
+        inputValue.value = event.value
     }
 }
 

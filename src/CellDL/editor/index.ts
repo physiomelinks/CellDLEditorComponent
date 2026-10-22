@@ -177,6 +177,8 @@ export class CellDLEditor {
     #boxMaking: boolean = false
 
     #pointerDownTime: number = 0
+    // A click counts only when it started on the canvas, not when a closing popup's click lands there
+    #pointerDownInContainer: boolean = false
     #pointerDownPosn: PointLike = { x: 0, y: 0 }
     #pointerEventHandlers: Map<string, PointerEventHandler> = new Map()
 
@@ -828,7 +830,9 @@ export class CellDLEditor {
     }
 
     #pointerClickEvent(event: MouseEvent) {
-        if (this.#handlePointerEvents(event)) {
+        const startedHere = this.#pointerDownInContainer
+        this.#pointerDownInContainer = false
+        if (!startedHere || this.#handlePointerEvents(event)) {
             return
         }
         const element = event.target as SVGGraphicsElement
@@ -1028,6 +1032,7 @@ export class CellDLEditor {
     }
 
     #pointerDownEvent(event: PointerEvent) {
+        this.#pointerDownInContainer = true
         this.#pointerDownPosn = { x: event.clientX, y: event.clientY }
         this.#hideAnnotationTooltip()
         if (this.#handlePointerEvents(event)) {
