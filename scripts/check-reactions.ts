@@ -12,6 +12,7 @@
 import { spawn } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { basename, join, resolve } from 'node:path'
 
 const [document, out] = process.argv.slice(2)
@@ -58,7 +59,7 @@ async function pageSocket(): Promise<WebSocket> {
                 return socket
             }
         } catch { /* not listening yet */ }
-        await Bun.sleep(200)
+        await sleep(200)
     }
     throw new Error(`${chrome} did not start`)
 }
@@ -212,7 +213,7 @@ try {
 } finally {
     browser.kill()
     vite.kill()
-    await Bun.sleep(500)
+    await sleep(500)
     rmSync(profile, { recursive: true, force: true })
 }
 process.exit(failed ? 1 : 0)
