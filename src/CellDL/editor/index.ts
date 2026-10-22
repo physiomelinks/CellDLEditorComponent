@@ -265,6 +265,9 @@ export class CellDLEditor {
     #selectedEventObjects: Map<string, CellDLObject> = new Map()
     #selectionClicking: boolean = false
 
+    // Events about this editor's diagram, for code that must not hear another editor's
+    #events = new EventTarget()
+
     constructor() {
         CellDLEditor.instance = this
 
@@ -499,6 +502,23 @@ export class CellDLEditor {
         this.#selectedEventObjects.clear()
         this.#hideAnnotationTooltip()
         this.selectionSet.clear()
+
+        this.#events.dispatchEvent(new CustomEvent('diagram-opened', { detail: { diagram: celldlDiagram } }))
+    }
+
+    /**
+     * Listens for an event about this editor's diagram, rather than any editor's,
+     * as a host may have several editors.
+     *
+     * `'diagram-opened'`: a diagram has been opened (or a new one started) and
+     * is ready to edit; its `detail.diagram` is the `CellDLDiagram`.
+     */
+    addEventListener(type: 'diagram-opened', listener: EventListener) {
+        this.#events.addEventListener(type, listener)
+    }
+
+    removeEventListener(type: 'diagram-opened', listener: EventListener) {
+        this.#events.removeEventListener(type, listener)
     }
 
     closeDiagram() {
