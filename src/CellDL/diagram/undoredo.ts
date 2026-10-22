@@ -19,6 +19,7 @@ limitations under the License.
 ******************************************************************************/
 
 import type { NormalArray } from 'svg-path-commander'
+import * as vue from 'vue'
 
 import { type CellDLConnectedObject, type CellDLConnection, CellDLObject } from '#editor/celldlObjects'
 import type { CellDLDiagram } from '#editor/diagram'
@@ -187,6 +188,14 @@ export class MoveUndoState extends UndoState {
 
 //==============================================================================
 
+/** Whether there is anything to undo or redo, for the toolbar's buttons */
+export const undoRedoState = vue.reactive({
+    canUndo: false,
+    canRedo: false
+})
+
+//==============================================================================
+
 class UndoRedo {
     static #instance: UndoRedo | null = null
 
@@ -215,7 +224,12 @@ class UndoRedo {
     clean() {
         this.#redoStack = []
         this.#undoStack = []
-        // notify CLEAN
+        this.#updateState()
+    }
+
+    #updateState() {
+        undoRedoState.canUndo = this.#undoStack.length > 0
+        undoRedoState.canRedo = this.#redoStack.length > 0
     }
 
     resetActiveUndoState() {
@@ -242,16 +256,14 @@ class UndoRedo {
     #clearRedoStack() {
         if (this.#redoStack.length) {
             this.#redoStack = []
-            // notify no REDO
+            this.#updateState()
         }
     }
 
     #popRedoStack(): UndoState | null {
         if (this.#redoStack.length) {
             const undoState = this.#redoStack.pop() || null
-            if (this.#redoStack.length === 0) {
-            // notify no REDO
-            }
+            this.#updateState()
             return undoState
         }
         return null
@@ -259,17 +271,13 @@ class UndoRedo {
 
     #pushRedoStack(undoState: UndoState) {
         this.#redoStack.push(undoState)
-        if (this.#redoStack.length === 1) {
-            // notify can REDO
-        }
+        this.#updateState()
     }
 
     #popUndoStack(): UndoState | null {
         if (this.#undoStack.length) {
             const undoState = this.#undoStack.pop() as UndoState
-            if (this.#undoStack.length === 0) {
-                // notify CLEAN
-            }
+            this.#updateState()
             return undoState
         }
         return null
@@ -280,6 +288,7 @@ class UndoRedo {
         if (!reDoing) {
             this.#clearRedoStack() // Can no longer redo once there are new items
         }
+        this.#updateState()
         return undoState
     }
 

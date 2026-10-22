@@ -98,6 +98,32 @@ const DEFAULT_EDITOR_MODE = EDITOR_MODE.Selecting
 
 //==============================================================================
 
+/** Whether a PrimeVue overlay (a dropdown, menu or popover) is open, which closes itself on Escape. */
+function popupOpen(): boolean {
+    return document.querySelector('.p-select-overlay, .p-contextmenu, .p-popover, .p-autocomplete-overlay') !== null
+}
+
+/** Whether a toolbar tool's popover, such as the bond graph palette, is showing. */
+function toolPopoverOpen(): boolean {
+    return document.querySelector('.celldl-editor .popover:not(.hidden)') !== null
+}
+
+/** Whether a key event's target takes typed text. */
+function isTextField(target: EventTarget|null): boolean {
+    if (!(target instanceof HTMLElement)) {
+        return false
+    }
+    if (target.isContentEditable || target instanceof HTMLTextAreaElement) {
+        return true
+    }
+    if (target instanceof HTMLInputElement) {
+        return !['button', 'checkbox', 'radio', 'range', 'reset', 'submit', 'color', 'file'].includes(target.type)
+    }
+    return false
+}
+
+//==============================================================================
+
 export enum CONTEXT_MENU {
     DELETE = 'menu-delete',
     EDIT_GROUP = 'menu-edit-group',
@@ -154,7 +180,6 @@ export class CellDLEditor {
     #dirty: boolean = false
 
     #dragging: boolean = false
-    #haveFocus: boolean = true
 
     #pathMaker: PathMaker | null = null
     #nextPathNode: PathNode | null = null
@@ -179,6 +204,10 @@ export class CellDLEditor {
     #pointerDownTime: number = 0
     // A click counts only when it started on the canvas, not when a closing popup's click lands there
     #pointerDownInContainer: boolean = false
+    // Set when pointer up has already made a click's selection, so the click itself is ignored
+    #clickDoneOnPointerUp: boolean = false
+    // Whether a popup was open when the current key went down
+    #popupOpenAtKeyDown: boolean = false
     #pointerDownPosn: PointLike = { x: 0, y: 0 }
     #pointerEventHandlers: Map<string, PointerEventHandler> = new Map()
 
@@ -252,11 +281,8 @@ export class CellDLEditor {
         this.#container.addEventListener('pointermove', this.#pointerMoveEvent.bind(this))
         this.#container.addEventListener('pointerup', this.#pointerUpEvent.bind(this))
 
-        // Editor content focus handlers
-        document.addEventListener('focusin', this.#focusEvent.bind(this))
-        document.addEventListener('focusout', this.#focusEvent.bind(this))
-
-        // Keyboard handlers
+        // Keyboard handlers. A popup's own handler may close it before ours runs, so note first whether one is open
+        window.addEventListener('keydown', this.#keyDownCaptureEvent.bind(this), true)
         window.addEventListener('keydown', this.#keyDownEvent.bind(this))
         window.addEventListener('keyup', this.#keyUpEvent.bind(this))
 
@@ -284,11 +310,13 @@ export class CellDLEditor {
         this.#container.addEventListener('contextmenu', (event) => {
             this.#hideAnnotationTooltip()
             const element = event.target as SVGGraphicsElement
-            const clickedObject = this.#celldlDiagram!.objectById(getElementId(element))
-            if (clickedObject && clickedObject === this.currentObject) {
-                // This is to select the object that's had a right click
+            const clickedObject = this.#objectAt(element)
+            if (clickedObject && !this.selectionSet.has(clickedObject)) {
+                // The menu acts on what was right clicked, unless that's already part of the selection
+                this.selectionSet.clear()
                 this.setSelectedObject(clickedObject)
             }
+            this.enableContextMenuItem(CONTEXT_MENU.DELETE, this.selectionSet.size > 0)
             document.dispatchEvent(new CustomEvent('open-context-menu', {
                 detail: {
                     state: this.#contextMenuActiveItems,
@@ -442,6 +470,7 @@ export class CellDLEditor {
 
         // Set initial mode
         this.#editorMode = DEFAULT_EDITOR_MODE
+        this.#notifyEditorMode()
         this.currentObject = null
         this.pointerMoved = false
         this.#activeObjects.clear()
@@ -465,6 +494,57 @@ export class CellDLEditor {
         }
     }
 
+    /** Undoes the last change, after cancelling any partial bond or selection box. */
+    undo() {
+        if (this.#celldlDiagram === null) {
+            return
+        }
+        if (this.#cancelPartialPath()) {
+            // Undoing a bond being drawn just removes it
+            return
+        }
+        // A selection box would no longer surround what it selects
+        this.#closeBoxMaker()
+        undoRedo.undo(this.#celldlDiagram)
+    }
+
+    /** Redoes the last undone change. */
+    redo() {
+        if (this.#celldlDiagram === null) {
+            return
+        }
+        this.#cancelPartialPath()
+        this.#closeBoxMaker()
+        undoRedo.redo(this.#celldlDiagram)
+    }
+
+    #cancelPartialPath(): boolean {
+        if (this.#pathMaker) {
+            this.#pathMaker.close()
+            this.#pathMaker = null
+            return true
+        }
+        return false
+    }
+
+    /** Tells the toolbar which tool is armed, for its indicator. */
+    #notifyEditorMode() {
+        let label = ''
+        if (this.#editorMode === EDITOR_MODE.AddingComponent) {
+            const name = this.#currentTemplateDetails
+                       ? componentLibraryPlugin.getObjectTemplateById(this.#currentTemplateDetails.id)?.name
+                       : undefined
+            label = `Adding ${name || 'elements'}`
+        } else if (this.#editorMode === EDITOR_MODE.PathDrawing) {
+            label = 'Drawing bonds'
+        } else if (this.#editorMode === EDITOR_MODE.DrawCompartment) {
+            label = 'Drawing compartments'
+        }
+        document.dispatchEvent(new CustomEvent('editor-mode', {
+            detail: { mode: this.#editorMode, label }
+        }))
+    }
+
     resetObjectStates() {
         this.unsetSelectedObjects()
         this.#unsetActiveObjects()
@@ -474,6 +554,8 @@ export class CellDLEditor {
         if (this.#editorMode === EDITOR_MODE.PathDrawing
          || this.#editorMode === EDITOR_MODE.DrawCompartment) {
             this.#svgDiagram?.style.setProperty('cursor', 'crosshair')
+        } else if (this.#editorMode === EDITOR_MODE.AddingComponent) {
+            this.#svgDiagram?.style.setProperty('cursor', 'copy')
         } else {
             this.#svgDiagram?.style.removeProperty('cursor')
         }
@@ -497,11 +579,9 @@ export class CellDLEditor {
         this.#closeBoxMaker()
         if (this.#editorMode !== EDITOR_MODE.PathDrawing) {
             // Remove any partial path from editor frame...
-            if (this.#pathMaker) {
-                this.#pathMaker.close()
-                this.#pathMaker = null
-            }
+            this.#cancelPartialPath()
         }
+        this.#notifyEditorMode()
     }
 
     #toolBarEvent(event: Event) {
@@ -700,6 +780,9 @@ export class CellDLEditor {
     }
 
     #deleteSelectedObjects() {
+        if (this.selectionSet.size === 0) {
+            return
+        }
         this.#unsetActiveObjects()
         this.selectionSet.deleteObjects()
         if (this.#boxMaker) {
@@ -729,15 +812,15 @@ export class CellDLEditor {
     #componentTemplateSelectedEvent(event: Event) {
         // A component's template has been selected in a tool
 
-        this.#changeMode(EDITOR_MODE.AddingComponent)
         this.#currentTemplateDetails = (<CustomEvent>event).detail
+        this.#changeMode(EDITOR_MODE.AddingComponent)
     }
 
     #connectionStyleEvent(event: Event) {
         // A connection style has been selected in a tool
 
-        this.#changeMode(EDITOR_MODE.PathDrawing)
         this.#drawConnectionSettings.style = (<CustomEvent>event).detail.style
+        this.#changeMode(EDITOR_MODE.PathDrawing)
     }
 
     #celldlDrawingEvent(event: Event) {
@@ -803,6 +886,10 @@ export class CellDLEditor {
     }
 
     #objectClickEvent(event: Event) {
+        if (this.#clickDoneOnPointerUp) {
+            this.#clickDoneOnPointerUp = false
+            return
+        }
         if (this.#editorMode === EDITOR_MODE.Selecting) {
             const detail = (<CustomEvent>event).detail
             const clickedObject: CellDLObject = detail.clickedObject
@@ -832,6 +919,10 @@ export class CellDLEditor {
     #pointerClickEvent(event: MouseEvent) {
         const startedHere = this.#pointerDownInContainer
         this.#pointerDownInContainer = false
+        if (this.#clickDoneOnPointerUp) {
+            this.#clickDoneOnPointerUp = false
+            return
+        }
         if (!startedHere || this.#handlePointerEvents(event)) {
             return
         }
@@ -859,19 +950,33 @@ export class CellDLEditor {
                 }
             }
         } else if (this.#editorMode === EDITOR_MODE.Selecting) {
-            // Report unselections once the click's selection changes are complete
-            this.#selectionClicking = true
-            try {
-                this.#selectionClickEvent(event, element, clickedObject)
-            } finally {
-                this.#selectionClicking = false
-            }
-            this.#emitUnselectEvents()
-            if (clickedObject && this.selectionSet.has(clickedObject) && !this.#pointerDragged(event)) {
-                this.#selectedEventObjects.set(clickedObject.id, clickedObject)
-                this.#emitViewerEvent('select', clickedObject)
-            }
+            this.#selectingClick(event, element, clickedObject)
         }
+    }
+
+    #selectingClick(event: MouseEvent, element: SVGGraphicsElement, clickedObject: CellDLObject|null) {
+        // Report unselections once the click's selection changes are complete
+        this.#selectionClicking = true
+        try {
+            this.#selectionClickEvent(event, element, clickedObject)
+        } finally {
+            this.#selectionClicking = false
+        }
+        this.#emitUnselectEvents()
+        if (clickedObject && this.selectionSet.has(clickedObject) && !this.#pointerDragged(event)) {
+            this.#selectedEventObjects.set(clickedObject.id, clickedObject)
+            this.#emitViewerEvent('select', clickedObject)
+        }
+    }
+
+    /** The diagram object an element belongs to, including a bond's control handle. */
+    #objectAt(element: SVGGraphicsElement): CellDLObject|null {
+        const object = this.#celldlDiagram?.objectById(getElementId(element)) ?? null
+        if (object === null && element.classList?.contains('control-point')
+         && this.currentObject?.isConnection) {
+            return this.currentObject
+        }
+        return object
     }
 
     #pointerDragged(event: MouseEvent): boolean {
@@ -1033,6 +1138,7 @@ export class CellDLEditor {
 
     #pointerDownEvent(event: PointerEvent) {
         this.#pointerDownInContainer = true
+        this.#clickDoneOnPointerUp = false
         this.#pointerDownPosn = { x: event.clientX, y: event.clientY }
         this.#hideAnnotationTooltip()
         if (this.#handlePointerEvents(event)) {
@@ -1201,6 +1307,13 @@ export class CellDLEditor {
                     undoRedo.resetActiveUndoState()
                     this.#moveUndoState.reposition('backwards')
                     this.#moveUndoState = null
+                    if (this.#editorMode === EDITOR_MODE.Selecting && this.currentObject.isConnection
+                     && (event.target as Element).classList?.contains('control-point')) {
+                        // Repositioning redraws a bond's control handles, so a click on one
+                        // never arrives: select the bond now
+                        this.#selectingClick(event, event.target as SVGGraphicsElement, this.currentObject)
+                        this.#clickDoneOnPointerUp = true
+                    }
                 }
                 if (this.#movingBoxContents) {
                     this.#movingBoxContents = false
@@ -1229,37 +1342,66 @@ export class CellDLEditor {
         }
     }
 
-    #focusEvent(event: FocusEvent) {
-        // Detect when no input fields have focus
-        this.#haveFocus = event.type === 'focusout'
+    #keyDownCaptureEvent(event: KeyboardEvent) {
+        this.#popupOpenAtKeyDown = event.key === 'Escape' && popupOpen()
     }
 
     #keyDownEvent(event: KeyboardEvent) {
-        if (this.#editorMode === EDITOR_MODE.PathDrawing
-         && (event.key === 'Escape' || event.key === 'Backspace')) {
-            if (this.#pathMaker) {
-                // Remove any partial path
-                this.#pathMaker.close()
-                this.#pathMaker = null
-            }
-        } else if (event.key === 'Backspace') {
-            if (this.#haveFocus) {
-                this.#deleteSelectedObjects()
-            } else if (event.target === document.body) {
-                // Prevent the default browser action (navigating back)
+        if (this.#celldlDiagram === null || event.defaultPrevented || this.#focusElsewhere(event.target)) {
+            return
+        }
+        // Keys in a text field are the field's, wherever it is
+        const inTextField = isTextField(event.target)
+        if (isMacOs() ? event.metaKey : event.ctrlKey) {
+            const key = event.key.toLowerCase()
+            if (!inTextField && !event.altKey && (key === 'z' || key === 'y')) {
                 event.preventDefault()
+                if (key === 'z' && !event.shiftKey) {
+                    this.undo()
+                } else {
+                    this.redo()
+                }
             }
-        } else if (this.#editorMode === EDITOR_MODE.Selecting
-            && (isMacOs() && event.metaKey
-            || !isMacOs() && event.ctrlKey)) {
-            if (event.key === 'z' && !event.shiftKey) {
-                // A selection box would no longer surround what it selects
-                this.#closeBoxMaker()
-                undoRedo.undo(this.#celldlDiagram!)
-            } else if (event.key === 'Z' || event.key === 'z' && event.shiftKey) {
-                this.#closeBoxMaker()
-                undoRedo.redo(this.#celldlDiagram!)
+        } else if (event.key === 'Escape') {
+            this.#escapeKey()
+        } else if (event.key === 'Backspace' || event.key === 'Delete') {
+            if (!inTextField) {
+                // Backspace would otherwise navigate back
+                event.preventDefault()
+                if (!this.#cancelPartialPath()) {
+                    this.#deleteSelectedObjects()
+                }
             }
+        }
+    }
+
+    /**
+     * Whether a key went to something focused outside the editor, such as a host's table or button, whose keys
+     * aren't the editor's. The canvas takes no focus, so its keys go to the body.
+     */
+    #focusElsewhere(target: EventTarget|null): boolean {
+        if (!(target instanceof Element) || target === document.body || target === document.documentElement) {
+            return false
+        }
+        const root = this.#container?.closest('.celldl-editor') ?? this.#container
+        return !root?.contains(target)
+    }
+
+    /** Escape closes just the innermost thing open: a popup, a partial bond, a selection box, then the armed tool. */
+    #escapeKey() {
+        if (this.#popupOpenAtKeyDown) {
+            return
+        }
+        if (toolPopoverOpen()) {
+            document.dispatchEvent(new CustomEvent('close-tool-popover'))
+        } else if (this.#cancelPartialPath()) {
+            return
+        } else if (this.#boxMaker) {
+            this.#closeBoxMaker()
+        } else if (this.#editorMode !== EDITOR_MODE.Selecting) {
+            this.#changeMode(EDITOR_MODE.Selecting)
+            // Show the Selection tool as the toolbar's active one
+            document.dispatchEvent(new CustomEvent('editor-reset-tools'))
         }
     }
 
