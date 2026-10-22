@@ -809,8 +809,10 @@ export class BondgraphPlugin implements PluginInterface {
             const e = byId.get(node)
             const domain = e?.domain ? this.#physicalDomains.get(e.domain) : undefined
             const symbol = port === 'flow' ? (domain?.flow.name ?? 'v') : (domain?.potential.name ?? 'u')
-            return names.get(`${node}|${symbol}`) ?? symbol
+            return names.get(`${node}|${symbol}`) ?? ''
         }
+        // what the bonds make a symbol, left out when it is bonded to something unnamed, such as a junction
+        const knownTerms = (terms?: SignedTerm[]) => terms?.every(t => t.name !== '') ? terms : undefined
         const domain = element.domain ? this.#physicalDomains.get(element.domain) : undefined
         const u = domain?.potential.name ?? 'u', v = domain?.flow.name ?? 'v'
         const connected = new Map<string, SignedTerm[]>()
@@ -837,7 +839,7 @@ export class BondgraphPlugin implements PluginInterface {
                                                       : []))
         }
         const where = element.variables.map(symbol => ({
-            symbol, name: names.get(`${id}|${symbol}`) ?? symbol, is: connected.get(symbol)
+            symbol, name: names.get(`${id}|${symbol}`) ?? symbol, is: knownTerms(connected.get(symbol))
         }))
         const whereLatexLines = whereLatex(where)
         const step = this.reactionEquations().find(eq => eq.id === id)
