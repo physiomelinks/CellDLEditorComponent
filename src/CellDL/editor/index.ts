@@ -1665,8 +1665,14 @@ export class CellDLEditor {
         return bounds
     }
 
-    /** `+` or `=` zooms in, `-` out, and Shift+1 fits the diagram */
+    /**
+     * `+` or `=` zooms in, `-` out, and Shift+1 fits the diagram. Not with Ctrl or Cmd, which zoom the
+     * browser, nor while the editor is hidden, such as parked inert by a host.
+     */
     #zoomKey(event: KeyboardEvent): boolean {
+        if (event.ctrlKey || event.metaKey || this.#hidden()) {
+            return false
+        }
         if (event.key === '+' || event.key === '=') {
             this.zoomIn()
         } else if (event.key === '-' || event.key === '_') {
@@ -1677,6 +1683,12 @@ export class CellDLEditor {
             return false
         }
         return true
+    }
+
+    /** Whether the canvas can't be seen: not laid out, or inside an inert element */
+    #hidden(): boolean {
+        const container = this.#container
+        return !container || container.getClientRects().length === 0 || container.closest('[inert]') !== null
     }
 
     //==========================================================================
@@ -1701,7 +1713,8 @@ export class CellDLEditor {
      * @returns Whether anything moved.
      */
     arrangeSelection(op: ArrangeOp): boolean {
-        if (this.#celldlDiagram === null || this.moving) {
+        // Not while dragging, nor while a bond is being drawn, whose path would lose its ends
+        if (this.#celldlDiagram === null || this.moving || this.#pathMaker !== null) {
             return false
         }
         const objects = this.#arrangeableObjects()

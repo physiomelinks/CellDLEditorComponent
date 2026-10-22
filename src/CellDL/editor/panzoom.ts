@@ -122,6 +122,7 @@ export default class PanZoom {
         this.#svgDiagram = null
         this.#panning = false
         this.#scale = 1.0
+        this.#viewChanged?.(this.#scale)
     }
 
     /**
