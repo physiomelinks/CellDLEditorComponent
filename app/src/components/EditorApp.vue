@@ -17,6 +17,7 @@
             .flex.items-baseline
                 MainMenu(
                 :id="mainMenuId"
+                    :arrowStyle="arrowStyle"
                     :haveFile="haveFile"
                     :fileModified="fileModified"
                     :editorStatus="editorStatus"
@@ -56,6 +57,7 @@
                 :options="editorOptions"
                 :chrome="devChrome"
                 :annotations="devAnnotations"
+                :arrowStyle="arrowStyle"
                 :theme="editorTheme"
                 @diagramChanged="onDiagramChanged"
                 @elements="onElements"
@@ -134,6 +136,7 @@ import CellDLEditor from '../../../src'
 
 import type {
     Annotations,
+    ArrowStyle,
     CellDLEditorCommand,
     EditorChrome,
     DiagramChange,
@@ -147,6 +150,7 @@ import type {
 } from '../../../src'
 import { editorInitialised, EditorStatus } from '../../../src'
 import { DEFAULT_VIEW_STATE } from '../../../src'
+import { ARROW_STYLES, DEFAULT_ARROW_STYLE } from '../../../src'
 
 //==============================================================================
 
@@ -681,8 +685,39 @@ function onEditAction(action: string) {
 
 const viewState = vue.ref<ViewState>({ ...DEFAULT_VIEW_STATE })
 
-function onViewAction(action: string, value: number|boolean) {
-    if (action === 'show-grid') {
+//==============================================================================
+
+// Bonds' arrowheads, the viewer's choice: from `?arrowStyle=` (for tests) or as last chosen
+
+const ARROW_STYLE_KEY = 'celldl-editor-arrow-style'
+
+function initialArrowStyle(): ArrowStyle {
+    let style: string|null = new URLSearchParams(window.location.search).get('arrowStyle')
+    if (!style) {
+        try {
+            style = window.localStorage.getItem(ARROW_STYLE_KEY)
+        } catch {
+            style = null
+        }
+    }
+    return ARROW_STYLES.includes(style as ArrowStyle) ? style as ArrowStyle : DEFAULT_ARROW_STYLE
+}
+
+const arrowStyle = vue.ref<ArrowStyle>(initialArrowStyle())
+
+function setArrowStyle(style: ArrowStyle) {
+    arrowStyle.value = style
+    try {
+        window.localStorage.setItem(ARROW_STYLE_KEY, style)
+    } catch {
+        // Not remembered
+    }
+}
+
+function onViewAction(action: string, value: number|boolean|string) {
+    if (action === 'arrow-style') {
+        setArrowStyle(value as ArrowStyle)
+    } else if (action === 'show-grid') {
         viewState.value = { ...viewState.value, showGrid: !!value }
         editorCommand.value = {
             command: 'view',
