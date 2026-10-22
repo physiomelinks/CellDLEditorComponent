@@ -4,6 +4,7 @@
             Select(
                 v-model="discreteValue"
                 :options="possibleValues"
+                :disabled="readonly"
                 optionLabel="name"
                 @change="selectChange"
                 class="w-full"
@@ -147,6 +148,9 @@ interface ISelectChangeEvent {
 }
 
 function selectChange(event: ISelectChangeEvent) {
+    if (props.readonly) {
+        return
+    }
     if (event.value.value !== oldValue) {
         emitChange(event.value.value)
         // Show the choice, which a later reload would otherwise replace with the old one
