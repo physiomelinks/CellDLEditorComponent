@@ -54,6 +54,8 @@ export type {
     Theme
 } from '#root/components/WrappedEditor.vue'
 
+export type { ValuesMode } from '#root/plugins/bondgraph/values'
+
 export type {
     DiagramElement,
     ElementEdit,

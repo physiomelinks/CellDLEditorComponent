@@ -14,6 +14,10 @@
                     v-for="group in properties.groups"
                     :key="`${properties.objectId}/${group.groupId}`"
                 )
+                    .values-hint(
+                        v-if="valuesChrome.hint && group.groupId === hintGroupId"
+                        role="note"
+                    ) {{ valuesChrome.hint }}
                     InputWidget(
                         v-for="item in group.items"
                         :key="`${properties.objectId}/${item.itemId}`"
@@ -28,6 +32,7 @@
                         :possibleValues="item.possibleValues"
                         :stepValue="item.stepValue"
                         :stored="item.stored"
+                        :readonly="isReadonlyItem(item.itemId, valuesChrome.mode)"
                         @change="updateProperties"
                     )
 </template>
@@ -42,6 +47,13 @@ useThemeCssVariables('accordionpanel')
 
 import type { ComponentProperties } from '#root/utils/editor-types'
 
+import {
+    isReadonlyItem,
+    VALUES_CHROME_KEY,
+    type ValuesChrome,
+    valuesHintGroupId
+} from '#root/plugins/bondgraph/values'
+
 import InputWidget from '../widgets/InputWidget.vue'
 
 import ToolPanel from './ToolPanel.vue'
@@ -52,6 +64,12 @@ const props = defineProps<{
 }>()
 
 const properties = vue.inject<vue.Ref<ComponentProperties>>(`${props.toolId}-componentProperties`)
+
+// Values are editable unless the host has the editor show them read-only
+const valuesChromeRef = vue.inject<vue.Ref<ValuesChrome>|undefined>(VALUES_CHROME_KEY, undefined)
+const valuesChrome = vue.computed<ValuesChrome>(() => valuesChromeRef?.value ?? { mode: 'editable', hint: '' })
+
+const hintGroupId = vue.computed(() => valuesHintGroupId(properties?.value?.groups ?? [], valuesChrome.value.mode))
 
 const disabled = vue.ref<boolean>(properties?.value ? !properties.value.objectId : true)
 
@@ -73,6 +91,14 @@ function updateProperties(itemId: string, oldValue: number | string, newValue: n
 </script>
 
 <style>
+/* A host's note above read-only values */
+.celldl-editor .values-hint {
+    margin-bottom: 16px;
+    font-size: 0.85em;
+    font-style: italic;
+    opacity: 0.75;
+}
+
 /* Allow for FloatLabel text of InputWidget */
 .celldl-editor .p-accordioncontent-content {
     padding-top: 8px !important;

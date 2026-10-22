@@ -72,6 +72,7 @@ import {
 } from '#root/plugins/bondgraph/elements'
 
 import { BondgraphPlugin } from '#root/plugins/bondgraph'
+import { VALUES_CHROME_KEY, type ValuesChrome, type ValuesMode } from '#root/plugins/bondgraph/values'
 import BondgraphPopover from '#root/plugins/bondgraph/bondgraph.vue'
 
 import { DrawingPlugin } from '#root/plugins/drawing'
@@ -181,6 +182,15 @@ export type EditorChrome = {
     statusPosition?: boolean
     /** The Undo and Redo buttons below the left toolbar's tools (hidden with the toolbar when `tools` is `false`) */
     undo?: boolean
+    /**
+     * Whether the Properties panel's values (an element's initial value,
+     * parameters and variables) can be edited, or are only shown, for a host
+     * that sets values itself. Type, species and location stay editable. The
+     * `element` command's `set` accepts values in either mode. Default `'editable'`.
+     */
+    values?: ValuesMode
+    /** A hint shown above read-only values, such as where to set them */
+    valuesHint?: string
 }
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
@@ -272,6 +282,12 @@ const celldlEditor: CellDLEditor = new CellDLEditor()
 //==============================================================================
 
 const props = defineProps<CellDLEditorProps>()
+
+// How the Properties panel shows values
+vue.provide(VALUES_CHROME_KEY, vue.computed<ValuesChrome>(() => ({
+    mode: props.chrome?.values ?? 'editable',
+    hint: props.chrome?.valuesHint ?? ''
+})))
 
 const emit = defineEmits<{
     'diagram-changed': [change: DiagramChange],
