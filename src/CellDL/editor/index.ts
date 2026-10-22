@@ -41,6 +41,7 @@ import { componentLibraryPlugin } from '#root/plugins'
 
 //==============================================================================
 
+import { drawBondCounts } from './bondcounts'
 import { EditorFrame } from './editorframe'
 import { DEFAULT_VIEW_STATE, editGuides, EDITOR_GRID_CLASS } from './editguides'
 import PanZoom from './panzoom'
@@ -278,6 +279,9 @@ export class CellDLEditor {
         document.addEventListener('connection-style', this.#connectionStyleEvent.bind(this))
         document.addEventListener('celldl-drawing', this.#celldlDrawingEvent.bind(this))
 
+        // Redraw bond counts after a change, in this editor's diagram
+        document.addEventListener('file-edited', () => this.#scheduleBondCounts())
+
         // Add handler for events from panels
         document.addEventListener('panel-event', this.#panelEvent.bind(this))
         document.addEventListener('style-event', this.#styleEvent.bind(this))
@@ -504,6 +508,22 @@ export class CellDLEditor {
         this.selectionSet.clear()
 
         this.#events.dispatchEvent(new CustomEvent('diagram-opened', { detail: { diagram: celldlDiagram } }))
+        this.#scheduleBondCounts()
+    }
+
+    #bondCountsTimer: ReturnType<typeof setTimeout> | undefined
+
+    // Shortly, so a burst of changes redraws once
+    #scheduleBondCounts() {
+        if (this.#bondCountsTimer !== undefined) {
+            clearTimeout(this.#bondCountsTimer)
+        }
+        this.#bondCountsTimer = setTimeout(() => {
+            this.#bondCountsTimer = undefined
+            if (this.#celldlDiagram !== null && this.#svgDiagram !== null) {
+                drawBondCounts(this.#celldlDiagram)
+            }
+        }, 50)
     }
 
     /**
