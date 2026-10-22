@@ -53,8 +53,11 @@
                     span {{ slotProps.message.message }}
             CellDLEditor.grow(
                 :editorCommand="editorCommand"
+                :options="editorOptions"
                 :theme="editorTheme"
                 @diagramChanged="onDiagramChanged"
+                @elements="onElements"
+                @elementResult="onElementResult"
                 @editorData="onEditorData"
                 @error="onError"
             )
@@ -127,7 +130,17 @@ import * as vueCommon from '../utils/vueCommon'
 
 import CellDLEditor from '../../../src'
 
-import type { CellDLEditorCommand, DiagramChange, EditorData, FileStatus, Theme, ViewState } from '../../../src'
+import type {
+    CellDLEditorCommand,
+    DiagramChange,
+    EditorData,
+    ElementResult,
+    ElementsChange,
+    FileStatus,
+    SvgViewerOptions,
+    Theme,
+    ViewState
+} from '../../../src'
 import { editorInitialised, EditorStatus } from '../../../src'
 import { DEFAULT_VIEW_STATE } from '../../../src'
 
@@ -324,6 +337,33 @@ vueusecore.useEventListener(document, 'file-edited', (_: Event) => {
 
 function onDiagramChanged(change: DiagramChange) {
     console.debug(`diagram-changed: revision ${change.revision}, ${change.rdf.length} bytes of RDF`)
+}
+
+//==============================================================================
+
+// In development, let a test (e.g. Playwright) drive the `element` command:
+// `window.celldlDev.command(cmd)` sends a command, and `elements` and
+// `results` collect what the editor emits
+
+const editorOptions: SvgViewerOptions = { elementList: import.meta.env.DEV }
+
+const devElements: ElementsChange[] = []
+const devResults: ElementResult[] = []
+
+function onElements(change: ElementsChange) {
+    devElements.push(change)
+}
+
+function onElementResult(result: ElementResult) {
+    devResults.push(result)
+}
+
+if (import.meta.env.DEV) {
+    (window as unknown as { celldlDev: object }).celldlDev = {
+        command: (command: CellDLEditorCommand) => { editorCommand.value = command },
+        elements: devElements,
+        results: devResults
+    }
 }
 
 //==============================================================================
