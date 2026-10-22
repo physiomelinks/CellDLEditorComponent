@@ -1,6 +1,5 @@
 <template lang="pug">
     .celldl-editor.flex.flex-col.h-full(:class="arrowClass")
-        svg.celldl-display-arrows(aria-hidden="true" width="0" height="0" v-html="displayArrows")
         main.editor-pane.relative.flex.grow
             EditorToolbar.editor-bar(
                 v-if="shownToolButtons.length || shownActions.length"
@@ -27,6 +26,8 @@
         footer.status-bar
             span#status-msg
             span#status-pos(v-show="props.chrome?.statusPosition !== false")
+        //- Last, so that a host's `.celldl-editor svg` still finds the diagram first
+        svg.celldl-display-arrows(aria-hidden="true" width="0" height="0" v-html="displayArrows")
 </template>
 
 <script setup lang="ts">
