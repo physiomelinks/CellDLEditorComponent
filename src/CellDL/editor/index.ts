@@ -290,7 +290,7 @@ export class CellDLEditor {
             svgPoint: (event) => editor.#domToSvgCoords(event),
             objectAt: (element) => editor.#objectAt(element),
             hideError: () => editor.#hideTooltipOf('error'),
-            modifierClick: (event, object) => editor.#selectingClick(event, event.target as SVGGraphicsElement, object)
+            click: (event, object) => editor.#selectingClick(event, object.svgElement ?? event.target as SVGGraphicsElement, object)
         })
 
         // Add a handler for events from toolbar buttons and popovers

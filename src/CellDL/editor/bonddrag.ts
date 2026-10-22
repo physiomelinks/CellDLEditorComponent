@@ -88,8 +88,8 @@ export interface BondDragHost {
     objectAt(element: SVGGraphicsElement): CellDLObject|null
     /** Hides an error tooltip */
     hideError(): void
-    /** A modifier click that didn't become a bond, for the editor to handle as a click */
-    modifierClick(event: PointerEvent, object: CellDLObject): void
+    /** A click on the handle, or a modifier click, that didn't become a bond, for the editor to handle as a click */
+    click(event: PointerEvent, object: CellDLObject): void
 }
 
 /** Whether a modifier for drawing a bond from an element's body is down: Cmd on a Mac, else Ctrl */
@@ -120,7 +120,6 @@ interface PendingDrag {
     object: CellDLObject
     clientX: number
     clientY: number
-    byModifier: boolean
 }
 
 export class BondDrag {
@@ -175,28 +174,35 @@ export class BondDrag {
     }
 
     pointerDown(event: PointerEvent): boolean {
+        if (this.active) {
+            // The button was released outside the editor, so this press ends the bond
+            this.cancel()
+            return true
+        }
         if (event.button !== 0 || !this.#host.canStartBond) {
             this.hideHandle()
             return false
         }
         let object: CellDLObject|null = null
-        let byModifier = false
         if (this.#isHandle(event.target)) {
             object = this.#handleObject
         } else if (bondModifier(event) && !event.shiftKey) {
             object = this.#bondable(this.#host.objectAt(event.target as SVGGraphicsElement))
-            byModifier = object !== null
         }
         if (object === null) {
             this.hideHandle()
             return false
         }
         // A bond starts once the pointer moves, so a modifier click is still a click
-        this.#pending = { object, clientX: event.clientX, clientY: event.clientY, byModifier }
+        this.#pending = { object, clientX: event.clientX, clientY: event.clientY }
         return true
     }
 
     pointerMove(event: PointerEvent): boolean {
+        if (event.buttons === 0 && (this.#pending || this.active)) {
+            // The button was released outside the editor
+            this.cancel()
+        }
         if (this.#pending && !this.active) {
             if (Math.abs(event.clientX - this.#pending.clientX) <= DRAG_START_DISTANCE
              && Math.abs(event.clientY - this.#pending.clientY) <= DRAG_START_DISTANCE) {
@@ -227,9 +233,8 @@ export class BondDrag {
         const diagram = this.#host.celldlDiagram
         if (!pathMaker || !diagram) {
             if (pending) {
-                if (pending.byModifier) {
-                    this.#host.modifierClick(event, pending.object)
-                }
+                // Not dragged, so a click: it selects the element
+                this.#host.click(event, pending.object)
                 return true
             }
             return false
