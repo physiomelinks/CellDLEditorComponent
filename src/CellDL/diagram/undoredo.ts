@@ -26,6 +26,7 @@ import { isBlankNode, type Statement } from '@celldl/rdf'
 import { type CellDLConnectedObject, type CellDLConnection, CellDLObject } from '#editor/celldlObjects'
 import type { CellDLDiagram } from '#editor/diagram'
 import { CellDLEditor, notifyChanges } from '#editor/editor'
+import type { ElementMoveOptions } from '#editor/SVGElements'
 import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 
 import { componentLibraryPlugin } from '#root/plugins'
@@ -146,6 +147,9 @@ export class MoveUndoState extends UndoState {
     #prevPathArrays: ConnectionPathArrayMap = new Map()
     #prevPosition: Point
 
+    /** How a lone object is moved back and forth, such as without snapping to the grid */
+    moveOptions: ElementMoveOptions = {}
+
     constructor(
         readonly undoObject: CellDLObject,
         position: PointLike,
@@ -204,7 +208,7 @@ export class MoveUndoState extends UndoState {
                 if (this.selectionSet && this.#group) {
                     this.selectionSet.reposition(movedObject, startPosition, position, this.#group)
                 } else {
-                    movedObject.reposition(startPosition, position)
+                    movedObject.reposition(startPosition, position, this.moveOptions)
                 }
                 this.#restoreConnectionPaths(connectionPathArrays)
             }

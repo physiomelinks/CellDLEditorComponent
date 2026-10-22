@@ -154,6 +154,8 @@ export type ViewState = {
     gridSpacing?: number
     snapToGrid?: number
     alignmentGuides?: boolean
+    /** Zoom the view in or out by a step, or to fit the diagram */
+    zoom?: 'in' | 'out' | 'fit'
 }
 
 //==============================================================================

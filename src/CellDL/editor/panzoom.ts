@@ -27,29 +27,40 @@ import { editGuides } from './editguides'
 
 //==============================================================================
 
+/** How much a zoom button or key changes the scale */
+export const ZOOM_STEP = 1.25
+
+/** The margin around the diagram when zooming to fit, as a fraction of its size */
+export const FIT_MARGIN = 0.05
+
+/** Told the view's scale after each change of view */
+export type ViewChangedHandler = (scale: number) => void
+
+//==============================================================================
+
 export default class PanZoom {
     #panning: boolean = false
     #pointerDownPosition: Point = new Point()
 
     #svgDiagram: SVGSVGElement | null = null
+    #container: HTMLElement
     #containerId: string
-    #containerOrigin: Point = new Point()
     #containerSize: Point = new Point()
     #resizeObserver: ResizeObserver
 
     #minScale: number = 0.125
     #scale: number = 1
     #maxScale: number = 32
-    #step: number = 0.05
+    #step: number = 0.15
 
-    constructor(container: HTMLElement) {
+    #viewChanged: ViewChangedHandler | null = null
+
+    constructor(container: HTMLElement, viewChanged: ViewChangedHandler | null = null) {
+        this.#viewChanged = viewChanged
         // options
         container.addEventListener('wheel', this.#wheelEvent.bind(this), { passive: true })
+        this.#container = container
         this.#containerId = container.id
-        this.#containerOrigin = new Point(
-            container.offsetLeft + container.clientLeft,
-            container.offsetTop + container.clientTop
-        )
         this.#containerSize = new Point(container.clientWidth, container.clientHeight)
         this.#resizeObserver = new ResizeObserver(this.#resizeObservation.bind(this))
         this.#resizeObserver.observe(container)
@@ -70,6 +81,7 @@ export default class PanZoom {
     #setViewbox(viewbox: Extent) {
         editGuides.viewboxUpdated(viewbox)
         this.#svgDiagram?.setAttribute('viewBox', viewbox.map((n) => String(n)).join(' '))
+        this.#viewChanged?.(this.#scale)
     }
 
     enable(svgDiagram: SVGSVGElement) {
@@ -110,6 +122,50 @@ export default class PanZoom {
         this.#svgDiagram = null
         this.#panning = false
         this.#scale = 1.0
+    }
+
+    /**
+     * Zooms by a factor, keeping a point (in SVG coordinates) where it is in the
+     * view, by default the view's centre. The scale stays within its limits.
+     */
+    zoomBy(factor: number, about: PointLike|null = null) {
+        if (!this.#svgDiagram) {
+            return
+        }
+        const viewbox = this.#currentViewbox()
+        const centre = about ?? { x: viewbox[0] + viewbox[2] / 2, y: viewbox[1] + viewbox[3] / 2 }
+        this.#scale = Math.min(Math.max(this.#scale * factor, this.#minScale), this.#maxScale)
+        const width = this.#containerSize.x / this.#scale
+        const height = this.#containerSize.y / this.#scale
+        viewbox[0] = centre.x - (centre.x - viewbox[0]) * width / viewbox[2]
+        viewbox[1] = centre.y - (centre.y - viewbox[1]) * height / viewbox[3]
+        viewbox[2] = width
+        viewbox[3] = height
+        this.#setViewbox(viewbox)
+    }
+
+    /**
+     * Zooms and pans so that bounds (in SVG coordinates) fill the view, with a
+     * margin around them. The smallest scale is lowered if need be.
+     */
+    zoomToFit(bounds: Bounds|null, margin: number = FIT_MARGIN) {
+        if (!this.#svgDiagram || bounds === null || this.#containerSize.x === 0 || this.#containerSize.y === 0) {
+            return
+        }
+        const width = Math.max(bounds.right - bounds.left, 1) * (1 + 2 * margin)
+        const height = Math.max(bounds.bottom - bounds.top, 1) * (1 + 2 * margin)
+        this.#scale = Math.min(this.#containerSize.x / width, this.#containerSize.y / height, this.#maxScale)
+        if (this.#minScale > this.#scale) {
+            this.#minScale = this.#scale
+        }
+        const viewWidth = this.#containerSize.x / this.#scale
+        const viewHeight = this.#containerSize.y / this.#scale
+        this.#setViewbox([
+            (bounds.left + bounds.right - viewWidth) / 2,
+            (bounds.top + bounds.bottom - viewHeight) / 2,
+            viewWidth,
+            viewHeight
+        ])
     }
 
     /** Pans so that a point is at the centre of the view, without zooming. */
@@ -165,17 +221,10 @@ export default class PanZoom {
                     if (containerSize.x === 0 ||containerSize.y === 0) {
                         return
                     }
+                    // Keep the scale and the view's top left, so the diagram stays where it is
                     const viewbox = this.#currentViewbox()
-                    const delta = containerSize.subtract(this.#containerSize)
-                    if (Math.abs(delta.x * viewbox[3]) >= Math.abs(delta.y * viewbox[2])) {
-                        this.#scale = containerSize.x / viewbox[2]
-                        viewbox[1] -= (this.#containerSize.y / this.#scale - viewbox[3]) / 2
-                        viewbox[3] = containerSize.y / this.#scale
-                    } else {
-                        this.#scale = containerSize.y / viewbox[3]
-                        viewbox[0] -= (this.#containerSize.x / this.#scale - viewbox[2]) / 2
-                        viewbox[2] = containerSize.x / this.#scale
-                    }
+                    viewbox[2] = containerSize.x / this.#scale
+                    viewbox[3] = containerSize.y / this.#scale
                     this.#containerSize = containerSize
                     this.#setViewbox(viewbox)
                 }
@@ -192,10 +241,13 @@ export default class PanZoom {
             this.#scale = Math.min(Math.max(toScale, this.#minScale), this.#maxScale)
             const viewSize = this.#containerSize.scalarScale(1.0 / this.#scale)
             const viewbox = this.#currentViewbox()
+            // Where the container is now, as the page may have scrolled or its layout changed
+            const rect = this.#container.getBoundingClientRect()
+            const origin = new Point(rect.left + this.#container.clientLeft, rect.top + this.#container.clientTop)
             viewbox[0] +=
-                ((viewbox[2] - viewSize.x) * (event.clientX - this.#containerOrigin.x)) / this.#containerSize.x
+                ((viewbox[2] - viewSize.x) * (event.clientX - origin.x)) / this.#containerSize.x
             viewbox[1] +=
-                ((viewbox[3] - viewSize.y) * (event.clientY - this.#containerOrigin.y)) / this.#containerSize.y
+                ((viewbox[3] - viewSize.y) * (event.clientY - origin.y)) / this.#containerSize.y
             viewbox[2] = viewSize.x
             viewbox[3] = viewSize.y
             this.#setViewbox(viewbox)
