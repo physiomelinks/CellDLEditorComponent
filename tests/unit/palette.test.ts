@@ -73,6 +73,19 @@ describe('the palette\'s entries', () => {
         expect(searchEntries('potential', 'chemical').map(e => e.label)).toEqual(['Chemostat', '0-junction'])
         expect(searchEntries('', 'chemical')).toHaveLength(8)
     })
+
+    test('each chemical entry\'s element template has a readable name for Properties, not an IRI', () => {
+        const plugin = componentLibraryPlugin.getPlugin('bondgraph-components') as unknown as {
+            getTemplateName(type: string): string|undefined
+        }
+        const names = paletteEntries('chemical').filter(e => e.elementType).map(e => plugin.getTemplateName(e.elementType!))
+        for (const name of names) {
+            expect(name).toBeTruthy()
+            expect(name).not.toMatch(/https?:|bgf:|#/)
+        }
+        expect(plugin.getTemplateName(`${BGF}ChemicalPotential`)).toBe('Chemical potential')
+        expect(plugin.getTemplateName(`${BGF}ChemicalFlow`)).toBe('Chemical flow')
+    })
 })
 
 describe('placing a palette entry', () => {

@@ -318,6 +318,12 @@ const DEFAULT_TRANSFORM_RATIO = 1
 /** The value a parameter gets when its element's template is chosen */
 const DEFAULT_PARAMETER_VALUE = 1
 
+/** A readable name for a template that BG-RDF gives no label, from its type: `ChemicalPotential` → "Chemical potential" */
+function nameFromType(type: string): string {
+    const words = $rdf.getFragment(type).replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase()
+    return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
 const TRANSFORM_NODE_PROMPT = 'Ratio'
 
 //==============================================================================
@@ -1837,7 +1843,7 @@ export class BondgraphPlugin implements PluginInterface {
                 const elementTemplate: ElementTemplate = {
                     type: element.value,
                     domain: domainId,
-                    name: label ? label.value : $rdf.namespaceMap.getCurie(element.value),
+                    name: label ? label.value : nameFromType(element.value),
                     parameters: new Map(),
                     variables: new Map(),
                     defaultStyle: component.style,
