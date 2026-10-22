@@ -189,6 +189,11 @@
     color: var(--editor-tooltip-error);
 }
 
+/* a host's annotation tooltip, above a plugin's hover */
+.tooltip-annotation {
+    margin-bottom: 6px;
+}
+
 /* an element's constitutive law in its hover (plugins/bondgraph hoverHtml) */
 .bg-law {
     display: flex;
