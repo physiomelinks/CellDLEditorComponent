@@ -40,7 +40,8 @@ enum UndoAction {
     DELETE = 1,
     INSERT = 2,
     MOVE = 3,
-    PROPERTIES = 4
+    PROPERTIES = 4,
+    GROUP = 5
 }
 
 type UndoObject = CellDLObject | SelectionSet
@@ -84,6 +85,33 @@ export class UndoState {
             this.#storedObjects.set(celldlObject.id,
                 new StoredObject(celldlObject, this.action !== UndoAction.MOVE))
         }
+    }
+
+    /**
+     * Stores the objects again, as they are now, e.g. once an inserted object's
+     * properties have been set, so redoing the insert restores them. An object
+     * that is no longer in the diagram keeps what was stored.
+     */
+    restoreObjects() {
+        for (const [id, stored] of this.#storedObjects) {
+            const object = stored.celldlObject
+            if (object.rdfStore.statementsMatching(object.uri, null, null, null).length) {
+                this.#storedObjects.set(id, new StoredObject(object, this.action !== UndoAction.MOVE))
+            }
+        }
+    }
+}
+
+//==============================================================================
+
+/**
+ * Several changes undone and redone as one step, such as an edit in the
+ * Reactions panel that adds elements, bonds them and sets their counts.
+ */
+export class GroupUndoState extends UndoState {
+    constructor(readonly states: UndoState[]) {
+        // biome-ignore lint/style/noNonNullAssertion: a group has at least one state
+        super(UndoAction.GROUP, states[0]!.undoObject)
     }
 }
 
@@ -314,6 +342,8 @@ class UndoRedo {
     static #instance: UndoRedo | null = null
 
     #activeUndoState: UndoState|null = null
+    #group: UndoState[] = []
+    #groupDepth = 0
     #redoStack: UndoState[] = []
     #undoStack: UndoState[] = []
 
@@ -355,6 +385,45 @@ class UndoRedo {
         }
     }
 
+    /**
+     * Starts collecting changes to undo as one step, until the matching
+     * `endGroup()`. Groups nest: only the outermost one makes an undo step.
+     */
+    beginGroup() {
+        if (this.#groupDepth === 0) {
+            this.#group = []
+        }
+        this.#groupDepth += 1
+    }
+
+    /**
+     * Ends a group of changes, putting them on the undo stack as one step.
+     *
+     * @returns Whether the group changed anything.
+     */
+    endGroup(): boolean {
+        if (this.#groupDepth === 0) {
+            return false
+        }
+        this.#groupDepth -= 1
+        if (this.#groupDepth > 0) {
+            return this.#group.length > 0
+        }
+        const states = this.#group
+        this.#group = []
+        if (states.length === 0) {
+            return false
+        }
+        // An inserted object is redone as it is now, with its properties set
+        for (const state of states) {
+            if (state.action === UndoAction.INSERT) {
+                state.restoreObjects()
+            }
+        }
+        this.#pushUndoStack(states.length === 1 ? states[0]! : new GroupUndoState(states), false)
+        return true
+    }
+
     setDeleteUndoState(undoObject: UndoObject): UndoState {
         return this.#setActiveUndoState(new UndoState(UndoAction.DELETE, undoObject))
     }
@@ -381,7 +450,11 @@ class UndoRedo {
     endPropertiesEdit(undoState: PropertiesUndoState): boolean {
         const changed = undoState.endEdit()
         if (changed) {
-            this.#pushUndoStack(undoState, false)
+            if (this.#groupDepth > 0) {
+                this.#group.push(undoState)
+            } else {
+                this.#pushUndoStack(undoState, false)
+            }
         }
         return changed
     }
@@ -430,6 +503,10 @@ class UndoRedo {
     }
 
     #setActiveUndoState(undoState: UndoState): UndoState {
+        if (this.#groupDepth > 0) {
+            this.#group.push(undoState)
+            return undoState
+        }
         this.#activeUndoState = undoState
         this.#pushUndoStack(undoState, false)
         return undoState
@@ -439,18 +516,7 @@ class UndoRedo {
         const undoState = this.#popRedoStack()
         if (undoState) {
             this.#pushUndoStack(undoState, true)
-            if (undoState.action === UndoAction.DELETE) {
-                diagram.undoInsert(undoState)
-            } else if (undoState.action === UndoAction.INSERT) {
-                diagram.undoDelete(undoState)
-            } else if (undoState.action === UndoAction.MOVE) {
-                (undoState as MoveUndoState).reposition('forwards')
-            } else if (undoState.action === UndoAction.PROPERTIES) {
-                // Report the change once the objects are up to date with their RDF
-                void (undoState as PropertiesUndoState).restore('forwards').finally(notifyChanges)
-                return
-            }
-            notifyChanges()
+            this.#restore(diagram, undoState, 'forwards')
         }
     }
 
@@ -458,19 +524,51 @@ class UndoRedo {
         const undoState = this.#popUndoStack()
         if (undoState) {
             this.#pushRedoStack(undoState)
-            if (undoState.action === UndoAction.DELETE) {
-                diagram.undoDelete(undoState)
-            } else if (undoState.action === UndoAction.INSERT) {
-                diagram.undoInsert(undoState)
-            } else if (undoState.action === UndoAction.MOVE) {
-                (undoState as MoveUndoState).reposition('backwards')
-            } else if (undoState.action === UndoAction.PROPERTIES) {
-                // Report the change once the objects are up to date with their RDF
-                void (undoState as PropertiesUndoState).restore('backwards').finally(notifyChanges)
-                return
-            }
+            this.#restore(diagram, undoState, 'backwards')
+        }
+    }
+
+    #restore(diagram: CellDLDiagram, undoState: UndoState, direction: Direction) {
+        const restored = this.#apply(diagram, undoState, direction)
+        if (restored) {
+            // Report the change once the objects are up to date with their RDF
+            void restored.finally(notifyChanges)
+        } else {
             notifyChanges()
         }
+    }
+
+    // Returns a promise when the change is restored asynchronously
+    #apply(diagram: CellDLDiagram, undoState: UndoState, direction: Direction): Promise<void>|undefined {
+        const backwards = (direction === 'backwards')
+        if (undoState.action === UndoAction.DELETE) {
+            if (backwards) {
+                diagram.undoDelete(undoState)
+            } else {
+                diagram.undoInsert(undoState)
+            }
+        } else if (undoState.action === UndoAction.INSERT) {
+            if (backwards) {
+                diagram.undoInsert(undoState)
+            } else {
+                diagram.undoDelete(undoState)
+            }
+        } else if (undoState.action === UndoAction.MOVE) {
+            (undoState as MoveUndoState).reposition(direction)
+        } else if (undoState.action === UndoAction.PROPERTIES) {
+            return (undoState as PropertiesUndoState).restore(direction)
+        } else if (undoState.action === UndoAction.GROUP) {
+            const states = (undoState as GroupUndoState).states
+            const ordered = backwards ? [...states].reverse() : states
+            // In order, waiting for any that is restored asynchronously
+            let pending: Promise<void>|undefined
+            for (const state of ordered) {
+                pending = pending ? pending.then(() => this.#apply(diagram, state, direction))
+                                  : this.#apply(diagram, state, direction)
+            }
+            return pending
+        }
+        return undefined
     }
 }
 

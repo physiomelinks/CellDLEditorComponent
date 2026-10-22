@@ -29,6 +29,7 @@ import { CELLDL, MetadataPropertiesMap } from '@celldl/metadata'
 import * as $rdf from '@celldl/rdf'
 
 import { type CellDLConnectedObject, CellDLConnection, type CellDLObject } from '#editor/celldlObjects'
+import { undoRedo } from '#editor/diagram/undoredo'
 
 import { componentLibraryPlugin } from '#root/plugins'
 import type { BondgraphPlugin } from '#root/plugins/bondgraph'
@@ -126,6 +127,22 @@ async function addElement(elementType: string, centre: PointLike, species?: stri
     return object
 }
 
+// An object removed so that undo puts it back
+function removeObject(object: CellDLObject) {
+    const { diagram } = editorParts()
+    diagram.removeObject(object, undoRedo.setDeleteUndoState(object))
+}
+
+// Changes made by `edit` undone and redone as one step, even if it fails part way through
+async function asOneStep<T>(edit: () => Promise<T>): Promise<T> {
+    undoRedo.beginGroup()
+    try {
+        return await edit()
+    } finally {
+        undoRedo.endGroup()
+    }
+}
+
 // The elements added since the last call of takeAddedElements(): their parameters are for the user to set
 const added: string[] = []
 
@@ -171,16 +188,19 @@ async function applyEdit(step: CellDLConnectedObject, current: StepEquation, edi
     const plugin = bondgraphPlugin()
     if (edit.op === 'count') {
         const bond = objectByUri(edit.bond)
-        if (bond?.isConnection) plugin.setBondCount(bond as CellDLConnection, edit.count)
+        if (bond?.isConnection) {
+            const undoState = undoRedo.setPropertiesUndoState([bond])
+            plugin.setBondCount(bond as CellDLConnection, edit.count)
+            undoRedo.endPropertiesEdit(undoState)
+        }
     } else if (edit.op === 'remove') {
-        const { diagram } = editorParts()
         const bond = objectByUri(edit.bond)
-        if (bond) diagram.removeObject(bond)
+        if (bond) removeObject(bond)
         // a chemostat copy no other step uses goes too
         const node = edit.node ? objectByUri(edit.node) : null
         const isSource = plugin.speciesNodes().some(n => n.id === edit.node && n.isSource)
         if (node && isSource && (node as CellDLConnectedObject).connections.length === 0) {
-            diagram.removeObject(node)
+            removeObject(node)
         }
     } else {
         const found = findSpeciesNode(plugin.speciesNodes(), edit.species, edit.location)
@@ -217,10 +237,14 @@ function stepLocation(step: CellDLObject): string|undefined {
 //==============================================================================
 
 /**
- * Make the step `stepUri` follow the equation `text`; returns the number of bond changes. Throws an Error with a
- * message for the user when the equation cannot be read or placed.
+ * Make the step `stepUri` follow the equation `text`, as one undoable step; returns the number of bond changes.
+ * Throws an Error with a message for the user when the equation cannot be read or placed.
  */
-export async function applyEquation(stepUri: string, text: string): Promise<number> {
+export function applyEquation(stepUri: string, text: string): Promise<number> {
+    return asOneStep(() => followEquation(stepUri, text))
+}
+
+async function followEquation(stepUri: string, text: string): Promise<number> {
     const current = bondgraphPlugin().reactionEquations().find(eq => eq.id === stepUri)
     const step = objectByUri(stepUri) as CellDLConnectedObject|null
     if (!current || !step) throw new Error('That step is no longer in the diagram')
@@ -239,20 +263,23 @@ export async function applyEquation(stepUri: string, text: string): Promise<numb
 
 /**
  * Add a reaction following the equation `text`, named `name` (its species label), below the diagram's other
- * components; returns its URI.
+ * components, as one undoable step; returns its URI.
  */
 export async function addReaction(text: string, name: string, location?: string): Promise<string> {
     const parsed = parseEquation(text)
     for (const p of [...parsed.substrates, ...parsed.products]) {
         findSpeciesNode(bondgraphPlugin().speciesNodes(), p.species, p.location)
     }
-    const taken = componentCentroids()
-    const below = taken.length ? Math.max(...taken.map(p => p.y)) + 2 * BESIDE : 100
-    const middle = taken.length ? taken.reduce((x, p) => x + p.x, 0) / taken.length : 200
-    const step = await addElement(NEW_REACTION_TYPE, placeBeside(new Point(middle, below), 'step', taken),
-                                  name || 'Re', location ?? parsed.substrates[0]?.location)
-    await applyEquation(step.uri.value, text)
-    return step.uri.value
+    return asOneStep(async () => {
+        const taken = componentCentroids()
+        const below = taken.length ? Math.max(...taken.map(p => p.y)) + 2 * BESIDE : 100
+        const middle = taken.length ? taken.reduce((x, p) => x + p.x, 0) / taken.length : 200
+        const step = await addElement(NEW_REACTION_TYPE, placeBeside(new Point(middle, below), 'step', taken),
+                                      name || 'Re', location ?? parsed.substrates[0]?.location)
+        await followEquation(step.uri.value, text)
+        notifyChanges()
+        return step.uri.value
+    })
 }
 
 //==============================================================================
