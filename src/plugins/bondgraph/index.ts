@@ -796,7 +796,7 @@ export class BondgraphPlugin implements PluginInterface {
         // an equation typeset as the law is, its text kept in data-text; the text itself if MathJax rejects it
         const typeset = (latex: string, text: string) => {
             let svg: string
-            try { svg = latexAsSvgString(latex) } catch { svg = escape(text) }
+            try { svg = latexAsSvgString(latex, true) } catch { svg = escape(text) }
             return `<div class="bg-law-line" data-text="${escape(text)}">${svg}</div>`
         }
         const elements = this.namingElements()
