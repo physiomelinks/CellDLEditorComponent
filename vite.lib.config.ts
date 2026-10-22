@@ -58,7 +58,8 @@ export default vite.defineConfig({
     },
     plugins: [
         dts({
-            exclude: ['./app/**'],
+            // The app and the unit tests aren't part of the library
+            exclude: ['./app/**', './tests/unit/**'],
             insertTypesEntry: true
         }),
         tailwindcssPlugin(),
