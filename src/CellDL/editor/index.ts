@@ -38,6 +38,7 @@ import { type Annotations, PANEL_ID, type SvgViewerOptions, type ViewerEvent } f
 import { type Point, type PointLike, PointMath } from '#root/utils/points'
 import type { StringProperties } from '#root/utils/types'
 import { componentLibraryPlugin } from '#root/plugins'
+import { paletteEntry, placeEntry } from '#root/plugins/bondgraph/palette'
 
 //==============================================================================
 
@@ -46,6 +47,7 @@ import { EditorFrame } from './editorframe'
 import { DEFAULT_VIEW_STATE, editGuides, EDITOR_GRID_CLASS } from './editguides'
 import PanZoom from './panzoom'
 import { BoxMaker } from './boxmaker'
+import { drawSideLabels } from './sidelabels'
 
 //==============================================================================
 
@@ -145,6 +147,7 @@ function isTextField(target: EventTarget|null): boolean {
 //==============================================================================
 
 export enum CONTEXT_MENU {
+    ADD_ELEMENT = 'menu-add-element',
     DELETE = 'menu-delete',
     EDIT_GROUP = 'menu-edit-group',
     INFO = 'menu-info',
@@ -205,6 +208,8 @@ export class CellDLEditor {
     #nextPathNode: PathNode | null = null
 
     #contextMenuActiveItems: Set<CONTEXT_MENU> = new Set()
+    // Where the context menu was opened, for its Add element item
+    #contextMenuPoint: { client: PointLike, svg: PointLike } | null = null
 
     #currentTemplateDetails: TemplateEventDetails | null = null
     #drawConnectionSettings: StringProperties = {}
@@ -280,7 +285,13 @@ export class CellDLEditor {
         document.addEventListener('celldl-drawing', this.#celldlDrawingEvent.bind(this))
 
         // Redraw bond counts after a change, in this editor's diagram
-        document.addEventListener('file-edited', () => this.#scheduleBondCounts())
+        document.addEventListener('file-edited', () => {
+            this.#scheduleBondCounts()
+            // at once, so a reaction side's caption follows its junction as it is dragged
+            if (this.#celldlDiagram !== null) {
+                drawSideLabels(this.#celldlDiagram)
+            }
+        })
 
         // Add handler for events from panels
         document.addEventListener('panel-event', this.#panelEvent.bind(this))
@@ -345,6 +356,11 @@ export class CellDLEditor {
                 this.setSelectedObject(clickedObject)
             }
             this.enableContextMenuItem(CONTEXT_MENU.DELETE, this.selectionSet.size > 0)
+            this.#contextMenuPoint = {
+                client: { x: event.clientX, y: event.clientY },
+                svg: this.#domToSvgCoords(event)
+            }
+            this.enableContextMenuItem(CONTEXT_MENU.ADD_ELEMENT, this.#celldlDiagram !== null)
             document.dispatchEvent(new CustomEvent('open-context-menu', {
                 detail: {
                     state: this.#contextMenuActiveItems,
@@ -354,7 +370,12 @@ export class CellDLEditor {
         })
         document.addEventListener('context-menu-click', (event: Event) => {
             const targetId = (<CustomEvent>event).detail.id
-            if (targetId === CONTEXT_MENU.DELETE) {
+            if (targetId === CONTEXT_MENU.ADD_ELEMENT) {
+                // The element picker opens where the menu was, and places its pick there
+                if (this.#contextMenuPoint) {
+                    document.dispatchEvent(new CustomEvent('open-add-element', { detail: this.#contextMenuPoint }))
+                }
+            } else if (targetId === CONTEXT_MENU.DELETE) {
                 this.#deleteSelectedObjects()
             } else if (targetId === CONTEXT_MENU.INFO) {
 // WIP               this.#showSelectedObjectInfo()
@@ -509,6 +530,7 @@ export class CellDLEditor {
 
         this.#events.dispatchEvent(new CustomEvent('diagram-opened', { detail: { diagram: celldlDiagram } }))
         this.#scheduleBondCounts()
+        drawSideLabels(celldlDiagram)
     }
 
     #bondCountsTimer: ReturnType<typeof setTimeout> | undefined
@@ -592,8 +614,9 @@ export class CellDLEditor {
     #notifyEditorMode() {
         let label = ''
         if (this.#editorMode === EDITOR_MODE.AddingComponent) {
-            const name = this.#currentTemplateDetails
-                       ? componentLibraryPlugin.getObjectTemplateById(this.#currentTemplateDetails.id)?.name
+            const details = this.#currentTemplateDetails
+            const name = details?.entryId ? paletteEntry(details.entryId)?.label
+                       : details ? componentLibraryPlugin.getObjectTemplateById(details.id)?.name
                        : undefined
             label = `Adding ${name || 'elements'}`
         } else if (this.#editorMode === EDITOR_MODE.PathDrawing) {
@@ -1032,6 +1055,11 @@ export class CellDLEditor {
     }
 
     protected addComponentTemplate(eventPosition: PointLike, details: TemplateEventDetails, dragged=false) {
+        if (details.entryId) {
+            // A palette entry is centred where it's dropped or clicked, with its defaults
+            void this.addPaletteEntry(details.entryId, this.#domToSvgCoords(eventPosition))
+            return
+        }
         // Adjust position by offset at component selection
         const zoomScale = this.#panzoom?.scale || 1
         let topLeft = PointMath.subtract(eventPosition, PointMath.scalarScale(details.centre, zoomScale))
@@ -1051,6 +1079,30 @@ export class CellDLEditor {
             this.unsetSelectedObjects()
             this.setSelectedObject(celldlObject)
             this.#showStatus(celldlObject.celldlSvgElement?.centroid as Point, celldlObject)
+        }
+    }
+
+    /**
+     * Places the palette entry `entryId` (../../plugins/bondgraph/palette.ts) centred at `svgPoint`, as one undo
+     * step, and selects its main element. Returns what was added, or `[]` when nothing could be.
+     */
+    async addPaletteEntry(entryId: string, svgPoint: PointLike): Promise<CellDLObject[]> {
+        if (this.#celldlDiagram === null) {
+            return []
+        }
+        try {
+            const objects = await placeEntry(entryId, svgPoint)
+            this.#unsetActiveObjects()
+            const main = objects[0]
+            if (main) {
+                this.unsetSelectedObjects()
+                this.setSelectedObject(main)
+                this.#showStatus(main.celldlSvgElement?.centroid as Point, main)
+            }
+            return objects
+        } catch (error) {
+            this.showMessage(`Cannot add the element: ${(error as Error).message}`, 'error')
+            return []
         }
     }
 

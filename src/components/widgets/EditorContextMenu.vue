@@ -61,6 +61,12 @@ function contextMenuEvent(id: string) {
 const items = vue.computed(() => {
   return [
     {
+        command: () => contextMenuEvent(CONTEXT_MENU.ADD_ELEMENT),
+        disabled: !props.contextMenuProps?.state.has(CONTEXT_MENU.ADD_ELEMENT),
+        label: 'Add element…'
+    },
+    { separator: true },
+    {
         command: () => contextMenuEvent(CONTEXT_MENU.DELETE),
         disabled: !props.contextMenuProps?.state.has(CONTEXT_MENU.DELETE),
         label: 'Delete'

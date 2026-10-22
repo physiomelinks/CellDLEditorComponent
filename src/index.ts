@@ -57,6 +57,8 @@ export type {
 
 export type { ValuesMode } from '#root/plugins/bondgraph/values'
 
+export type { PaletteDomain } from '#root/plugins/bondgraph/palette'
+
 export { ARROW_STYLES, type ArrowStyle, DEFAULT_ARROW_STYLE } from '#root/utils/arrows'
 
 export type {

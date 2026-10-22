@@ -732,6 +732,34 @@ export class BondgraphPlugin implements PluginInterface {
         await this.#updateSvgElement(celldlObject, pluginData.species, pluginData.location)
     }
 
+    /**
+     * Store the defaults the Properties panel shows for a new element's template, as choosing the template there
+     * does: `DEFAULT_PARAMETER_VALUE` (1) for each parameter, and 0 for an initial value. Values already stored
+     * are kept.
+     */
+    storeDefaultParameters(celldlObject: CellDLObject) {
+        const elementTemplate = (<PluginData>celldlObject.pluginData(this.id)).elementTemplate
+        if (!elementTemplate) {
+            return
+        }
+        const group: PropertyGroup = { groupId: BG_PROPERTY_GROUP_ID.ElementParameters, items: [] }
+        this.#setVariableItems(elementTemplate.parameters, group)
+        this.#loadVariableItems(celldlObject, group)
+        this.#storeDefaultParameters(celldlObject, group, elementTemplate)
+        const value = elementTemplate.value
+        if (value && elementTemplate.baseComponent.type !== this.#transformNodeType) {
+            const objectUri = celldlObject.uri.toString()
+            const stored = celldlObject.rdfStore.query(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+                SELECT ?value WHERE { ${objectUri} bgf:hasValue ?value }`)
+            if (stored.length === 0) {
+                celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
+                    PREFIX : <${this.#currentDocumentUri}#>
+                    INSERT DATA { ${objectUri} bgf:hasValue "0 ${value.units}"^^cdt:ucum }`)
+            }
+        }
+    }
+
     /** Set a bond's bgf:bondCount (1 is left implicit). */
     setBondCount(connection: CellDLConnection, count: number) {
         const uri = connection.uri.toString()
