@@ -18,8 +18,6 @@ limitations under the License.
 
 ******************************************************************************/
 
-import { arrowMarkerDefinition } from '#root/utils/styling'
-
 //==============================================================================
 
 // PhLynx's arrowhead (its CouplingEdge, a copy of Vue Flow's closed arrow): one head at a connection's target end,
@@ -53,9 +51,30 @@ export function arrowShape(x1: number, y1: number, x2: number, y2: number, strok
 
 //==============================================================================
 
-// How bonds' arrowheads are shown, whatever marker a document saved: `'bond'`, the editor's own notched head, as it
-// drew bonds before PhLynx's, or `'classic'`, PhLynx's closed arrow. The choice is the viewer's, so it is applied
-// with display-only markers and style rules outside the document's SVG, and a saved document keeps its own marker.
+// The bond-graph half arrow (harpoon) that shows a bond's power direction: one barb, at the bond's end, on the left
+// of the bond as you look along it, so a bond drawn left to right ends in ⇀ (barb up) and one drawn downwards has
+// its barb to the right of the line. That is how bond graphs are usually drawn, though the side is a drawing choice
+// that carries no meaning (some texts put the barb on the side the flow is written), so it is fixed here, not set.
+// Drawn in stroke widths at one stroke wide, so it is as heavy as the bond at any thickness and zoom, and coloured
+// with the bond (`context-stroke`) in either theme. Its tip is on the end of the bond, as the other heads' are, and
+// `orient="auto"` turns it with the bond's last segment, straight or routed.
+
+export const HARPOON_PATH = 'M-0.5,0 L-4.5,-3'      // tip to barb, in stroke widths; -y is the bond's left
+export const HARPOON_VIEWBOX = [-5.5, -4, 6, 5] as const
+
+/** The half arrow as an SVG marker with `id`, stroked in the connection's colour */
+export function harpoonMarker(id: string, className = '', colour = 'context-stroke'): string {
+    return `<marker id="${id}"${className ? ` class="${className}"` : ''} viewBox="${HARPOON_VIEWBOX.join(' ')}" refX="0" refY="0" `
+         + `markerWidth="${HARPOON_VIEWBOX[2]}" markerHeight="${HARPOON_VIEWBOX[3]}" markerUnits="strokeWidth" orient="auto">`
+         + `<path d="${HARPOON_PATH}" fill="none" stroke="${colour}" stroke-width="1" `
+         + `stroke-linecap="round" stroke-linejoin="round"/></marker>`
+}
+
+//==============================================================================
+
+// How bonds' arrowheads are shown, whatever marker a document saved: `'bond'`, the bond-graph half arrow above, or
+// `'classic'`, PhLynx's closed arrow. The choice is the viewer's, so it is applied with display-only markers and
+// style rules outside the document's SVG, and a saved document keeps its own marker.
 
 export type ArrowStyle = 'bond' | 'classic'
 
@@ -79,7 +98,7 @@ export function arrowStyleOrDefault(style: string | undefined | null): ArrowStyl
  */
 export function displayArrowDefinitions(): string {
     const markers = [
-        arrowMarkerDefinition(displayArrowId('bond'), 'bondgraph'),
+        harpoonMarker(displayArrowId('bond'), 'bondgraph'),
         arrowMarker(displayArrowId('classic'), 'bondgraph')
     ]
     const rules = ARROW_STYLES.map((style) =>
