@@ -193,9 +193,19 @@ export interface PluginInterface {
      * @param itemId The full ID (`property_group/var_name`) of the property.
      * @param value The original and new value of the given property.
      * @param componentProperties Properties about the object, ordered by their group.
+     * @returns Why the value could not be stored, if it wasn't.
      */
+    // biome-ignore lint/suspicious/noConfusingVoidType: a plugin with nothing to report needn't return anything
     updateObjectProperties: (celldlObject: CellDLObject, panelId: PANEL_ID, itemId: string,
-                             value: ValueChange, componentProperties: PropertyGroup[]) => Promise<void>
+                             value: ValueChange, componentProperties: PropertyGroup[]) => Promise<string|void>
+
+    /**
+     * Bring a CellDL object's plugin data and SVG up to date with its RDF, after its
+     * RDF has been changed directly, e.g. by undo.
+     *
+     * @param celldlObject A CellDL object.
+     */
+    refreshObject?: (celldlObject: CellDLObject) => Promise<void>
 
     /**
      * Update the SVG representation of a object when its styling has changed.
@@ -425,12 +435,25 @@ export class ComponentLibraryPlugin {
         }
     }
 
+    /** Updates an object's property, returning why it could not be, or `''`. */
     async updateObjectProperties(celldlObject: CellDLObject, panelId: PANEL_ID, itemId: string, value: ValueChange,
-                                 componentProperties: PropertyGroup[]) {
+                                 componentProperties: PropertyGroup[]): Promise<string> {
+        let errorMsg = ''
         for (const pluginId of celldlObject.pluginIds) {
             const plugin = this.#registeredPlugins.get(pluginId)
             if (plugin && Object.keys(celldlObject.pluginData(pluginId)).length) {
-                await plugin.updateObjectProperties(celldlObject, panelId, itemId, value, componentProperties)
+                errorMsg ||= (await plugin.updateObjectProperties(celldlObject, panelId, itemId, value,
+                                                                  componentProperties)) || ''
+            }
+        }
+        return errorMsg
+    }
+
+    async refreshObject(celldlObject: CellDLObject) {
+        for (const pluginId of celldlObject.pluginIds) {
+            const plugin = this.#registeredPlugins.get(pluginId)
+            if (plugin?.refreshObject && Object.keys(celldlObject.pluginData(pluginId)).length) {
+                await plugin.refreshObject(celldlObject)
             }
         }
     }

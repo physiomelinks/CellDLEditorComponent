@@ -167,6 +167,8 @@ export type Annotations = Record<string, Annotation>
 
 export type SvgViewerOptions = {
     tooltip?: string // The annotation field to show as a component's tooltip
+    /** Emit `elements` with each `diagram-changed`, for a host that lists the diagram's elements */
+    elementList?: boolean
 }
 
 export type ViewerEvent = {

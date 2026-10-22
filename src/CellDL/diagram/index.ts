@@ -348,6 +348,11 @@ export class CellDLDiagram {
         }
     }
 
+    /** The diagram's objects, in the order they were added. */
+    get objects(): CellDLObject[] {
+        return [...this.#objects.values()]
+    }
+
     objectById(id: string): CellDLObject | null {
         return this.#objects.get(id) || null
     }

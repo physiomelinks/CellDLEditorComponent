@@ -63,6 +63,14 @@ import {
 
 import { componentLibraryPlugin } from '#root/plugins'
 
+import {
+    type DiagramElement,
+    type ElementEdit,
+    type ElementError,
+    listElements,
+    setElements
+} from '#root/plugins/bondgraph/elements'
+
 import { BondgraphPlugin } from '#root/plugins/bondgraph'
 import BondgraphPopover from '#root/plugins/bondgraph/bondgraph.vue'
 
@@ -124,7 +132,37 @@ export type EditorViewCommand = {
     options: ViewState
 }
 
+/**
+ * List, set or select the diagram's bond graph elements, as the Properties panel
+ * shows them. `kind` is returned in the reply, to match it with the request.
+ *
+ * * `list` replies with `elements`.
+ * * `set` makes its edits as one undoable step, as the Properties panel would,
+ *   and replies with `element-result`. An edit that can't be made is skipped and
+ *   reported in `errors`.
+ * * `select` selects just the element (or, with `id: null`, nothing), with the
+ *   usual `select` and `unselect` events, panning to it if asked (never zooming).
+ */
+export type EditorElementCommand = {
+    command: 'element'
+    options: {
+        action: 'list'
+        kind?: string
+    } | {
+        action: 'set'
+        kind?: string
+        edits: ElementEdit[]
+    } | {
+        action: 'select'
+        kind?: string
+        id: string | null
+        /** Pan the element to the centre of the view: always, or only if it isn't wholly in view */
+        centre?: boolean | 'if-hidden'
+    }
+}
+
 export type CellDLEditorCommand = EditorEditCommand
+                                | EditorElementCommand
                                 | EditorExportCommand
                                 | EditorFileCommand
                                 | EditorSetStateCommand
@@ -168,6 +206,23 @@ export type EditorData = {
 export type DiagramChange = {
     revision: number
     rdf: string
+}
+
+/**
+ * The diagram's bond graph elements, in reply to `list` and, with the
+ * `elementList` option, with each `diagram-changed` (with the same `revision`).
+ */
+export type ElementsChange = {
+    kind?: string
+    revision: number
+    elements: DiagramElement[]
+}
+
+/** The reply to an `element` command's `set` or `select` */
+export type ElementResult = {
+    kind?: string
+    ok: boolean
+    errors?: ElementError[]
 }
 
 //==============================================================================
@@ -221,6 +276,8 @@ const props = defineProps<CellDLEditorProps>()
 const emit = defineEmits<{
     'diagram-changed': [change: DiagramChange],
     'editor-data': [data: EditorData],
+    'element-result': [result: ElementResult],
+    'elements': [change: ElementsChange],
     'editor-state': [state: {
         error: string
     }],
@@ -319,6 +376,9 @@ async function reportDiagramChange() {
             lastRdf = rdf
             rdfRevision += 1
             emit('diagram-changed', { revision: rdfRevision, rdf })
+            if (props.options?.elementList) {
+                emit('elements', { revision: rdfRevision, elements: listElements(diagram) })
+            }
         }
     } catch (err) {
         console.error('Cannot read the diagram\'s RDF:', err)
@@ -568,6 +628,8 @@ vue.watch(
             if (options.action === 'clean') {
                 undoRedo.clean()
             }
+        } else if (props.editorCommand?.command === 'element') {
+            await elementCommand(props.editorCommand as EditorElementCommand)
         } else if (props.editorCommand?.command === 'set-state') {
             const command = props.editorCommand as EditorSetStateCommand
             const options = command.options
@@ -580,6 +642,26 @@ vue.watch(
         }
     }
 )
+
+//==============================================================================
+
+async function elementCommand(command: EditorElementCommand) {
+    const options = command.options
+    const kind = options.kind
+    if (options.action === 'list') {
+        emit('elements', { kind, revision: rdfRevision, elements: listElements(celldlDiagram) })
+    } else if (options.action === 'set') {
+        const result = await setElements(celldlEditor, celldlDiagram, options.edits ?? [])
+        emit('element-result', { kind, ...result })
+    } else if (options.action === 'select') {
+        const found = celldlEditor.selectObjectById(options.id ?? null, options.centre ?? false)
+        emit('element-result', found ? { kind, ok: true } : {
+            kind,
+            ok: false,
+            errors: [{ id: String(options.id), field: '', message: `No object has id '${options.id}'` }]
+        })
+    }
+}
 
 //==============================================================================
 

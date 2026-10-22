@@ -146,6 +146,40 @@ export function updateItemProperty(property: string, value: ValueChange,
 
 //==============================================================================
 
+/**
+ * An object's property groups for a panel, as the panel shows them, loaded from
+ * a copy of the panel's group template.
+ *
+ * @param panelId The panel.
+ * @param groupTemplate The panel's property groups, whose items are not used.
+ * @param celldlObject The object whose properties are loaded.
+ */
+export function loadPropertyGroups(panelId: PANEL_ID, groupTemplate: PropertyGroup[],
+                                   celldlObject: CellDLObject): PropertyGroup[] {
+    const groups: PropertyGroup[] = structuredClone(groupTemplate)
+    for (const group of groups) {
+        group.items = []
+        group.styling = {}
+    }
+    if (panelId === PANEL_ID.METADATA_PANEL) {
+        // First get generic metadata
+        const group = groups.find(group => group.groupId === OBJECT_METADATA_GROUP)
+        if (group) {
+            for (const itemTemplate of objectMetadataTemplate().items) {
+                const item = getItemProperty(celldlObject, itemTemplate)
+                if (item) {
+                    group.items.push(item)
+                }
+            }
+        }
+    }
+    // Then plugin specific component properties
+    componentLibraryPlugin.loadComponentProperties(groups, panelId, celldlObject)
+    return groups
+}
+
+//==============================================================================
+
 export class ObjectPropertiesPanel {
     #componentPropertiesRef = vue.ref<ComponentProperties>({
         panelId: '',
@@ -176,29 +210,7 @@ export class ObjectPropertiesPanel {
             this.#componentPropertiesRef.value.objectId = undefined
         } else if (celldlObject.id !== this.#componentPropertiesRef.value.objectId) {
             this.#componentPropertiesRef.value.objectId = celldlObject.id
-            for (const group of this.#componentPropertiesRef.value.groups) {
-                group.items.length = 0
-                group.styling = {}
-            }
-            if (this.#panelId === PANEL_ID.METADATA_PANEL) {
-                // First get generic metadata
-                for (const group of this.#componentPropertiesRef.value.groups) {
-                    if (group.groupId === OBJECT_METADATA_GROUP) {
-                        const template = objectMetadataTemplate()
-                        template.items.forEach((itemTemplate: ItemDetails) => {
-                            const item = getItemProperty(celldlObject, itemTemplate)
-                            if (item) {
-                                group.items.push(item)
-                            }
-                        })
-                        break
-                    }
-                }
-            }
-            // Set plugin specific component properties into `this.#componentPropertiesRef`
-
-            componentLibraryPlugin.loadComponentProperties(this.#componentPropertiesRef.value.groups,
-                                                           this.#panelId, celldlObject)
+            this.#componentPropertiesRef.value.groups = loadPropertyGroups(this.#panelId, this.#groupTemplate, celldlObject)
         }
     }
 

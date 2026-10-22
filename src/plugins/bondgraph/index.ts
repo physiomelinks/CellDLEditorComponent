@@ -200,7 +200,24 @@ interface PluginData {
 
 //==============================================================================
 
-enum BG_PROPERTY_GROUP_ID {
+/** What a bond graph component is, as `describeElement()` gives it */
+export interface BGElementDescription {
+    /** The base component's type */
+    kind: string
+    kindName: string
+    junctionType?: string
+    isBondElement: boolean
+    /** The element template's type, if one is chosen */
+    template?: string
+    templateName?: string
+    symbol: string
+    /** The units of the template's value, if it has one */
+    valueUnits?: string
+}
+
+//==============================================================================
+
+export enum BG_PROPERTY_GROUP_ID {
     ElementProperties = 'bg-element-properties',
     ElementInitialValue = 'bg-element-initial-value',
     ElementParameters = 'bg-element-parameters',
@@ -209,11 +226,11 @@ enum BG_PROPERTY_GROUP_ID {
 
 const BG_PROPERTY_GROUP_IDS = Object.entries(BG_PROPERTY_GROUP_ID).map(([_, value]) => value as string)
 
-const BG_ELEMENT_TYPE_ITEM  = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-type`
-const BG_ELEMENT_SPECIES_ITEM  = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-species`
-const BG_ELEMENT_LOCATION_ITEM  = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-location`
+export const BG_ELEMENT_TYPE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-type`
+export const BG_ELEMENT_SPECIES_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-species`
+export const BG_ELEMENT_LOCATION_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-location`
 
-const BG_ELEMENT_VALUE_ITEM  = `${BG_PROPERTY_GROUP_ID.ElementInitialValue}/bg-element-value`
+export const BG_ELEMENT_VALUE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementInitialValue}/bg-element-value`
 
 //==============================================================================
 
@@ -874,16 +891,19 @@ export class BondgraphPlugin implements PluginInterface {
     //==========================================================================
 
     async updateObjectProperties(celldlObject: CellDLObject, panelId: PANEL_ID, itemId: string, value: ValueChange,
-                                 componentProperties: PropertyGroup[]) {
+                                 componentProperties: PropertyGroup[]): Promise<string> {
         if (panelId === PANEL_ID.PROPERTIES_PANEL) {
             const itemGroupId = itemId.split('/')[0]
             if (!itemGroupId) {
-                return
+                return ''
             }
             const groupTemplate = this.#elementPropertiesTemplate.get(itemGroupId) as IndexedPropertyGroup
 
             // Store the item's new value
-            await this.#updateElementProperties(value, itemId, celldlObject, groupTemplate)
+            const errorMsg = await this.#updateElementProperties(value, itemId, celldlObject, groupTemplate)
+            if (errorMsg) {
+                return errorMsg
+            }
 
             // Has the CellDLObject's type changed?
             if (itemId === BG_ELEMENT_TYPE_ITEM && value.newValue !== value.oldValue) {
@@ -932,6 +952,7 @@ export class BondgraphPlugin implements PluginInterface {
                 }
             }
         }
+        return ''
     }
 
     //==================================
@@ -952,9 +973,11 @@ export class BondgraphPlugin implements PluginInterface {
 
     //==================================
 
+    /** Stores an item's new value, returning why it could not be stored, or `''`. */
     async #updateElementProperties(value: ValueChange, itemId: string,
-                                   celldlObject: CellDLObject, groupTemplate: IndexedPropertyGroup) {
+                                   celldlObject: CellDLObject, groupTemplate: IndexedPropertyGroup): Promise<string> {
         const pluginData = (<PluginData>celldlObject.pluginData(this.id))
+        let errorMsg = ''
 
         // check all groups belonging to the PROPERTIES_PANEL
         if (groupTemplate.groupId === BG_PROPERTY_GROUP_ID.ElementProperties) {
@@ -964,7 +987,7 @@ export class BondgraphPlugin implements PluginInterface {
                     if (itemId === BG_ELEMENT_TYPE_ITEM) {
                         await this.#updateElementType(item, value, celldlObject)
                     } else if (itemId === BG_ELEMENT_SPECIES_ITEM) {
-                        const errorMsg = await this.#updateSvgElement(celldlObject, value.newValue, pluginData.location)
+                        errorMsg = await this.#updateSvgElement(celldlObject, value.newValue, pluginData.location)
                         if (errorMsg === '') {
                             updateItemProperty(item.property, value, celldlObject)
                             pluginData.species = value.newValue
@@ -973,7 +996,7 @@ export class BondgraphPlugin implements PluginInterface {
                         }
                     } else if (itemId === BG_ELEMENT_LOCATION_ITEM) {
                         //pluginData.location = value.newValue
-                        const errorMsg = await this.#updateSvgElement(celldlObject, pluginData.species, value.newValue)
+                        errorMsg = await this.#updateSvgElement(celldlObject, pluginData.species, value.newValue)
                         if (errorMsg === '') {
                             updateItemProperty(item.property, value, celldlObject)
                             pluginData.location = value.newValue
@@ -993,6 +1016,7 @@ export class BondgraphPlugin implements PluginInterface {
                 || groupTemplate.groupId === BG_PROPERTY_GROUP_ID.ElementVariables) {
             this.#updateVariableProperties(value, groupTemplate.groupId, itemId, celldlObject, pluginData.elementTemplate)
         }
+        return errorMsg
     }
 
     //==================================
@@ -1087,6 +1111,82 @@ export class BondgraphPlugin implements PluginInterface {
             celldlSvgElement.redraw()
         }
         return ''
+    }
+
+    //==========================================================================
+
+    /**
+     * What a bond graph component is, for listing it outside the Properties panel.
+     *
+     * @param celldlObject A CellDL object.
+     * @returns `undefined` when the object is not a bond graph component.
+     */
+    describeElement(celldlObject: CellDLObject): BGElementDescription|undefined {
+        if (celldlObject.isConnection) {
+            return
+        }
+        const pluginData = <PluginData>celldlObject.pluginData(this.id)
+        const baseComponent = pluginData.baseComponent
+        if (!pluginData.managed || !baseComponent?.type) {
+            return
+        }
+        const elementTemplate = pluginData.elementTemplate
+        return {
+            kind: baseComponent.type,
+            kindName: baseComponent.name || $rdf.namespaceMap.getCurie(baseComponent.type),
+            junctionType: baseComponent.junctionType,
+            isBondElement: baseComponent.isBondElement,
+            template: elementTemplate?.type,
+            templateName: elementTemplate?.name,
+            symbol: pluginData.symbol ?? elementTemplate?.symbol ?? baseComponent.symbol,
+            valueUnits: elementTemplate?.value?.units
+        }
+    }
+
+    /** The physical domain of an element template, given its type. */
+    templateDomain(type: string): string|undefined {
+        return this.#elementTemplates.get(type)?.domain || undefined
+    }
+
+    /**
+     * Brings a component's plugin data, domain, SVG and name up to date with its
+     * RDF, after the RDF has been changed directly (e.g. by undo).
+     *
+     * @param celldlObject A CellDL object.
+     */
+    async refreshObject(celldlObject: CellDLObject) {
+        if (celldlObject.isConnection) {
+            return
+        }
+        const pluginData = <PluginData>celldlObject.pluginData(this.id)
+        if (!pluginData.managed) {
+            return
+        }
+        const oldTemplate = pluginData.elementTemplate?.type
+        const fillString = pluginData.fillString
+        for (const key of Object.keys(pluginData)) {
+            delete (pluginData as unknown as Record<string, unknown>)[key]
+        }
+        Object.assign(pluginData, this.getPluginData(celldlObject))
+        if (fillString !== undefined) {
+            pluginData.fillString = fillString
+        }
+        celldlObject.rdfStore.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT ?species ?location WHERE {
+                OPTIONAL { ${celldlObject.uri.toString()} bgf:hasSpecies ?species }
+                OPTIONAL { ${celldlObject.uri.toString()} bgf:hasLocation ?location }
+            }`
+        ).forEach((r: Map<string, $rdf.Term>) => {
+            pluginData.species = r.get('species')?.value
+            pluginData.location = r.get('location')?.value
+        })
+        const elementTemplate = pluginData.elementTemplate
+        if (elementTemplate?.type !== oldTemplate) {
+            this.#domainGraph.setDomain(celldlObject.uri.value, elementTemplate?.domain)
+        }
+        celldlObject.setName(this.#getName(elementTemplate?.type ?? pluginData.baseComponent.type))
+        await this.#updateSvgElement(celldlObject, pluginData.species, pluginData.location)
     }
 
     //==========================================================================
