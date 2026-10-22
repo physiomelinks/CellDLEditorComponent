@@ -28,8 +28,10 @@ import type { MenuItem, MenuItemCommandEvent } from 'primevue/menuitem'
 import * as common from '../utils/common'
 
 import type { EditorStatus, ViewState } from '#root/utils/EditorState'
+import { ARROW_STYLES, type ArrowStyle } from '#root/utils/arrows'
 
 const props = defineProps<{
+    arrowStyle: ArrowStyle
     editorStatus: EditorStatus
     fileModified: boolean  // to become part of editor state
     haveFile: boolean
@@ -113,6 +115,24 @@ const snapToGridItems = [
 
 //==============================================================================
 
+const ARROW_STYLE_LABELS: Record<ArrowStyle, string> = { bond: 'Bond graph', classic: 'Classic' }
+
+const arrowStyleItems = vue.reactive(ARROW_STYLES.map((style) => ({
+    label: ARROW_STYLE_LABELS[style],
+    icon: getCheckedIcon(style === props.arrowStyle),
+    command: (_e: MenuItemCommandEvent) => {
+        emit('view-action', 'arrow-style', style)
+    }
+})))
+
+vue.watch(() => props.arrowStyle, (arrowStyle) => {
+    ARROW_STYLES.forEach((style, index) => {
+        arrowStyleItems[index]!.icon = getCheckedIcon(style === arrowStyle)
+    })
+})
+
+//==============================================================================
+
 const viewItems = {
     label: 'View',
     items: [
@@ -136,6 +156,11 @@ const viewItems = {
             label: 'Snap',
             icon: 'pi',
             items: snapToGridItems
+        },
+        {
+            label: 'Arrowheads',
+            icon: 'pi',
+            items: arrowStyleItems
         }
     ]
 }

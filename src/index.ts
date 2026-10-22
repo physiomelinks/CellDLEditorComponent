@@ -57,6 +57,8 @@ export type {
 
 export type { ValuesMode } from '#root/plugins/bondgraph/values'
 
+export { ARROW_STYLES, type ArrowStyle, DEFAULT_ARROW_STYLE } from '#root/utils/arrows'
+
 export type {
     DiagramElement,
     ElementEdit,

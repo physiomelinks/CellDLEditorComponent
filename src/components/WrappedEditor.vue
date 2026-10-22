@@ -1,5 +1,5 @@
 <template lang="pug">
-    .celldl-editor.flex.flex-col.h-full
+    .celldl-editor.flex.flex-col.h-full(:class="arrowClass")
         main.editor-pane.relative.flex.grow
             EditorToolbar.editor-bar(
                 v-if="shownToolButtons.length || shownActions.length"
@@ -26,6 +26,8 @@
         footer.status-bar
             span#status-msg
             span#status-pos(v-show="props.chrome?.statusPosition !== false")
+        //- Last, so that a host's `.celldl-editor svg` still finds the diagram first
+        svg.celldl-display-arrows(aria-hidden="true" width="0" height="0" v-html="displayArrows")
 </template>
 
 <script setup lang="ts">
@@ -52,6 +54,7 @@ import { DEFAULT_EDITOR_TOOL_ID, EDITOR_TOOL_IDS } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
 import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
 import { isMacOs } from '#root/utils/common'
+import { type ArrowStyle, arrowStyleClass, arrowStyleOrDefault, displayArrowDefinitions } from '#root/utils/arrows'
 
 import {
     type Annotations,
@@ -210,6 +213,13 @@ export type EditorPanelName = 'properties' | 'metadata' | 'style' | 'reactions' 
 
 export interface CellDLEditorProps {
     annotations?: Annotations
+    /**
+     * How bonds' arrowheads are drawn, in every diagram whatever marker it was
+     * saved with: `'bond'`, the editor's notched head, or `'classic'`, PhLynx's
+     * closed arrow. Only the display changes, never the saved document.
+     * Default `'bond'`.
+     */
+    arrowStyle?: ArrowStyle
     chrome?: EditorChrome
     editorCommand?: CellDLEditorCommand
     options?: SvgViewerOptions
@@ -293,6 +303,10 @@ const celldlEditor: CellDLEditor = new CellDLEditor()
 //==============================================================================
 
 const props = defineProps<CellDLEditorProps>()
+
+// Bonds' arrowheads, drawn with display-only markers beside the diagram
+const displayArrows = displayArrowDefinitions()
+const arrowClass = vue.computed(() => arrowStyleClass(arrowStyleOrDefault(props.arrowStyle)))
 
 // How the Properties panel shows values
 vue.provide(VALUES_CHROME_KEY, vue.computed<ValuesChrome>(() => ({
@@ -751,6 +765,14 @@ vue.onMounted(async () => {
 </script>
 
 <style scoped>
+.celldl-display-arrows {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
 .editor-pane {
     min-height: calc(100% - 1.6em);
 }
