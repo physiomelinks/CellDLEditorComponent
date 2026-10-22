@@ -411,9 +411,10 @@ export class CellDLConnectedObject extends CellDLMoveableObject {
     constructor(
         uri: NamedNode,
         objectTemplate: ObjectTemplate,
-        celldlDiagram: CellDLDiagram
+        celldlDiagram: CellDLDiagram,
+        updateStore: boolean=true
     ) {
-        super(uri, objectTemplate, celldlDiagram)
+        super(uri, objectTemplate, celldlDiagram, updateStore)
         this.#maxConnections = componentLibraryPlugin.getMaxConnections(this)
     }
 
@@ -484,9 +485,10 @@ export class CellDLComponent extends CellDLConnectedObject {
     constructor(
         uri: NamedNode,
         objectTemplate: ObjectTemplate,
-        celldlDiagram: CellDLDiagram
+        celldlDiagram: CellDLDiagram,
+        updateStore: boolean=true
     ) {
-        super(uri, objectTemplate, celldlDiagram)
+        super(uri, objectTemplate, celldlDiagram, updateStore)
         this.#interfacePorts = objectTemplate.metadataProperties
             .getPropertyAsArray(CELLDL.uri('hasInterface'))
             .map((node) => <CellDLInterface>celldlDiagram.getConnector(node))
@@ -543,9 +545,10 @@ export class CellDLCompartment extends CellDLConnectedObject {
     constructor(
         uri: NamedNode,
         objectTemplate: ObjectTemplate,
-        celldlDiagram: CellDLDiagram
+        celldlDiagram: CellDLDiagram,
+        updateStore: boolean=true
     ) {
-        super(uri, objectTemplate, celldlDiagram)
+        super(uri, objectTemplate, celldlDiagram, updateStore)
     }
     #associatedComponents: CellDLMoveableObject[] = []
     #compartmentElement: CompartmentElement|undefined
@@ -601,9 +604,10 @@ export class CellDLConnection extends CellDLObject {
     constructor(
         uri: NamedNode,
         objectTemplate: ObjectTemplate,
-        celldlDiagram: CellDLDiagram
+        celldlDiagram: CellDLDiagram,
+        updateStore: boolean=true
     ) {
-        super(uri, objectTemplate, celldlDiagram)
+        super(uri, objectTemplate, celldlDiagram, updateStore)
         const metadata = objectTemplate.metadataProperties
         const source = celldlDiagram.getConnector(metadata.getProperty(CELLDL.uri('hasSource')))
         const target = celldlDiagram.getConnector(metadata.getProperty(CELLDL.uri('hasTarget')))
