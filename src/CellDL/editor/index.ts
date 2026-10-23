@@ -190,6 +190,12 @@ export const VIEW_CHANGED_EVENT = 'editor-view-changed'
 /** The selection has changed, with `detail.arrangeable` components that can be aligned */
 export const SELECTION_CHANGED_EVENT = 'editor-selection-changed'
 
+/**
+ * A pointer was pressed on the canvas, as `detail.event`, before the editor handles it: open menus, popovers and
+ * dropdowns close, the editor's own and a host's alike
+ */
+export const CANVAS_PRESS_EVENT = 'editor-canvas-press'
+
 //==============================================================================
 
 export function getElementId(element: SVGGraphicsElement): string {
@@ -368,6 +374,10 @@ export class CellDLEditor {
         this.#container.addEventListener('pointerover', this.#pointerOverEvent.bind(this))
         this.#container.addEventListener('pointerout', this.#pointerOutEvent.bind(this))
 
+        // A press anywhere on the canvas closes open menus, then does its own job
+        this.#container.addEventListener('pointerdown', (event: PointerEvent) => {
+            document.dispatchEvent(new CustomEvent(CANVAS_PRESS_EVENT, { detail: { event } }))
+        }, true)
         this.#container.addEventListener('pointerdown', this.#pointerDownEvent.bind(this))
         this.#container.addEventListener('pointermove', this.#pointerMoveEvent.bind(this))
         this.#container.addEventListener('pointerup', this.#pointerUpEvent.bind(this))

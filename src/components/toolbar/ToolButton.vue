@@ -36,6 +36,7 @@
 import * as vue from 'vue'
 import * as LucideIcons from '@lucide/vue'
 
+import { CANVAS_PRESS_EVENT } from '#editor/editor'
 import type { PropertyGroup } from '#root/utils/editor-types'
 
 import { clampPanelWidth, MIN_PANEL_WIDTH, panelWidth, savePanelWidth } from './panelWidth'
@@ -138,14 +139,20 @@ vue.onMounted(() => {
     }
 })
 
-// Escape closes a tool's popover, leaving its tool armed
+// Escape, or a press on the canvas, closes a tool's popover, leaving its tool armed
 function closePopover() {
     if (props.type === 'popover') {
         panelVisible.value = false
     }
 }
-vue.onMounted(() => document.addEventListener('close-tool-popover', closePopover))
-vue.onUnmounted(() => document.removeEventListener('close-tool-popover', closePopover))
+vue.onMounted(() => {
+    document.addEventListener('close-tool-popover', closePopover)
+    document.addEventListener(CANVAS_PRESS_EVENT, closePopover)
+})
+vue.onUnmounted(() => {
+    document.removeEventListener('close-tool-popover', closePopover)
+    document.removeEventListener(CANVAS_PRESS_EVENT, closePopover)
+})
 
 // Make sure popover is closed when button is deactivated
 vue.watch(
