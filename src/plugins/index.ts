@@ -236,6 +236,14 @@ export interface PluginInterface {
      * @param styling Styling for the object.
      */
     updatedComponentStyling: (celldlObject: CellDLObject, styling: Styling) =>  Promise<void>
+
+    /**
+     * An object's styling as the plugin keeps it, where that differs from its
+     * SVG element's, so that undo can restore it.
+     *
+     * @param celldlObject A CellDL object.
+     */
+    componentStyling?: (celldlObject: CellDLObject) => Styling
 }
 
 //==============================================================================
@@ -468,6 +476,18 @@ export class ComponentLibraryPlugin {
                 await plugin.updatedComponentStyling(celldlObject, styling)
             }
         }
+    }
+
+    /** An object's current styling: its SVG element's, as its plugins keep it. */
+    componentStyling(celldlObject: CellDLObject): Styling {
+        const styling: Styling = { ...celldlObject.celldlSvgElement?.getStyle() }
+        for (const pluginId of celldlObject.pluginIds) {
+            const plugin = this.#registeredPlugins.get(pluginId)
+            if (plugin?.componentStyling && Object.keys(celldlObject.pluginData(pluginId)).length) {
+                Object.assign(styling, plugin.componentStyling(celldlObject))
+            }
+        }
+        return styling
     }
 
     /** Updates an object's property, returning why it could not be, or `''`. */

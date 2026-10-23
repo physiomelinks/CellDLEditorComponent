@@ -1346,6 +1346,14 @@ export class BondgraphPlugin implements PluginInterface {
 
     //==================================
 
+    componentStyling(celldlObject: CellDLObject): Styling {
+        const pluginData = (<PluginData>celldlObject.pluginData(this.id))
+        if (!celldlObject.isConnection && pluginData.fillString !== undefined) {
+            return { fillStyle: pluginData.fillString }
+        }
+        return {}
+    }
+
     async updatedComponentStyling(celldlObject: CellDLObject, styling: Styling) {
         const pluginData = (<PluginData>celldlObject.pluginData(this.id))
         if (styling.fillStyle) {   // we don't need styleType, just the presence of `fillStyle` in the `styling` object

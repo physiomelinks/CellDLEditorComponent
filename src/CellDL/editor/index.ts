@@ -32,7 +32,7 @@ import type { TemplateEventDetails } from '#editor/components'
 import { objectMetadataTemplate, ObjectPropertiesPanel } from '#editor/components/properties'
 import type { CellDLDiagram } from '#editor/diagram'
 import { SelectionSet } from '#editor/diagram/selectionset'
-import { type MoveUndoState, undoRedo } from '#editor/diagram/undoredo'
+import { type MoveUndoState, styleSnapshot, undoRedo } from '#editor/diagram/undoredo'
 import type { Bounds } from '#editor/geometry'
 import { round } from '#editor/utils'
 
@@ -40,6 +40,7 @@ import { isMacOs } from '#root/utils/common'
 import { type Annotations, PANEL_ID, type SvgViewerOptions, type ViewerEvent } from '#root/utils/editor-types'
 import { type Point, type PointLike, PointMath } from '#root/utils/points'
 import { imagesLoaded } from '#root/utils/svgUtils'
+import type { Styling } from '#root/utils/styling'
 import type { StringProperties } from '#root/utils/types'
 import { componentLibraryPlugin } from '#root/plugins'
 import { paletteEntry, placeEntry } from '#root/plugins/bondgraph/palette'
@@ -883,10 +884,37 @@ export class CellDLEditor {
         const detail = (<CustomEvent>event).detail
         if (detail.source === this.#openPanel?.panelId) {
             if (this.#openPanel && this.selectionSet.size === 1) {
-                await this.#openPanel.updateObjectStyling(this.selectionSet.objects[0]!, detail.styling)
-                notifyChanges()
+                await this.editStyling(this.selectionSet.objects[0]!, detail.styling, !!detail.live)
             }
         }
+    }
+
+    /**
+     * Changes an object's styling as an undoable step, as the Style panel does,
+     * reporting the change.
+     *
+     * @param styling The style fields to set.
+     * @param live Whether the change is still being made, e.g. while a colour
+     *             picker or slider is dragged: such changes to the same fields
+     *             are one step, until one that isn't live commits it.
+     * @returns Whether the styling changed.
+     */
+    editStyling(object: CellDLObject, styling: Styling, live: boolean=false): Promise<boolean> {
+        const run = async () => {
+            const fields = Object.keys(styling)
+            const before = styleSnapshot(object)
+            await componentLibraryPlugin.updatedComponentStyling(object, styling)
+            const after = styleSnapshot(object)
+            const changed = undoRedo.recordStyleEdit(object, fields, before, after, live)
+            if (changed) {
+                notifyChanges()
+            }
+            return changed
+        }
+        // In turn with other edits, so each change starts from the last one's styling
+        const result = this.#propertiesEditing.then(run, run)
+        this.#propertiesEditing = result.then(() => undefined, () => undefined)
+        return result
     }
 
     showMessage(msg: string, style: string = '') {

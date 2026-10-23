@@ -108,13 +108,15 @@ function panelEvent(toolId: string, itemId: string, oldValue: string, newValue: 
     )
 }
 
-function styleEvent(toolId: string, styling: Styling) {
+// `live` while a change is still being made, e.g. a colour picker dragged, so undo makes it one step
+function styleEvent(toolId: string, styling: Styling, live: boolean = false) {
     document.dispatchEvent(
         new CustomEvent('style-event', {
             detail: {
                 type: 'value',
                 source: toolId,
-                styling: styling
+                styling: styling,
+                live
             }
         })
     )
