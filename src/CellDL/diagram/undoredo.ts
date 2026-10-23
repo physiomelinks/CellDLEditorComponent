@@ -137,6 +137,34 @@ function setConnectionPathArray(connection: CellDLConnection, connectionPathArra
     }
 }
 
+/** Whether objects are at the same positions in both maps */
+function sameCentroids(a: Map<CellDLObject, Point>, b: Map<CellDLObject, Point>): boolean {
+    if (a.size !== b.size) {
+        return false
+    }
+    for (const [object, centroid] of a) {
+        const other = b.get(object)
+        if (other === undefined || !PointMath.equals(centroid, other)) {
+            return false
+        }
+    }
+    return true
+}
+
+/** Whether connections have the same paths in both maps */
+function samePathArrays(a: ConnectionPathArrayMap, b: ConnectionPathArrayMap): boolean {
+    if (a.size !== b.size) {
+        return false
+    }
+    for (const [id, pathArrays] of a) {
+        const other = b.get(id)
+        if (other === undefined || JSON.stringify(pathArrays) !== JSON.stringify(other)) {
+            return false
+        }
+    }
+    return true
+}
+
 //==============================================================================
 
 export class MoveUndoState extends UndoState {
@@ -217,13 +245,18 @@ export class MoveUndoState extends UndoState {
 
     /**
      * Notes where the move ended, returning whether it moved anything. A move
-     * that ends where it started is kept as not having moved.
+     * that ends where it started, or that left everything where it was (such as
+     * one snapped back to the same grid point), is kept as not having moved.
      */
     endMove(position: PointLike|undefined): boolean {
         if (position !== undefined && !PointMath.equals(this.#prevPosition, position)) {
-            this.#nextCentroids = this.#centroids()
-            this.#nextPathArrays = this.#connectionPathArrays()
-            this.#nextPosition = Point.fromPoint(position)
+            const centroids = this.#centroids()
+            const pathArrays = this.#connectionPathArrays()
+            if (!sameCentroids(centroids, this.#prevCentroids) || !samePathArrays(pathArrays, this.#prevPathArrays)) {
+                this.#nextCentroids = centroids
+                this.#nextPathArrays = pathArrays
+                this.#nextPosition = Point.fromPoint(position)
+            }
         }
         return this.moved
     }

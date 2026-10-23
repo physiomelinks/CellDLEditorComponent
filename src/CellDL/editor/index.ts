@@ -1560,6 +1560,10 @@ export class CellDLEditor {
             }
         } else if (this.currentObject && this.moving) {
             // EDITOR_MODE.Selecting or EDITOR_MODE.AddingComponent
+            if (!this.moved && !this.#pointerDragged(event)) {
+                // Still a click: a pointer that shakes a little mustn't move (and snap) what it clicks
+                return
+            }
             if (this.#moveSelection) {
                 this.selectionSet.move(svgPoint)
             } else {

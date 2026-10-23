@@ -64,6 +64,20 @@ describe('a move', () => {
         expect(undoRedoState.canUndo).toBe(undoable)
     })
 
+    test('whose pointer moved but that left everything where it was records no edit and keeps redo', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        await editAndUndo(diagram)
+        const undoable = undoRedoState.canUndo
+        const object = diagram.objectById(STORE_E)!
+        const start = { ...object.celldlSvgElement!.centroid }
+        // As when a short drag snaps back to the same grid point
+        const undoState = undoRedo.setMoveUndoState(object, { x: 10, y: 10 })
+        expect(undoRedo.endMove(undoState, { x: 12, y: 11 })).toBe(false)
+        expect(undoRedoState.canRedo).toBe(true)
+        expect(undoRedoState.canUndo).toBe(undoable)
+        expect({ ...object.celldlSvgElement!.centroid }).toEqual(start)
+    })
+
     test('that moves is one undo step, and clears redo', async () => {
         const diagram = await openFixture('enzyme.celldl')
         await editAndUndo(diagram)
