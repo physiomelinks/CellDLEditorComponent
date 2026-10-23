@@ -1,6 +1,14 @@
 <template lang="pug">
     .celldl-editor.flex.flex-col.h-full(:class="arrowClass")
-        main.editor-pane.relative.flex.grow
+        ElementPalette(
+            v-if="paletteLayout === 'top'"
+            layout="top"
+        )
+        main.editor-pane.relative.flex.grow(:class="{ 'with-top-palette': paletteLayout === 'top' }")
+            ElementPalette(
+                v-if="paletteLayout === 'left'"
+                layout="left"
+            )
             EditorToolbar.editor-bar(
                 v-if="shownToolButtons.length || shownActions.length"
                 :buttons="shownToolButtons"
@@ -23,6 +31,12 @@
                 type="panel"
                 @button-event="buttonEvent"
             )
+        AddElementPopover(
+            v-if="addElementAt"
+            :at="addElementAt.client"
+            @pick="addElementPicked"
+            @close="addElementAt = null"
+        )
         footer.status-bar
             span#status-msg
             span#status-pos(v-show="props.chrome?.statusPosition !== false")
@@ -78,6 +92,7 @@ import {
 import { BondgraphPlugin } from '#root/plugins/bondgraph'
 import { VALUES_CHROME_KEY, type ValuesChrome, type ValuesMode } from '#root/plugins/bondgraph/values'
 import BondgraphPopover from '#root/plugins/bondgraph/bondgraph.vue'
+import type { PaletteDomain } from '#root/plugins/bondgraph/palette'
 
 import { DrawingPlugin } from '#root/plugins/drawing'
 import DrawingPopover from '#root/plugins/drawing/drawing.vue'
@@ -90,6 +105,10 @@ import type { PopoverEventData, ViewState } from '#root/utils/editor-types'
 import PropertiesPanel from './panels/PropertiesPanel.vue'
 import ReactionsPanel from './panels/ReactionsPanel.vue'
 import StylingPanel from './panels/StylingPanel.vue'
+
+import AddElementPopover from './palette/AddElementPopover.vue'
+import ElementPalette from './palette/ElementPalette.vue'
+import { paletteDomain } from './palette/paletteState'
 
 import EditorToolbar from './toolbar/EditorToolbar.vue'
 import EditorContextMenu from './widgets/EditorContextMenu.vue'
@@ -203,6 +222,15 @@ export type EditorChrome = {
      * still to come, which are only shown when listed.
      */
     panels?: boolean | EditorPanelName[]
+    /**
+     * The element palette: labelled tiles dragged onto the canvas or clicked to
+     * arm. `'top'` (the default, or `true`) shows it above the canvas, `'left'`
+     * beside it, and `false` hides it. The context menu's Add element picker
+     * shows the same elements whatever this is.
+     */
+    palette?: boolean | 'top' | 'left'
+    /** The palette's initial filter: chemistry's elements, or every domain's. Default `'chemical'` */
+    paletteDomain?: PaletteDomain
 }
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
@@ -474,6 +502,42 @@ const contextMenuProps = vue.ref<ContextMenuProps>({
 document.addEventListener('open-context-menu', (event: Event) => {
     contextMenuProps.value = (<CustomEvent>event).detail
 })
+
+//==============================================================================
+
+// The element palette, and the context menu's Add element picker, which places its pick where the menu opened
+
+const paletteLayout = vue.computed<'top' | 'left' | null>(() => {
+    const palette = props.chrome?.palette
+    return palette === false ? null : palette === 'left' ? 'left' : 'top'
+})
+
+vue.watch(
+    () => props.chrome?.paletteDomain,
+    (domain) => {
+        paletteDomain.value = domain ?? 'chemical'
+    },
+    { immediate: true }
+)
+
+type AddElementPoint = { client: { x: number, y: number }, svg: { x: number, y: number } }
+
+const addElementAt = vue.ref<AddElementPoint | null>(null)
+
+function openAddElementEvent(event: Event) {
+    addElementAt.value = (<CustomEvent>event).detail
+}
+
+async function addElementPicked(entryId: string) {
+    const at = addElementAt.value
+    addElementAt.value = null
+    if (at) {
+        await celldlEditor.addPaletteEntry(entryId, at.svg)
+    }
+}
+
+vue.onMounted(() => document.addEventListener('open-add-element', openAddElementEvent))
+vue.onUnmounted(() => document.removeEventListener('open-add-element', openAddElementEvent))
 
 //==============================================================================
 //==============================================================================
@@ -775,6 +839,10 @@ vue.onMounted(async () => {
 
 .editor-pane {
     min-height: calc(100% - 1.6em);
+}
+.editor-pane.with-top-palette {
+    /* the palette above takes its own height */
+    min-height: 0;
 }
 .editor-bar {
     width: 40px;

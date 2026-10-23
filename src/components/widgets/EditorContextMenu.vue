@@ -59,7 +59,12 @@ function contextMenuEvent(id: string) {
 //==============================================================================
 
 const items = vue.computed(() => {
+  // Add element is only offered on empty canvas, so it isn't listed when an element was right clicked
+  const canAdd = !!props.contextMenuProps?.state.has(CONTEXT_MENU.ADD_ELEMENT)
   return [
+    ...(canAdd
+        ? [{ command: () => contextMenuEvent(CONTEXT_MENU.ADD_ELEMENT), label: 'Add element…' }, { separator: true }]
+        : []),
     {
         command: () => contextMenuEvent(CONTEXT_MENU.DELETE),
         disabled: !props.contextMenuProps?.state.has(CONTEXT_MENU.DELETE),
