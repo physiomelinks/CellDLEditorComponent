@@ -38,7 +38,7 @@
                 )
                 ArrangeBar(
                     v-if="props.chrome?.arrange !== false && arrangeableCount >= 2"
-                    :style="{ right: `${8 + panelInset}px` }"
+                    :style="{ right: `${8 + panelInset}px`, maxWidth: `calc(100% - ${16 + panelInset}px)` }"
                     :count="arrangeableCount"
                     @arrange="(op) => celldlEditor.arrangeSelection(op)"
                 )
