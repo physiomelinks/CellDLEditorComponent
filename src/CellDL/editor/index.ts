@@ -360,7 +360,8 @@ export class CellDLEditor {
                 client: { x: event.clientX, y: event.clientY },
                 svg: this.#domToSvgCoords(event)
             }
-            this.enableContextMenuItem(CONTEXT_MENU.ADD_ELEMENT, this.#celldlDiagram !== null)
+            // Elements are only added from empty canvas: a right click on an element is about that element
+            this.enableContextMenuItem(CONTEXT_MENU.ADD_ELEMENT, this.#celldlDiagram !== null && !clickedObject)
             document.dispatchEvent(new CustomEvent('open-context-menu', {
                 detail: {
                     state: this.#contextMenuActiveItems,
