@@ -26,6 +26,7 @@ const VR1R = 'ID-00000007'
 const svgConnection = (bond: CellDLConnection) => bond.celldlSvgElement as SvgConnection
 const paths = (bond: CellDLConnection) => svgConnection(bond).pathElements.map(p => JSON.stringify(p.pathArray))
 const pointCount = (bond: CellDLConnection) => svgConnection(bond).pathElements[0]!.pathArray.length
+const controlPoints = (bond: CellDLConnection) => JSON.stringify(svgConnection(bond).pathElements[0]!.pathArray.slice(1, -1))
 const centroid = (object: CellDLObject) => ({ ...object.celldlSvgElement!.centroid })
 
 function bondBetween(diagram: CellDLDiagram, a: string, b: string): CellDLConnection {
@@ -100,6 +101,7 @@ describe('aligning', () => {
         bend(b2, { x: c(R1).x - 20, y: c(R1).y + 70 }, { x: c(R1).x - 10, y: c(R1).y + 40 })
         bend(b3, { x: c(R1).x + 20, y: c(R1).y - 50 })
         const before = [b1, b2, b3].map(paths)
+        const bendOfB3 = controlPoints(b3)
         const positions = [US, VR1F, R1, VR1R].map(c)
 
         select(diagram, US, VR1F, R1)
@@ -109,6 +111,7 @@ describe('aligning', () => {
         expect(pointCount(b2)).toBe(2)
         expect(paths(b3)).not.toEqual(before[2])         // its arranged end moved
         expect(pointCount(b3)).toBe(3)                    // ...but it keeps its bend
+        expect(controlPoints(b3)).toBe(bendOfB3)
         const after = [b1, b2, b3].map(paths)
         const arranged = [US, VR1F, R1, VR1R].map(c)
 
