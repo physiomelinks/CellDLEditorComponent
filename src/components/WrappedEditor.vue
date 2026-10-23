@@ -423,6 +423,9 @@ vue.watch(
     { immediate: true }
 )
 
+// A waiting hover tooltip, or a flashed message, mustn't outlive the editor
+vue.onUnmounted(() => celldlEditor.clearTooltips())
+
 //==============================================================================
 
 // Report the diagram's RDF after each edit that changes it, without touching

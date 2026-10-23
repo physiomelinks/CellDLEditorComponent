@@ -906,6 +906,11 @@ export class CellDLEditor {
         this.#tooltips.delay = delay
     }
 
+    /** Cancels any waiting or shown tooltip, e.g. when the editor is unmounted */
+    clearTooltips() {
+        this.#tooltips.reset()
+    }
+
     /**
      * Shows a message in the tooltip, unless one of higher priority is shown.
      *
