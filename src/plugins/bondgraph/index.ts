@@ -338,9 +338,17 @@ const DEFAULT_TRANSFORM_RATIO = 1
 /** The value a parameter gets when its element's template is chosen */
 const DEFAULT_PARAMETER_VALUE = 1
 
-/** A readable name for a template that BG-RDF gives no label, from its type: `ChemicalPotential` → "Chemical potential" */
+/**
+ * A readable name for a template that BG-RDF gives no label, from its type: `ChemicalPotential` → "Chemical potential",
+ * and `NKETransporter` → "NKE transporter", keeping an acronym's capitals.
+ */
 function nameFromType(type: string): string {
-    const words = $rdf.getFragment(type).replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase()
+    const words = $rdf.getFragment(type)
+                       .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+                       .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+                       .split(' ')
+                       .map((word, i) => (i > 0 && !/^[A-Z0-9]+$/.test(word)) ? word.toLowerCase() : word)
+                       .join(' ')
     return words.charAt(0).toUpperCase() + words.slice(1)
 }
 

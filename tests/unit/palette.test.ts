@@ -85,6 +85,8 @@ describe('the palette\'s entries', () => {
         }
         expect(plugin.getTemplateName(`${BGF}ChemicalPotential`)).toBe('Chemical potential')
         expect(plugin.getTemplateName(`${BGF}ChemicalFlow`)).toBe('Chemical flow')
+        // An acronym keeps its capitals
+        expect(plugin.getTemplateName(`${BGF}NKETransporter`)).toBe('NKE transporter')
     })
 })
 
