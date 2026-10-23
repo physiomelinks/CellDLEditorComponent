@@ -116,7 +116,7 @@ import { DrawingPlugin } from '#root/plugins/drawing'
 import DrawingPopover from '#root/plugins/drawing/drawing.vue'
 
 // WIP import { ElectricalPlugin } from '#root/plugins/electrical'
-import type { PopoverEventData, ViewState } from '#root/utils/editor-types'
+import type { PopoverEventData, ViewInfo, ViewState } from '#root/utils/editor-types'
 
 //import { TestCellDLEditor, testEditor } from '../../tests/editor'
 
@@ -314,6 +314,14 @@ export type ElementsChange = {
     elements: DiagramElement[]
 }
 
+/**
+ * The view: in reply to a `view` command with a `kind`, once it's set, and,
+ * without one, shortly after the view pans or zooms.
+ */
+export type ViewStateChange = ViewInfo & {
+    kind?: string
+}
+
 /** The reply to an `element` command's `set` or `select` */
 export type ElementResult = {
     kind?: string
@@ -387,7 +395,8 @@ const emit = defineEmits<{
     'editor-state': [state: {
         error: string
     }],
-    'event': [detail: ViewerEvent]
+    'event': [detail: ViewerEvent],
+    'view-state': [state: ViewStateChange]
 }>()
 
 //==============================================================================
@@ -592,8 +601,18 @@ vue.onUnmounted(() => document.removeEventListener('open-add-element', openAddEl
 const zoomScale = vue.ref(1)
 const arrangeableCount = vue.ref(0)
 
+/** How long the view must settle before `view-state` reports it */
+const VIEW_STATE_DELAY = 250
+
+let viewStateTimer: ReturnType<typeof setTimeout> | undefined
+
 function viewChangedEvent(event: Event) {
     zoomScale.value = (<CustomEvent>event).detail.scale
+    clearTimeout(viewStateTimer)
+    viewStateTimer = setTimeout(() => {
+        viewStateTimer = undefined
+        emit('view-state', celldlEditor.viewState)
+    }, VIEW_STATE_DELAY)
 }
 
 function selectionChangedEvent(event: Event) {
@@ -607,6 +626,7 @@ vue.onMounted(() => {
 vue.onUnmounted(() => {
     document.removeEventListener(VIEW_CHANGED_EVENT, viewChangedEvent)
     document.removeEventListener(SELECTION_CHANGED_EVENT, selectionChangedEvent)
+    clearTimeout(viewStateTimer)
 })
 
 // The canvas's controls keep clear of an open right-hand panel, which lies over the canvas: they move left by
@@ -845,21 +865,25 @@ vue.watch(
             const options = command.options
             if  (options.action === 'close') {
                 resetToolBars()
-                celldlDiagram = new CellDLDiagram('', '', celldlEditor)
-                await celldlEditor.editDiagram(celldlDiagram)
-                await setRdfBaseline()
+                await opening(async () => {
+                    celldlDiagram = new CellDLDiagram('', '', celldlEditor)
+                    await celldlEditor.editDiagram(celldlDiagram)
+                    await setRdfBaseline()
+                })
             } else if (options.action === 'open') {
                 resetToolBars()
                 if (options.data !== undefined) {
-                    try {
-                        celldlDiagram = new CellDLDiagram(options?.name || '', options.data, celldlEditor)
-                        await celldlEditor.editDiagram(celldlDiagram)
-                        await setRdfBaseline()
-                    } catch(err) {
-                        emit('editor-state', {
-                            error: `Cannot open ${options?.name} -- invalid CellDL file?\n\n${err}`
-                        })
-                    }
+                    await opening(async () => {
+                        try {
+                            celldlDiagram = new CellDLDiagram(options?.name || '', options.data!, celldlEditor)
+                            await celldlEditor.editDiagram(celldlDiagram)
+                            await setRdfBaseline()
+                        } catch(err) {
+                            emit('editor-state', {
+                                error: `Cannot open ${options?.name} -- invalid CellDL file?\n\n${err}`
+                            })
+                        }
+                    })
                 }
             } else if (options.action === 'data') {
                 const celldl = await celldlDiagram?.serialise()
@@ -890,7 +914,9 @@ vue.watch(
             }
         } else if (props.editorCommand?.command === 'view') {
             const command = props.editorCommand as EditorViewCommand
-            const { zoom, ...viewState } = command.options
+            const { zoom, maxScale, centre, kind, ...viewState } = command.options
+            // After a diagram opening, which sets its own view as it finishes
+            await diagramOpened
             // A zoom on its own leaves the grid and guides as they are
             if (Object.keys(viewState).length) {
                 editGuides.setState(viewState)
@@ -900,11 +926,27 @@ vue.watch(
             } else if (zoom === 'out') {
                 celldlEditor.zoomOut()
             } else if (zoom === 'fit') {
-                celldlEditor.zoomToFit()
+                celldlEditor.zoomToFit(maxScale)
+            } else if (typeof zoom === 'number') {
+                celldlEditor.zoomTo(zoom, centre ?? null)
+            }
+            if (kind !== undefined) {
+                emit('view-state', { kind, ...celldlEditor.viewState })
             }
         }
     }
 )
+
+//==============================================================================
+
+// Settles once the diagram being opened is ready, view and all, so a `view` command sent meanwhile isn't undone
+let diagramOpened: Promise<void> = Promise.resolve()
+
+async function opening(open: () => Promise<void>) {
+    const opened = open()
+    diagramOpened = opened.catch(() => {})
+    await opened
+}
 
 //==============================================================================
 
@@ -938,9 +980,11 @@ vue.onMounted(async () => {
             celldlEditor.mount(svgContainerElement)
 
             // Create a new diagram in the editor's window
-            celldlDiagram = new CellDLDiagram('', '', celldlEditor)
-            await celldlDiagram.edit()
-            await setRdfBaseline()
+            await opening(async () => {
+                celldlDiagram = new CellDLDiagram('', '', celldlEditor)
+                await celldlDiagram.edit()
+                await setRdfBaseline()
+            })
 
 //            testEditor(celldlEditor)
         })

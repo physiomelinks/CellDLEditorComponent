@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
+import { Bounds } from '../../src/CellDL/geometry'
 import PanZoom, { isZoomWheel, PINCH_MAX_DELTA, PINCH_RATE, pinchZoomFactor, wheelPanDelta } from '../../src/CellDL/editor/panzoom'
 
 function diagram(): { panzoom: PanZoom, container: HTMLElement, svg: SVGSVGElement } {
@@ -161,5 +162,79 @@ describe('panning the diagram with a plain wheel or two-finger scroll', () => {
         menu.dispatchEvent(event)
         expect(event.defaultPrevented).toBe(false)
         expect(viewbox(svg)).toEqual(before)
+    })
+})
+
+describe('setting the view, as a host does when a diagram opens', () => {
+    const viewbox = (svg: SVGSVGElement) => svg.getAttribute('viewBox')!.split(' ').map(Number)
+    const small = new Bounds(10, 20, 30, 40)
+    const large = new Bounds(0, 0, 1000, 500)
+
+    test('fitting a small diagram zooms in no further than maxScale, centred on it', () => {
+        const { panzoom, svg } = diagram()
+        expect(panzoom.fitScale(small)).toBeCloseTo(200 / (20 * 1.1))
+        expect(panzoom.fitScale(small, undefined, 1)).toBe(1)
+        panzoom.zoomToFit(small, undefined, 1)
+        expect(panzoom.scale).toBe(1)
+        expect(viewbox(svg)).toEqual([-80, -70, 200, 200])
+        expect(panzoom.centre).toEqual(expect.objectContaining({ x: 20, y: 30 }))
+    })
+
+    test('fitting a large diagram zooms out to show all of it, whatever maxScale is', () => {
+        const { panzoom } = diagram()
+        panzoom.zoomToFit(large, undefined, 1)
+        expect(panzoom.scale).toBeCloseTo(200 / 1100)
+        expect(panzoom.centre).toEqual(expect.objectContaining({ x: 500, y: 250 }))
+        // Zooming out by a step from there is still allowed
+        panzoom.zoomBy(0.8)
+        expect(panzoom.scale).toBeCloseTo(0.8 * 200 / 1100)
+    })
+
+    test('a scale and centre are set as given, within the scale limits', () => {
+        const { panzoom, svg } = diagram()
+        panzoom.zoomTo(2, { x: 50, y: 60 })
+        expect(panzoom.scale).toBe(2)
+        expect(viewbox(svg)).toEqual([0, 10, 100, 100])
+        panzoom.zoomTo(1000)
+        expect(panzoom.scale).toBe(32)
+        expect(panzoom.centre).toEqual(expect.objectContaining({ x: 50, y: 60 }))
+    })
+
+    test('a scale on its own keeps the view centred where it was', () => {
+        const { panzoom } = diagram()
+        const before = panzoom.centre
+        panzoom.zoomTo(3)
+        expect(panzoom.scale).toBe(3)
+        expect(panzoom.centre.x).toBeCloseTo(before.x)
+        expect(panzoom.centre.y).toBeCloseTo(before.y)
+    })
+
+    test('a blank diagram has no fitting scale, and a bad scale changes nothing', () => {
+        const { panzoom, svg } = diagram()
+        expect(panzoom.fitScale(null)).toBeNull()
+        const before = viewbox(svg)
+        panzoom.zoomTo(Number.NaN)
+        panzoom.zoomTo(0)
+        expect(viewbox(svg)).toEqual(before)
+    })
+})
+
+describe('setting the view as soon as a host has moved the editor', () => {
+    test('uses the container\'s size now, before its resize is observed', () => {
+        const container = document.createElement('div')
+        container.id = `panzoom-${Math.random()}`
+        let width = 200
+        Object.defineProperty(container, 'clientWidth', { get: () => width })
+        Object.defineProperty(container, 'clientHeight', { value: 200 })
+        document.body.appendChild(container)
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+        svg.setAttribute('viewBox', '0 0 100 100')
+        container.appendChild(svg)
+        const panzoom = new PanZoom(container)
+        panzoom.enable(svg)
+        width = 400
+        panzoom.zoomTo(1, { x: 50, y: 50 })
+        expect(svg.getAttribute('viewBox')!.split(' ').map(Number)).toEqual([-150, -50, 400, 200])
+        expect(panzoom.fitScale(new Bounds(0, 0, 100, 100), 0)).toBe(2)
     })
 })

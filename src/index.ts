@@ -33,6 +33,7 @@ export {
     type FileStatus,
     type SvgViewerOptions,
     type ViewerEvent,
+    type ViewInfo,
     type ViewState
 } from '#root/utils/editor-types'
 
@@ -52,7 +53,8 @@ export type {
     EditorViewCommand,
     ElementResult,
     ElementsChange,
-    Theme
+    Theme,
+    ViewStateChange
 } from '#root/components/WrappedEditor.vue'
 
 export type { ValuesMode } from '#root/plugins/bondgraph/values'

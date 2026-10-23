@@ -213,27 +213,76 @@ export default class PanZoom {
     }
 
     /**
-     * Zooms and pans so that bounds (in SVG coordinates) fill the view, with a
-     * margin around them. The smallest scale is lowered if need be.
+     * The scale at which bounds (in SVG coordinates) fill the view, with a margin
+     * around them, at most `maxScale`; null with no diagram, bounds or container size.
      */
-    zoomToFit(bounds: Bounds|null, margin: number = FIT_MARGIN) {
+    fitScale(bounds: Bounds|null, margin: number = FIT_MARGIN, maxScale: number = this.#maxScale): number|null {
+        this.#measureContainer()
         if (!this.#svgDiagram || bounds === null || this.#containerSize.x === 0 || this.#containerSize.y === 0) {
-            return
+            return null
         }
         const width = Math.max(bounds.right - bounds.left, 1) * (1 + 2 * margin)
         const height = Math.max(bounds.bottom - bounds.top, 1) * (1 + 2 * margin)
-        this.#scale = Math.min(this.#containerSize.x / width, this.#containerSize.y / height, this.#maxScale)
-        if (this.#minScale > this.#scale) {
-            this.#minScale = this.#scale
+        return Math.min(this.#containerSize.x / width, this.#containerSize.y / height, maxScale, this.#maxScale)
+    }
+
+    /**
+     * Zooms and pans so that bounds (in SVG coordinates) fill the view, with a
+     * margin around them, zooming in no further than `maxScale`. The smallest
+     * scale is lowered if need be.
+     */
+    zoomToFit(bounds: Bounds|null, margin: number = FIT_MARGIN, maxScale: number = this.#maxScale) {
+        const scale = this.fitScale(bounds, margin, maxScale)
+        if (scale === null || bounds === null) {
+            return
         }
+        if (this.#minScale > scale) {
+            this.#minScale = scale
+        }
+        this.zoomTo(scale, { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 })
+    }
+
+    /**
+     * Zooms to a scale, within its limits, with a point (in SVG coordinates) at the
+     * centre of the view, by default the view's centre.
+     */
+    zoomTo(scale: number, centre: PointLike|null = null) {
+        if (!this.#svgDiagram || !Number.isFinite(scale) || scale <= 0) {
+            return
+        }
+        this.#measureContainer()
+        const about = centre ?? this.centre
+        this.#scale = Math.min(Math.max(scale, this.#minScale), this.#maxScale)
         const viewWidth = this.#containerSize.x / this.#scale
         const viewHeight = this.#containerSize.y / this.#scale
-        this.#setViewbox([
-            (bounds.left + bounds.right - viewWidth) / 2,
-            (bounds.top + bounds.bottom - viewHeight) / 2,
-            viewWidth,
-            viewHeight
-        ])
+        this.#setViewbox([about.x - viewWidth / 2, about.y - viewHeight / 2, viewWidth, viewHeight])
+    }
+
+    /**
+     * Takes the container's size as it is now, as a host may set the view as soon as it has moved the editor,
+     * before the resize is observed, which would then keep the view's top left rather than its centre.
+     */
+    #measureContainer() {
+        const size = new Point(this.#container.clientWidth, this.#container.clientHeight)
+        if (size.x > 0 && size.y > 0 && (size.x !== this.#containerSize.x || size.y !== this.#containerSize.y)) {
+            const viewbox = this.#svgDiagram ? this.#currentViewbox() : null
+            this.#containerSize = size
+            if (viewbox) {
+                // The view as the resize would leave it, so its centre is where it shows
+                viewbox[2] = size.x / this.#scale
+                viewbox[3] = size.y / this.#scale
+                this.#setViewbox(viewbox)
+            }
+        }
+    }
+
+    /** The point (in SVG coordinates) at the centre of the view */
+    get centre(): Point {
+        if (!this.#svgDiagram) {
+            return new Point()
+        }
+        const [x, y, width, height] = this.#currentViewbox()
+        return new Point(x + width / 2, y + height / 2)
     }
 
     /** Pans so that a point is at the centre of the view, without zooming. */
