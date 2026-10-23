@@ -20,6 +20,7 @@ limitations under the License.
 /** biome-ignore-all lint/style/noNonNullAssertion: values known to be non null */
 
 import * as vue from 'vue'
+import type { Instance as TippyInstance } from "tippy.js"
 import { useTippy } from "vue-tippy"
 
 import '#root/assets/svgContent.css'
@@ -53,6 +54,7 @@ import { DEFAULT_VIEW_STATE, editGuides, EDITOR_GRID_CLASS } from './editguides'
 import PanZoom, { ZOOM_STEP } from './panzoom'
 import { BoxMaker } from './boxmaker'
 import { drawSideLabels } from './sidelabels'
+import { type TooltipContent, type TooltipDisplay, Tooltips } from './tooltips'
 
 //==============================================================================
 
@@ -106,23 +108,39 @@ const DEFAULT_EDITOR_MODE = EDITOR_MODE.Selecting
 
 //==============================================================================
 
-/**
- * What a tooltip shows, highest priority first: an error, a hint while drawing
- * (e.g. hover-to-bond), a plugin's hover (e.g. an element's law), and the
- * host's annotation tooltip. A tooltip only replaces one of the same or lower
- * priority, and hiding one kind leaves the others shown.
- */
-type TooltipKind = 'error' | 'hint' | 'hover' | 'annotation'
-
-const TOOLTIP_PRIORITY: Record<TooltipKind, number> = {
-    error: 3,
-    hint: 2,
-    hover: 1,
-    annotation: 0
-}
-
 function escapeHtml(text: string): string {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+/** Draws the editor's tooltips with a Tippy instance, which follows the pointer unless placed at a point */
+function tippyDisplay(tippy: TippyInstance): TooltipDisplay {
+    let styleClass = ''
+    return {
+        show(content: TooltipContent, at?: PointLike) {
+            tippy.setProps({
+                allowHTML: content.html,
+                maxWidth: content.html ? 640 : 350,
+                followCursor: at === undefined,
+                getReferenceClientRect: at ? () => new DOMRect(at.x, at.y, 0, 0) : null
+            })
+            tippy.setContent(content.text)
+            tippy.show()
+            if (styleClass !== '') {
+                tippy.popper.classList.remove(styleClass)
+                styleClass = ''
+            }
+            if (content.style !== '') {
+                styleClass = `tooltip-${content.style}`
+                tippy.popper.classList.add(styleClass)
+            }
+        },
+        hide() {
+            tippy.hide()
+        },
+        get visible() {
+            return tippy.state.isVisible
+        }
+    }
 }
 
 /** Whether a PrimeVue overlay (a dropdown, menu or popover) is open, which closes itself on Escape. */
@@ -272,14 +290,11 @@ export class CellDLEditor {
         ]
     ])
 
-    #tooltip: vue.Ref|undefined
-    #tooltipElement: HTMLElement|undefined
-    #tooltipStyle: string = ''
+    #tooltips = new Tooltips()
 
     // Viewer compatible annotations and events
     #annotations: Annotations = {}
     #tooltipField: string | undefined = undefined
-    #tooltipKind: TooltipKind | null = null
     #viewerEventHandler: ViewerEventHandler | null = null
     #activeEventObject: CellDLObject | null = null
     #selectedEventObjects: Map<string, CellDLObject> = new Map()
@@ -303,7 +318,8 @@ export class CellDLEditor {
             get bondStyle() { return editor.#drawConnectionSettings.style || ConnectionStyle.Linear },
             svgPoint: (event) => editor.#domToSvgCoords(event),
             objectAt: (element) => editor.#objectAt(element),
-            hideError: () => editor.#hideTooltipOf('error'),
+            suppressTooltips: (suppress) => editor.#tooltips.suppress(suppress),
+            flashError: (message, at) => editor.#tooltips.flash(message, at),
             click: (event, object) => editor.#selectingClick(event, object.svgElement ?? event.target as SVGGraphicsElement, object)
         })
 
@@ -375,12 +391,11 @@ export class CellDLEditor {
             followCursor: true
         })
         if (tippy.value) {
-            this.#tooltip = tippy
-            this.#tooltipElement = this.#tooltip.value.popper
+            this.#tooltips.display = tippyDisplay(tippy.value)
         }
         // Handle context menu events
         this.#container.addEventListener('contextmenu', (event) => {
-            this.#hideAnnotationTooltip()
+            this.#tooltips.cancelHover()
             const element = event.target as SVGGraphicsElement
             const clickedObject = this.#objectAt(element)
             if (clickedObject && !this.selectionSet.has(clickedObject)) {
@@ -493,12 +508,11 @@ export class CellDLEditor {
         }
         if (this.#activeEventObject) {
             this.#activeEventObject = null
-            this.#hideAnnotationTooltip()
+            this.#tooltips.cancelHover()
             this.#emitViewerEvent('unactive')
         }
         if (object) {
             this.#activeEventObject = object
-            this.#showAnnotationTooltip(object)
             this.#emitViewerEvent('active', object)
         }
     }
@@ -564,7 +578,7 @@ export class CellDLEditor {
         this.#activeObjects.clear()
         this.#activeEventObject = null
         this.#selectedEventObjects.clear()
-        this.#hideAnnotationTooltip()
+        this.#tooltips.reset()
         this.selectionSet.clear()
 
         this.#events.dispatchEvent(new CustomEvent('diagram-opened', { detail: { diagram: celldlDiagram } }))
@@ -607,6 +621,7 @@ export class CellDLEditor {
             this.#editorFrame!.clear()
             this.#editorFrame = null
             this.#bondDrag.reset()
+            this.#tooltips.reset()
             //            this.#toolBar.enable(false)
             this.#panzoom!.disable()
             if (this.#container) {
@@ -882,18 +897,13 @@ export class CellDLEditor {
         }
     }
 
-    #hideTooltip() {
-        if (this.#tooltip) {
-            this.#tooltip.value.hide()
-        }
-        this.#tooltipKind = null
+    /** How long the pointer stays on an element before its tooltip shows, in milliseconds */
+    get tooltipDelay(): number {
+        return this.#tooltips.delay
     }
 
-    /** Hides the tooltip if it shows `kind`. */
-    #hideTooltipOf(kind: TooltipKind) {
-        if (this.#tooltipKind === kind) {
-            this.#hideTooltip()
-        }
+    set tooltipDelay(delay: number) {
+        this.#tooltips.delay = delay
     }
 
     /**
@@ -905,36 +915,10 @@ export class CellDLEditor {
      */
     showTooltip(msg: string, style: string = '', html: boolean = false) {
         if (msg === '') {
-            this.#hideTooltip()
+            this.#tooltips.hide()
         } else {
-            this.#showTooltipOf(style === 'error' ? 'error' : 'hint', msg, style, html)
+            this.#tooltips.show(style === 'error' ? 'error' : 'hint', msg, style, html)
         }
-    }
-
-    #showTooltipOf(kind: TooltipKind, msg: string, style: string = '', html: boolean = false): boolean {
-        if (!this.#tooltip) {
-            return false
-        }
-        if (this.#tooltipKind !== null && this.#tooltip.value.state.isVisible
-         && TOOLTIP_PRIORITY[this.#tooltipKind] > TOOLTIP_PRIORITY[kind]) {
-            return false
-        }
-        this.#tooltip.value.setProps({ allowHTML: html, maxWidth: html ? 640 : 350 })
-        this.#tooltip.value.setContent(msg)
-        this.#tooltip.value.show()
-        this.#tooltipKind = kind
-        if (this.#tooltipElement) {
-            if (this.#tooltipStyle !== '') {
-                this.#tooltipElement.classList.remove(this.#tooltipStyle)
-                this.#tooltipStyle = ''
-            }
-            if (style !== '') {
-                const tooltipStyle = `tooltip-${style}`
-                this.#tooltipElement.classList.add(tooltipStyle)
-                this.#tooltipStyle = tooltipStyle
-            }
-        }
-        return true
     }
 
     /** The host's annotation tooltip for an object, or `''`. */
@@ -946,15 +930,21 @@ export class CellDLEditor {
         return String(annotation[this.#tooltipField])
     }
 
-    #showAnnotationTooltip(object: CellDLObject) {
-        const text = this.#annotationTooltipText(object)
-        if (text !== '') {
-            this.#showTooltipOf('annotation', text, 'info')
-        }
-    }
-
-    #hideAnnotationTooltip() {
-        this.#hideTooltipOf('annotation')
+    /**
+     * Shows an object's hover tooltips once the pointer has stayed on it: a
+     * plugin's hover (e.g. an element's law, else a reaction's equation) or,
+     * when there's none, the host's annotation tooltip.
+     */
+    #hoverTooltipAfterDelay(object: CellDLObject) {
+        this.#tooltips.hoverAfterDelay(object, () => {
+            this.#showHover(object)
+            if (this.#editorMode === EDITOR_MODE.Selecting) {
+                const text = this.#annotationTooltipText(object)
+                if (text !== '') {
+                    this.#tooltips.show('annotation', text, 'info')
+                }
+            }
+        })
     }
 
     /**
@@ -966,16 +956,16 @@ export class CellDLEditor {
         const hoverHtml = componentLibraryPlugin.hoverHtml(object)
         const hoverText = hoverHtml === '' ? componentLibraryPlugin.hoverText(object) : ''
         if (hoverHtml === '' && hoverText === '') {
-            this.#hideTooltipOf('hover')
+            this.#tooltips.hideKind('hover')
             return
         }
         const annotation = (this.#editorMode === EDITOR_MODE.Selecting) ? this.#annotationTooltipText(object) : ''
         if (annotation === '' && hoverHtml === '') {
-            this.#showTooltipOf('hover', hoverText)
+            this.#tooltips.show('hover', hoverText)
         } else {
             const note = annotation ? `<div class="tooltip-annotation">${escapeHtml(annotation)}</div>` : ''
             const body = hoverHtml || `<div>${escapeHtml(hoverText)}</div>`
-            this.#showTooltipOf('hover', `${note}${body}`, '', true)
+            this.#tooltips.show('hover', `${note}${body}`, '', true)
         }
     }
 
@@ -1346,6 +1336,8 @@ export class CellDLEditor {
 
     #pointerOverEvent(event: PointerEvent) {
         if (this.#bondDrag.pointerOver(event)) {
+            // Over the bond handle, or drawing a bond, so no element's tooltip
+            this.#tooltips.cancelHover()
             return
         }
         if (this.#celldlDiagram === null || this.#handlePointerEvents(event)) {
@@ -1357,7 +1349,7 @@ export class CellDLEditor {
             // A move finishes with pointer up
             return
         } else if (this.#notDiagramElement(element)) {
-            this.#hideTooltip()
+            this.#tooltips.clear()
             if (this.currentObject && currentObject !== this.currentObject) {
                 this.#unsetActiveObjects()
             }
@@ -1403,14 +1395,16 @@ export class CellDLEditor {
                 }
                 currentObject.initialiseMove(element)  // will set moveable
                 this.currentObject = currentObject
-                // e.g. an element's constitutive law, else a reaction's equation;
-                // first, so a host's annotation tooltip shows when there's none
-                this.#showHover(currentObject)
                 if (this.#editorMode === EDITOR_MODE.Selecting) {
                     this.#setActiveEventObject(currentObject)
                 }
+                if (event.buttons === 0) {
+                    this.#hoverTooltipAfterDelay(currentObject)
+                } else {
+                    this.#tooltips.cancelHover()
+                }
             } else {
-                this.#hideTooltipOf('hover')
+                this.#tooltips.cancelHover()
             }
         }
     }
@@ -1434,19 +1428,19 @@ export class CellDLEditor {
         // Leaving the editor straight from a component makes it inactive
         if (!this.#container?.contains(event.relatedTarget as Node | null)) {
             this.#setActiveEventObject(null)
+            this.#tooltips.cancelHover()
         }
     }
 
     #pointerDownEvent(event: PointerEvent) {
         if (this.#bondDrag.pointerDown(event)) {
-            this.#hideTooltipOf('hover')
+            this.#tooltips.cancelHover()
             return
         }
         this.#pointerDownInContainer = true
         this.#clickDoneOnPointerUp = false
         this.#pointerDownPosn = { x: event.clientX, y: event.clientY }
-        this.#hideAnnotationTooltip()
-        this.#hideTooltipOf('hover')
+        this.#tooltips.cancelHover()
         if (this.#handlePointerEvents(event)) {
             return
         }
