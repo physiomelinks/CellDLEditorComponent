@@ -32,6 +32,7 @@ import { objectMetadataTemplate, ObjectPropertiesPanel } from '#editor/component
 import type { CellDLDiagram } from '#editor/diagram'
 import { SelectionSet } from '#editor/diagram/selectionset'
 import { type MoveUndoState, undoRedo } from '#editor/diagram/undoredo'
+import type { Bounds } from '#editor/geometry'
 import { round } from '#editor/utils'
 
 import { isMacOs } from '#root/utils/common'
@@ -43,11 +44,12 @@ import { paletteEntry, placeEntry } from '#root/plugins/bondgraph/palette'
 
 //==============================================================================
 
+import { type ArrangeBounds, type ArrangeOp, arrangeTargets, minimumForArrange } from './arrange'
 import { drawBondCounts } from './bondcounts'
 import { BondDrag } from './bonddrag'
 import { EditorFrame } from './editorframe'
 import { DEFAULT_VIEW_STATE, editGuides, EDITOR_GRID_CLASS } from './editguides'
-import PanZoom from './panzoom'
+import PanZoom, { ZOOM_STEP } from './panzoom'
 import { BoxMaker } from './boxmaker'
 import { drawSideLabels } from './sidelabels'
 
@@ -162,6 +164,12 @@ export enum CONTEXT_MENU {
 export function notifyChanges() {
     document.dispatchEvent(new CustomEvent('file-edited'))
 }
+
+/** The view's scale has changed, as `detail.scale` */
+export const VIEW_CHANGED_EVENT = 'editor-view-changed'
+
+/** The selection has changed, with `detail.arrangeable` components that can be aligned */
+export const SELECTION_CHANGED_EVENT = 'editor-selection-changed'
 
 //==============================================================================
 
@@ -328,7 +336,9 @@ export class CellDLEditor {
         this.#statusPos = document.getElementById('status-pos')
 
         // Create a panzoom handler
-        this.#panzoom = new PanZoom(this.#container)
+        this.#panzoom = new PanZoom(this.#container, (scale: number) => {
+            document.dispatchEvent(new CustomEvent(VIEW_CHANGED_EVENT, { detail: { scale } }))
+        })
         this.#bondDrag.mount(this.#container)
 
         // Set up event handlers
@@ -497,6 +507,9 @@ export class CellDLEditor {
         if (!this.#selectionClicking) {
             this.#emitUnselectEvents()
         }
+        document.dispatchEvent(new CustomEvent(SELECTION_CHANGED_EVENT, {
+            detail: { arrangeable: this.#arrangeableObjects().length }
+        }))
     }
 
     #emitUnselectEvents() {
@@ -1661,6 +1674,8 @@ export class CellDLEditor {
             }
         } else if (event.key === 'Escape') {
             this.#escapeKey()
+        } else if (!inTextField && !event.altKey && this.#zoomKey(event)) {
+            event.preventDefault()
         } else if (event.key === 'Backspace' || event.key === 'Delete') {
             if (!inTextField) {
                 // Backspace would otherwise navigate back
@@ -1706,6 +1721,122 @@ export class CellDLEditor {
         if (event.key === 'Shift') {
             this.#setDefaultCursor()
         }
+    }
+
+    //==========================================================================
+
+    // Zooming, which never happens on its own
+
+    /** Zooms in by a step, about the view's centre */
+    zoomIn() {
+        this.#panzoom?.zoomBy(ZOOM_STEP)
+    }
+
+    /** Zooms out by a step, about the view's centre */
+    zoomOut() {
+        this.#panzoom?.zoomBy(1 / ZOOM_STEP)
+    }
+
+    /** Zooms and pans so that every component is in view */
+    zoomToFit() {
+        this.#panzoom?.zoomToFit(this.#contentBounds())
+    }
+
+    /** The view's scale, screen pixels per SVG unit */
+    get zoomScale(): number {
+        return this.#panzoom?.scale ?? 1
+    }
+
+    #contentBounds(): Bounds|null {
+        let bounds: Bounds|null = null
+        for (const object of this.#celldlDiagram?.objects ?? []) {
+            const objectBounds = object.isConnection ? null : object.celldlSvgElement?.svgBounds()
+            if (objectBounds) {
+                bounds = bounds ? bounds.union(objectBounds) : objectBounds
+            }
+        }
+        return bounds
+    }
+
+    /**
+     * `+` or `=` zooms in, `-` out, and Shift+1 fits the diagram. Not with Ctrl or Cmd, which zoom the
+     * browser, nor while the editor is hidden, such as parked inert by a host.
+     */
+    #zoomKey(event: KeyboardEvent): boolean {
+        if (event.ctrlKey || event.metaKey || this.#hidden()) {
+            return false
+        }
+        if (event.key === '+' || event.key === '=') {
+            this.zoomIn()
+        } else if (event.key === '-' || event.key === '_') {
+            this.zoomOut()
+        } else if (event.shiftKey && (event.code === 'Digit1' || event.key === '!')) {
+            this.zoomToFit()
+        } else {
+            return false
+        }
+        return true
+    }
+
+    /** Whether the canvas can't be seen: not laid out, or inside an inert element */
+    #hidden(): boolean {
+        const container = this.#container
+        return !container || container.getClientRects().length === 0 || container.closest('[inert]') !== null
+    }
+
+    //==========================================================================
+
+    // Aligning and distributing the selection
+
+    /** The selected components that aligning moves: not connections, nor compartments, which move their contents */
+    #arrangeableObjects(): CellDLObject[] {
+        return this.selectionSet.objects.filter(object => object.isMoveable && !object.isConnection
+                                                       && !object.isCompartment && object.celldlSvgElement)
+    }
+
+    /** Whether there are enough selected components to arrange */
+    canArrange(op: ArrangeOp): boolean {
+        return this.#arrangeableObjects().length >= minimumForArrange(op)
+    }
+
+    /**
+     * Aligns or distributes the selected components, as one undoable step.
+     * Their bonds follow them. Nothing snaps to the grid.
+     *
+     * @returns Whether anything moved.
+     */
+    arrangeSelection(op: ArrangeOp): boolean {
+        // Not while dragging, nor while a bond is being drawn, whose path would lose its ends
+        if (this.#celldlDiagram === null || this.moving || this.#pathMaker !== null || this.#bondDrag.active) {
+            return false
+        }
+        const objects = this.#arrangeableObjects()
+        const bounds: ArrangeBounds[] = objects.map(object => {
+            const b = object.celldlSvgElement!.svgBounds()
+            return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }
+        })
+        const deltas = arrangeTargets(bounds, op)
+        const moving = objects.map((object, i) => ({ object, delta: deltas[i]! }))
+                              .filter(({ delta }) => Math.abs(delta.dx) > 1e-6 || Math.abs(delta.dy) > 1e-6)
+        if (moving.length === 0) {
+            return false
+        }
+        const moveOptions = { noAlign: true }
+        undoRedo.beginGroup()
+        for (const { object, delta } of moving) {
+            const centroid = object.celldlSvgElement!.centroid
+            const target = { x: centroid.x + delta.dx, y: centroid.y + delta.dy }
+            const undoState = undoRedo.setMoveUndoState(object, centroid)
+            undoState.moveOptions = moveOptions
+            object.reposition(centroid, target, moveOptions)
+            this.#celldlDiagram.objectMoved(object)
+            object.finaliseMove()
+            undoState.endMove(target)
+        }
+        undoRedo.endGroup()
+        this.setDirty()
+        notifyChanges()
+        return true
     }
 
     /* WIP

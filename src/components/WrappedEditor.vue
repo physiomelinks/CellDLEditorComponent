@@ -16,15 +16,29 @@
                 type="popover"
                 @button-event="buttonEvent"
             )
-            div#svg-container(ref="svgContainer")
-                EditorContextMenu(
-                    :contextMenuProps="contextMenuProps"
+            //- The canvas's own controls follow the diagram's container, so they aren't styled as its SVG
+            .canvas-area
+                div#svg-container(ref="svgContainer")
+                    EditorContextMenu(
+                        :contextMenuProps="contextMenuProps"
+                    )
+                    .armed-tool-chip(
+                        v-if="armedTool"
+                        role="status"
+                    ) {{ armedTool }} · Esc to stop
+                    <!-- context-menu(id="context-menu")  -->
+                CanvasControls(
+                    v-if="props.chrome?.zoom !== false"
+                    :scale="zoomScale"
+                    @zoom-in="celldlEditor.zoomIn()"
+                    @zoom-out="celldlEditor.zoomOut()"
+                    @zoom-fit="celldlEditor.zoomToFit()"
                 )
-                .armed-tool-chip(
-                    v-if="armedTool"
-                    role="status"
-                ) {{ armedTool }} · Esc to stop
-                <!-- context-menu(id="context-menu")  -->
+                ArrangeBar(
+                    v-if="props.chrome?.arrange !== false && arrangeableCount >= 2"
+                    :count="arrangeableCount"
+                    @arrange="(op) => celldlEditor.arrangeSelection(op)"
+                )
             EditorToolbar.editor-bar(
                 v-if="shownPanelButtons.length"
                 :buttons="shownPanelButtons"
@@ -64,7 +78,7 @@ import * as vueCommon from '#root/utils/vueCommon'
 
 import { CellDLDiagram } from '#editor/diagram'
 import { CellDLEditor } from '#editor/editor'
-import { DEFAULT_EDITOR_TOOL_ID, EDITOR_TOOL_IDS } from '#editor/editor'
+import { DEFAULT_EDITOR_TOOL_ID, EDITOR_TOOL_IDS, SELECTION_CHANGED_EVENT, VIEW_CHANGED_EVENT } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
 import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
 import { isMacOs } from '#root/utils/common'
@@ -110,6 +124,8 @@ import AddElementPopover from './palette/AddElementPopover.vue'
 import ElementPalette from './palette/ElementPalette.vue'
 import { paletteDomain } from './palette/paletteState'
 
+import ArrangeBar from './controls/ArrangeBar.vue'
+import CanvasControls from './controls/CanvasControls.vue'
 import EditorToolbar from './toolbar/EditorToolbar.vue'
 import EditorContextMenu from './widgets/EditorContextMenu.vue'
 import type { ContextMenuProps } from './widgets/EditorContextMenu.vue'
@@ -231,6 +247,17 @@ export type EditorChrome = {
     palette?: boolean | 'top' | 'left'
     /** The palette's initial filter: chemistry's elements, or every domain's. Default `'chemical'` */
     paletteDomain?: PaletteDomain
+    /**
+     * The zoom controls at the bottom right of the canvas: zoom out, the zoom
+     * level, zoom in and Fit. The `+`, `-` and Shift+1 keys work either way.
+     * Default `true`.
+     */
+    zoom?: boolean
+    /**
+     * The align and distribute buttons at the top right of the canvas, shown
+     * while two or more components are selected. Default `true`.
+     */
+    arrange?: boolean
 }
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
@@ -539,6 +566,28 @@ async function addElementPicked(entryId: string) {
 vue.onMounted(() => document.addEventListener('open-add-element', openAddElementEvent))
 vue.onUnmounted(() => document.removeEventListener('open-add-element', openAddElementEvent))
 
+// The zoom level, and how many selected components can be aligned
+
+const zoomScale = vue.ref(1)
+const arrangeableCount = vue.ref(0)
+
+function viewChangedEvent(event: Event) {
+    zoomScale.value = (<CustomEvent>event).detail.scale
+}
+
+function selectionChangedEvent(event: Event) {
+    arrangeableCount.value = (<CustomEvent>event).detail.arrangeable
+}
+
+vue.onMounted(() => {
+    document.addEventListener(VIEW_CHANGED_EVENT, viewChangedEvent)
+    document.addEventListener(SELECTION_CHANGED_EVENT, selectionChangedEvent)
+})
+vue.onUnmounted(() => {
+    document.removeEventListener(VIEW_CHANGED_EVENT, viewChangedEvent)
+    document.removeEventListener(SELECTION_CHANGED_EVENT, selectionChangedEvent)
+})
+
 //==============================================================================
 //==============================================================================
 
@@ -778,7 +827,18 @@ vue.watch(
             }
         } else if (props.editorCommand?.command === 'view') {
             const command = props.editorCommand as EditorViewCommand
-            editGuides.setState(command.options)
+            const { zoom, ...viewState } = command.options
+            // A zoom on its own leaves the grid and guides as they are
+            if (Object.keys(viewState).length) {
+                editGuides.setState(viewState)
+            }
+            if (zoom === 'in') {
+                celldlEditor.zoomIn()
+            } else if (zoom === 'out') {
+                celldlEditor.zoomOut()
+            } else if (zoom === 'fit') {
+                celldlEditor.zoomToFit()
+            }
         }
     }
 )
@@ -847,6 +907,12 @@ vue.onMounted(async () => {
 .editor-bar {
     width: 40px;
     overflow: auto;
+}
+.canvas-area {
+    flex: 1;
+    display: flex;
+    position: relative;
+    min-width: 0;
 }
 #svg-container {
     margin:  0;
