@@ -23,15 +23,16 @@ limitations under the License.
 // 0), a species name not yet used (S1, S2, ...) and the diagram's most used location. "Reaction with sides" is a
 // macro: a chemical reaction between a reactants and a products 1-junction, bonded through its f and r ports.
 
-import type * as $rdf from '@celldl/rdf'
-
 import type { CellDLConnectedObject, CellDLObject } from '#editor/celldlObjects'
 import { notifyChanges } from '#editor/editor'
-import { addBond, addComponent, asOneStep, bondgraphPlugin, centreAt, editorParts } from '#editor/editor/placing'
+import {
+    addBond, addComponent, asOneStep, bondgraphPlugin, centreAt, defaultLocation, editorParts, type NameKind, nextName,
+    usedNames
+} from '#editor/editor/placing'
 import { drawSideLabels, SIDE_LABEL_PREDICATE } from '#editor/editor/sidelabels'
 import { Point, type PointLike } from '#root/utils/points'
 
-import { DEFAULT_LOCATION, svgImageData } from './definitions'
+import { svgImageData } from './definitions'
 import type { BGLibraryComponentTemplate } from './utils'
 
 //==============================================================================
@@ -64,8 +65,6 @@ export interface PaletteEntry {
 export const SIDE_OFFSET = 100
 
 //==============================================================================
-
-type NameKind = 'S' | 'R' | 'J'
 
 interface ChemicalEntry {
     id: string
@@ -188,49 +187,6 @@ export function searchEntries(query: string, domain: PaletteDomain): PaletteEntr
 }
 
 //==============================================================================
-
-/** The species names and locations used in the diagram. */
-function usedNames(): { species: Set<string>, locations: Map<string, number> } {
-    const { diagram } = editorParts()
-    const prefix = `${diagram.uri}#`
-    const species = new Set<string>()
-    const locations = new Map<string, number>()
-    for (const row of diagram.rdfStore.query(`
-        SELECT ?node ?species ?location WHERE {
-            ?node <${BGF}hasSpecies> ?species .
-            OPTIONAL { ?node <${BGF}hasLocation> ?location }
-        }`) as Map<string, $rdf.Term>[]) {
-        if (!row.get('node')?.value.startsWith(prefix)) continue
-        const name = row.get('species')?.value
-        if (name) species.add(name)
-        // a side junction's f or r, and the template's placeholder, aren't locations
-        const location = row.get('location')?.value
-        if (location && !['f', 'r', DEFAULT_LOCATION].includes(location)) {
-            locations.set(location, (locations.get(location) ?? 0) + 1)
-        }
-    }
-    return { species, locations }
-}
-
-/** The first of `S1`, `S2`, ... (or `R`, `J`) not yet used. */
-function nextName(kind: NameKind, used: Set<string>): string {
-    let n = 1
-    while (used.has(`${kind}${n}`)) n += 1
-    used.add(`${kind}${n}`)
-    return `${kind}${n}`
-}
-
-/** The diagram's most used location, else `c`. */
-function defaultLocation(locations: Map<string, number>): string {
-    let best = 'c', count = 0
-    for (const [location, n] of locations) {
-        if (n > count) {
-            best = location
-            count = n
-        }
-    }
-    return best
-}
 
 async function placeElement(templateId: string, centre: PointLike, elementType: string|undefined,
                             species: string|undefined, location: string|undefined): Promise<CellDLConnectedObject> {

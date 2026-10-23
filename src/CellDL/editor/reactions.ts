@@ -23,7 +23,8 @@ limitations under the License.
 // a removed species deletes its bond (and its chemostat copy, if no other step uses it), and an added species is
 // bonded to its store; a species the diagram has no store for gets a new one, a chemostat a new copy beside the
 // step, and a new equation a new reaction. New elements are placed beside the step, substrates to its left and
-// products to its right.
+// products to its right, with the palette's defaults (./placing.ts): parameters 1, an initial value 0, the diagram's
+// most used location when the equation gives none, and an unused name (R1, R2, ...) for an unnamed reaction.
 
 import type * as $rdf from '@celldl/rdf'
 
@@ -36,7 +37,10 @@ import {
 import { Point, type PointLike } from '#root/utils/points'
 
 import { notifyChanges } from '.'
-import { addBond, addElement as placeElement, asOneStep, bondgraphPlugin, centroidOf, editorParts } from './placing'
+import {
+    addBond, addElement as placeElement, asOneStep, bondgraphPlugin, centroidOf, defaultLocation, editorParts, nextName,
+    usedNames
+} from './placing'
 
 //==============================================================================
 
@@ -83,10 +87,10 @@ function placeBeside(centre: PointLike, side: Side|'step', taken: Point[]): Poin
 
 async function addElement(elementType: string, centre: PointLike, species?: string, location?: string,
                           value?: $rdf.Literal): Promise<CellDLConnectedObject> {
-    const object = await placeElement(elementType, centre, species, location, value)
+    const where = location ?? defaultLocation(usedNames().locations)
+    const object = await placeElement(elementType, centre, species, where, value)
     if (!value) {
-        added.push(`${elementType === NEW_REACTION_TYPE ? 'reaction' : 'store'} ${species ?? object.id}`
-                   + (location ? `[${location}]` : ''))
+        added.push(`${elementType === NEW_REACTION_TYPE ? 'reaction' : 'store'} ${species ?? object.id}[${where}]`)
     }
     return object
 }
@@ -97,10 +101,10 @@ function removeObject(object: CellDLObject) {
     diagram.removeObject(object, undoRedo.setDeleteUndoState(object))
 }
 
-// The elements added since the last call of takeAddedElements(): their parameters are for the user to set
+// The elements added since the last call of takeAddedElements(), whose values start at the defaults
 const added: string[] = []
 
-/** The new elements an edit made (e.g. `store Xnew[c]`), which still need their parameters' values. */
+/** The new elements an edit made (e.g. `store Xnew[c]`), whose values are the defaults until the user sets them. */
 export function takeAddedElements(): string[] {
     return added.splice(0)
 }
@@ -205,7 +209,8 @@ export async function addReaction(text: string, name: string, location?: string)
         const below = taken.length ? Math.max(...taken.map(p => p.y)) + 2 * BESIDE : 100
         const middle = taken.length ? taken.reduce((x, p) => x + p.x, 0) / taken.length : 200
         const step = await addElement(NEW_REACTION_TYPE, placeBeside(new Point(middle, below), 'step', taken),
-                                      name || 'Re', location ?? parsed.substrates[0]?.location)
+                                      name || nextName('R', usedNames().species),
+                                      location ?? parsed.substrates[0]?.location)
         await followEquation(step.uri.value, text)
         notifyChanges()
         return step.uri.value

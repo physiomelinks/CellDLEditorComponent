@@ -7,7 +7,7 @@
                 | Edit an equation and press Enter to change the bond graph:
                 | coefficients with a space (#[code 2 ADP[c]]), species joined by #[code  + ].
                 | A new species gets a new store.
-            p.note(v-if="needValues.length") New: {{ needValues.join(", ") }}. Set their parameters in Properties.
+            p.note(v-if="needValues.length") New: {{ needValues.join(", ") }}, with parameters of 1 and initial values of 0.
             p(v-if="steps.length === 0") This diagram has no reactions yet.
             .step.reactions-step(v-for="step in steps" :key="step.id" :class="step.kind")
                 .heading
@@ -60,7 +60,7 @@ const steps = vue.ref<StepRow[]>([])
 const errors = vue.ref<Record<string, string>>({})
 const newName = vue.ref('')
 const newText = vue.ref('')
-const needValues = vue.ref<string[]>([])   // new elements, whose parameters the user sets in Properties
+const needValues = vue.ref<string[]>([])   // new elements, whose values start at the defaults
 
 function refresh() {
     needValues.value.push(...takeAddedElements())

@@ -1,8 +1,12 @@
+/** biome-ignore-all lint/style/noNonNullAssertion: what a test adds is there */
+
 import { describe, expect, test } from 'bun:test'
 
 import { countEdits, editor, openFixture, settle } from './support/editor'
 
-import { applyEquation } from '#editor/editor/reactions'
+import type { CellDLObject } from '#editor/celldlObjects'
+import { addElement } from '#editor/editor/placing'
+import { addReaction, applyEquation } from '#editor/editor/reactions'
 import { componentLibraryPlugin } from '#root/plugins'
 import { equationText } from '#root/plugins/bondgraph/equations'
 
@@ -10,7 +14,7 @@ import { equationText } from '#root/plugins/bondgraph/equations'
 
 const BGF = 'https://bg-rdf.org/ontologies/bondgraph-framework#'
 
-// Adding elements is checked in the browser (scripts/check-reactions.ts), as the headless editor can't place them
+// Where added elements are drawn is checked in the browser (scripts/check-reactions.ts)
 
 // In the enzyme fixture, drawn with side 1-junctions and species 0-junctions
 const REACTION_1 = 'file://enzyme.celldl#ID-00000006'
@@ -20,6 +24,25 @@ const E_TO_SIDE = 'ID-00000017'         // E's 0-junction to r1's reactants' 1-j
 
 function equations(): Record<string, string> {
     return Object.fromEntries(componentLibraryPlugin.reactionEquations().map(eq => [eq.id, equationText(eq)]))
+}
+
+function values(object: CellDLObject, predicate: string): string[] {
+    return object.rdfStore.query(`SELECT ?o WHERE { ${object.uri.toString()} <${predicate}> ?o }`)
+                          .map(r => r.get('o')?.value ?? '')
+}
+
+function parameters(object: CellDLObject): Record<string, string> {
+    return Object.fromEntries(object.rdfStore.query(`
+        SELECT ?name ?value WHERE { ${object.uri.toString()} <${BGF}parameterValue> [ <${BGF}varName> ?name ; <${BGF}hasValue> ?value ] }`)
+        .map(r => [r.get('name')?.value, r.get('value')?.value]))
+}
+
+/** The diagram's element whose species is `species`. */
+function elementOf(species: string): CellDLObject|undefined {
+    const diagram = editor.celldlDiagram!
+    return [...diagram.svgDiagram.querySelectorAll('g.celldl-Component')]
+        .map(e => diagram.objectById(e.id))
+        .find(o => o && values(o, `${BGF}hasSpecies`).includes(species)) ?? undefined
 }
 
 function bondCount(id: string): string|undefined {
@@ -72,5 +95,68 @@ describe('the Reactions panel\'s equations', () => {
         expect(equations()[REACTION_1]).toBe('S[c] + E[c] ⇌ C[c]')
     })
 
+    test('an added term\'s new store has its template, a K of 1 and an initial value of 0, undone as one step', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        const before = await diagram.rdf()
+        await applyEquation(REACTION_1, 'S[c] + E[c] + X[c] ⇌ C[c]')
+        const store = elementOf('X')!
+        expect(store).toBeDefined()
+        expect(values(store, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type')).toContain(`${BGF}ChemicalStorageNode`)
+        expect(values(store, `${BGF}hasLocation`)).toEqual(['c'])
+        expect(parameters(store)).toEqual({ K: '1 mol-1' })
+        expect(values(store, `${BGF}hasValue`)).toEqual(['0 mol'])
+        expect(equations()[REACTION_1]).toBe('S[c] + E[c] + X[c] ⇌ C[c]')
+        const after = await diagram.rdf()
+        editor.undo()
+        await settle()
+        expect(await diagram.rdf()).toBe(before)
+        editor.redo()
+        await settle()
+        expect(await diagram.rdf()).toBe(after)
+    })
 
+    test('a chemostat\'s copy for another step keeps its potential, undone and redone as one step', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        const chemostat = await addElement(`${BGF}ChemicalPotential`, { x: 600, y: 600 }, 'ATP', 'c')
+        expect(values(chemostat, `${BGF}hasValue`)).toEqual(['0 J/mol'])
+        diagram.rdfStore.update(`
+            DELETE { ?n <${BGF}hasValue> ?v } INSERT { ?n <${BGF}hasValue> "2 J/mol"^^<https://w3id.org/cdt/ucum> }
+            WHERE { ?n <${BGF}hasSpecies> "ATP" ; <${BGF}hasValue> ?v }`)
+        const before = await diagram.rdf()
+        await applyEquation(REACTION_1, 'S[c] + E[c] + ATP[c] ⇌ C[c]')
+        const copies = [...diagram.svgDiagram.querySelectorAll('g.celldl-Component')]
+            .map(e => diagram.objectById(e.id)!)
+            .filter(o => values(o, `${BGF}hasSpecies`).includes('ATP'))
+        expect(copies).toHaveLength(2)
+        const copy = copies.find(o => o.uri.value !== chemostat.uri.value)!
+        expect(values(copy, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type')).toContain(`${BGF}ChemicalPotential`)
+        expect(values(copy, `${BGF}hasLocation`)).toEqual(['c'])
+        expect(values(copy, `${BGF}hasValue`)).toEqual(['2 J/mol'])
+        expect(equations()[REACTION_1]).toBe('S[c] + E[c] + ATP[c] ⇌ C[c]')
+        const after = await diagram.rdf()
+        editor.undo()
+        await settle()
+        expect(await diagram.rdf()).toBe(before)
+        editor.redo()
+        await settle()
+        expect(await diagram.rdf()).toBe(after)
+    })
+
+    test('a new reaction gets an unused name, the most used location and a kappa of 1', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        diagram.rdfStore.update(`
+            DELETE { ?n <${BGF}hasLocation> "c" } INSERT { ?n <${BGF}hasLocation> "cyt" }
+            WHERE { ?n <${BGF}hasLocation> "c" }`)
+        await addReaction('X <=> Y', '')
+        const reaction = elementOf('R1')!
+        expect(reaction).toBeDefined()
+        expect(values(reaction, `${BGF}hasLocation`)).toEqual(['cyt'])
+        expect(parameters(reaction)).toEqual({ kappa: '1 mol/s' })
+        for (const species of ['X', 'Y']) {
+            const store = elementOf(species)!
+            expect(values(store, `${BGF}hasLocation`)).toEqual(['cyt'])
+            expect(parameters(store)).toEqual({ K: '1 mol-1' })
+            expect(values(store, `${BGF}hasValue`)).toEqual(['0 mol'])
+        }
+    })
 })

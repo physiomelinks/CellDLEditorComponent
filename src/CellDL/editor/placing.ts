@@ -19,7 +19,8 @@ limitations under the License.
 ******************************************************************************/
 
 // Adding bond graph elements and bonds from code: by the Reactions panel (./reactions.ts) and the palette
-// (../../plugins/bondgraph/palette.ts). From Finbar Argus's Reactions panel.
+// (../../plugins/bondgraph/palette.ts), with the same defaults: a template's parameters 1, its initial value 0, a
+// species name not yet used and the diagram's most used location. From Finbar Argus's Reactions panel.
 
 import { CELLDL, MetadataPropertiesMap } from '@celldl/metadata'
 import * as $rdf from '@celldl/rdf'
@@ -29,6 +30,7 @@ import { undoRedo } from '#editor/diagram/undoredo'
 
 import { componentLibraryPlugin } from '#root/plugins'
 import type { BondgraphPlugin } from '#root/plugins/bondgraph'
+import { DEFAULT_LOCATION } from '#root/plugins/bondgraph/definitions'
 import type { Point, PointLike } from '#root/utils/points'
 import { CONNECTION_COLOUR, CONNECTION_WIDTH } from '#root/utils/styling'
 import { svgPathElement } from '#root/utils/svgUtils'
@@ -61,6 +63,58 @@ export function centroidOf(object: CellDLObject): Point {
 
 //==============================================================================
 
+//==============================================================================
+
+const BGF = 'https://bg-rdf.org/ontologies/bondgraph-framework#'
+
+/** A new element's name prefix: S for a species, R for a reaction and J for a junction. */
+export type NameKind = 'S' | 'R' | 'J'
+
+/** The species names and locations used in the diagram. */
+export function usedNames(): { species: Set<string>, locations: Map<string, number> } {
+    const { diagram } = editorParts()
+    const prefix = `${diagram.uri}#`
+    const species = new Set<string>()
+    const locations = new Map<string, number>()
+    for (const row of diagram.rdfStore.query(`
+        SELECT ?node ?species ?location WHERE {
+            ?node <${BGF}hasSpecies> ?species .
+            OPTIONAL { ?node <${BGF}hasLocation> ?location }
+        }`) as Map<string, $rdf.Term>[]) {
+        if (!row.get('node')?.value.startsWith(prefix)) continue
+        const name = row.get('species')?.value
+        if (name) species.add(name)
+        // a side junction's f or r, and the template's placeholder, aren't locations
+        const location = row.get('location')?.value
+        if (location && !['f', 'r', DEFAULT_LOCATION].includes(location)) {
+            locations.set(location, (locations.get(location) ?? 0) + 1)
+        }
+    }
+    return { species, locations }
+}
+
+/** The first of `S1`, `S2`, ... (or `R`, `J`) not yet used. */
+export function nextName(kind: NameKind, used: Set<string>): string {
+    let n = 1
+    while (used.has(`${kind}${n}`)) n += 1
+    used.add(`${kind}${n}`)
+    return `${kind}${n}`
+}
+
+/** The diagram's most used location, else `c`. */
+export function defaultLocation(locations: Map<string, number>): string {
+    let best = 'c', count = 0
+    for (const [location, n] of locations) {
+        if (n > count) {
+            best = location
+            count = n
+        }
+    }
+    return best
+}
+
+//==============================================================================
+
 /**
  * Add a component drawn from the library template `templateId`, centred at `centre`. Its element type, species and
  * location are for the caller to set.
@@ -86,7 +140,8 @@ export function centreAt(object: CellDLObject, centre: PointLike) {
 
 /**
  * Add an element of `elementType` centred at `centre`, with its species and location and optionally an initial
- * value (an RDF literal, copied as it is).
+ * value (an RDF literal, copied as it is). Its other values start at the palette's defaults: parameters 1 and an
+ * initial value 0.
  */
 export async function addElement(elementType: string, centre: PointLike, species?: string, location?: string,
                                  value?: $rdf.Literal): Promise<CellDLConnectedObject> {
@@ -95,6 +150,7 @@ export async function addElement(elementType: string, centre: PointLike, species
     if (!templateId) throw new Error(`No library template draws a ${$rdf.getFragment(elementType)}`)
     const object = addComponent(templateId, centre)
     await plugin.setElement(object, elementType, species, location, value)
+    plugin.storeDefaultParameters(object)
     centreAt(object, centre)
     return object
 }
