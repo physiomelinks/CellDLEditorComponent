@@ -80,6 +80,7 @@ import { CellDLDiagram } from '#editor/diagram'
 import { CellDLEditor } from '#editor/editor'
 import { DEFAULT_EDITOR_TOOL_ID, EDITOR_TOOL_IDS, SELECTION_CHANGED_EVENT, VIEW_CHANGED_EVENT } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
+import { HOVER_TOOLTIP_DELAY } from '#editor/editor/tooltips'
 import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
 import { isMacOs } from '#root/utils/common'
 import { type ArrowStyle, arrowStyleClass, arrowStyleOrDefault, displayArrowDefinitions } from '#root/utils/arrows'
@@ -258,6 +259,12 @@ export type EditorChrome = {
      * while two or more components are selected. Default `true`.
      */
     arrange?: boolean
+    /**
+     * How long, in milliseconds, the pointer stays on an element before its
+     * tooltip (its law, or the `options.tooltip` annotation) shows. No tooltips
+     * show while a bond is drawn. Default 600.
+     */
+    tooltipDelay?: number
 }
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
@@ -407,6 +414,17 @@ vue.watch(
         celldlEditor.setAnnotations(props.annotations, props.options)
     }
 )
+
+vue.watch(
+    () => props.chrome?.tooltipDelay,
+    (delay) => {
+        celldlEditor.tooltipDelay = (delay !== undefined && delay >= 0) ? delay : HOVER_TOOLTIP_DELAY
+    },
+    { immediate: true }
+)
+
+// A waiting hover tooltip, or a flashed message, mustn't outlive the editor
+vue.onUnmounted(() => celldlEditor.clearTooltips())
 
 //==============================================================================
 

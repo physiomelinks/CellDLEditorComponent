@@ -24,7 +24,8 @@ limitations under the License.
  * Hovering an element shows a handle on its boundary. Dragging from the handle,
  * or Cmd-dragging (Ctrl-dragging off a Mac) from the element, draws a bond that
  * ends where it's released, if that's a valid target. Valid targets are marked
- * and the rest dimmed; an invalid one says why.
+ * and the rest dimmed. No tooltips show while drawing; releasing on an invalid
+ * target briefly says why.
  */
 
 import type { CellDLObject } from '#editor/celldlObjects'
@@ -86,8 +87,10 @@ export interface BondDragHost {
     readonly bondStyle: string
     svgPoint(event: MouseEvent): DOMPoint
     objectAt(element: SVGGraphicsElement): CellDLObject|null
-    /** Hides an error tooltip */
-    hideError(): void
+    /** Stops hover tooltips showing while a bond is drawn, hiding any shown, or lets them show again */
+    suppressTooltips(suppress: boolean): void
+    /** Briefly shows an error at a client point, e.g. why a bond was refused */
+    flashError(message: string, at: PointLike): void
     /** A click on the handle, or a modifier click, that didn't become a bond, for the editor to handle as a click */
     click(event: PointerEvent, object: CellDLObject): void
 }
@@ -158,15 +161,8 @@ export class BondDrag {
     //==========================================================================
 
     pointerOver(event: PointerEvent): boolean {
-        const pathMaker = this.#pathMaker
-        if (pathMaker) {
-            const object = this.#targetObject(event)
-            if (object && !this.#validTargets.has(object.id) && object !== this.#startObject) {
-                // Says why it can't be bonded to
-                pathMaker.validPathNode(object)
-            } else {
-                this.#host.hideError()
-            }
+        if (this.#pathMaker) {
+            // Targets are marked valid or dimmed; why one is invalid is said on release
             return true
         }
         // Over the handle, leave the element it's on active
@@ -241,16 +237,18 @@ export class BondDrag {
         }
         const object = this.#targetObject(event)
         const node = object ? this.#validTargets.get(object.id) : undefined
+        let refusal: string|null = null
         if (node) {
             // Records the new bond as one undo step
             pathMaker.finishPath(node, diagram)
             this.#pathMaker = null
-            this.#host.hideError()
         } else if (object && object !== this.#startObject) {
-            // Leave the message saying why showing
-            pathMaker.validPathNode(object)
+            refusal = pathMaker.refusal(object)
         }
         this.#finish()
+        if (refusal) {
+            this.#host.flashError(refusal, { x: event.clientX, y: event.clientY })
+        }
         return true
     }
 
@@ -258,9 +256,6 @@ export class BondDrag {
     cancel(): boolean {
         const wasActive = this.active || this.#pending !== null
         this.#pending = null
-        if (this.active) {
-            this.#host.hideError()
-        }
         this.#finish()
         this.hideHandle()
         return wasActive
@@ -303,6 +298,7 @@ export class BondDrag {
             return false
         }
         this.#startObject = object
+        this.#host.suppressTooltips(true)
         this.#pathMaker = new PathMaker(frame, startNode, this.#host.bondStyle)
         this.#validTargets.clear()
         for (const candidate of diagram.objects) {
@@ -324,6 +320,9 @@ export class BondDrag {
         if (this.#pathMaker) {
             this.#pathMaker.close()
             this.#pathMaker = null
+        }
+        if (this.#startObject !== null) {
+            this.#host.suppressTooltips(false)
         }
         for (const object of this.#markedObjects) {
             object.svgElement?.classList.remove(BOND_TARGET_VALID_CLASS, BOND_TARGET_DIMMED_CLASS)

@@ -161,11 +161,12 @@ export class PathMaker {
         return this.#edges.length === 0 && this.#currentSvgPath === null
     }
 
-    static #checkMaxConnections(celldlObject: CellDLConnectedObject, quiet: boolean = false): boolean {
+    static #checkMaxConnections(celldlObject: CellDLConnectedObject, quiet: boolean = false,
+                                say: (msg: string) => void = alert.tooltip): boolean {
         if (celldlObject.numConnections < celldlObject.maxConnections) {
             return true
         } else if (celldlObject.maxConnections >= 0 && !quiet) {
-            alert.tooltip('Component has maximum number of connections')
+            say('Component has maximum number of connections')
         }
         return false
     }
@@ -207,9 +208,20 @@ export class PathMaker {
      *              yet, e.g. when finding every object a new bond could end at.
      */
     validPathNode(celldlObject: CellDLObject, quiet: boolean = false): PathNode | null {
+        return this.#validPathNode(celldlObject, quiet, alert.tooltip)
+    }
+
+    /** Why the path can't go to an object next, without saying so, or `null` if it can or there's no reason. */
+    refusal(celldlObject: CellDLObject): string | null {
+        let reason: string | null = null
+        this.#validPathNode(celldlObject, false, (msg) => { reason = msg })
+        return reason
+    }
+
+    #validPathNode(celldlObject: CellDLObject, quiet: boolean, say: (msg: string) => void): PathNode | null {
         const refuse = (msg: string) => {
             if (!quiet) {
-                alert.tooltip(msg)
+                say(msg)
             }
             return null
         }
@@ -241,7 +253,7 @@ export class PathMaker {
         if (connectionStatus?.alert) {
             return refuse(connectionStatus.alert)
         }
-        if (!PathMaker.#checkMaxConnections(<CellDLConnectedObject>celldlObject, quiet)) {
+        if (!PathMaker.#checkMaxConnections(<CellDLConnectedObject>celldlObject, quiet, say)) {
             return null
         }
         const pathNode = new PathNode(<CellDLConnectedObject>celldlObject)
