@@ -122,6 +122,11 @@
 }
 
 /* Compartments */
+#svg-container .compartment-handle {
+    fill: #fff;
+    stroke: #2f6fd6;
+    stroke-width: 1.5;
+}
 
 #svg-container #compartment-select-rect {
     fill: none;

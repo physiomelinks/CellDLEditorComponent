@@ -65,7 +65,7 @@ import {
 
 import { setInternalIds } from '#editor/SVGElements'
 import type { BoundedElement } from '#editor/SVGElements/boundedelement'
-import { createCompartmentSvgElement } from '#editor/SVGElements/utils/compartment'
+import { type CompartmentStyling, compartmentBox, createCompartmentSvgElement } from '#editor/SVGElements/utils/compartment'
 import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 
 import { type CellDLEditor, notifyChanges } from '#editor/editor'
@@ -115,6 +115,8 @@ export const ID_PART_SEPARATOR = '-'
 
 type AddObjectOptions = {
     atBack?: boolean
+    /** With `atBack`, the element to go in front of, rather than the layer's first */
+    before?: Element|null
     hasId?: boolean
 }
 //==============================================================================
@@ -679,10 +681,14 @@ export class CellDLDiagram {
         return connection
     }
 
-    makeCompartment(bounds: Bounds): CellDLCompartment {
+    /**
+     * Adds a compartment drawn round `bounds`, as one undo step. Compartments are behind the other elements, the
+     * larger ones behind the smaller, so one drawn inside another shows in front of it.
+     */
+    makeCompartment(bounds: Bounds, style: Partial<CompartmentStyling>={}): CellDLCompartment {
         const cornerPoints = bounds.asPoints()
         const svgElement = createCompartmentSvgElement(this.#nextIdentifier(),
-                                                cornerPoints[0], cornerPoints[1])
+                                                cornerPoints[0], cornerPoints[1], style)
         const compartmentObject = this.#addNewObject(
             svgElement, {
                 CellDLClass: CellDLCompartment,
@@ -690,6 +696,7 @@ export class CellDLDiagram {
             },
             {
                 atBack: true,
+                before: this.#compartmentPlace(bounds.width * bounds.height),
                 hasId: true
             }
         ) as CellDLCompartment
@@ -698,6 +705,34 @@ export class CellDLDiagram {
         }
         notifyChanges()
         return compartmentObject
+    }
+
+    /** Where a compartment of `area` goes in the layer: before the first smaller compartment, or other element */
+    #compartmentPlace(area: number): Element|null {
+        for (const child of this.#currentLayer?.children ?? []) {
+            if (!child.classList.contains(CELLDL_STYLE_CLASS.Compartment)) {
+                return child
+            }
+            const box = compartmentBox(child as SVGGElement)
+            if (box.width * box.height < area) {
+                return child
+            }
+        }
+        return null
+    }
+
+    /** Puts a compartment back in order after its size changes, by where `makeCompartment()` would put it */
+    reorderCompartment(compartment: CellDLCompartment) {
+        const svgElement = compartment.svgElement
+        const layer = this.#currentLayer
+        if (!svgElement || !layer || svgElement.parentNode !== layer) {
+            return
+        }
+        const box = compartmentBox(svgElement as SVGGElement)
+        // Find its place among the others
+        svgElement.remove()
+        const before = this.#compartmentPlace(box.width * box.height)
+        layer.insertBefore(svgElement, before)
     }
 
     groupComponents(bounds: Bounds, objects: CellDLObject[]): CellDLComponent {
@@ -954,7 +989,7 @@ export class CellDLDiagram {
         svgElement.classList.add(CellDLClass.celldlStyleClass)
         if (this.#currentLayer) {
             if (options?.atBack) {
-                this.#currentLayer.insertBefore(svgElement, this.#currentLayer.firstChild)
+                this.#currentLayer.insertBefore(svgElement, options.before ?? this.#currentLayer.firstChild)
             } else {
                 this.#currentLayer.appendChild(svgElement)
             }

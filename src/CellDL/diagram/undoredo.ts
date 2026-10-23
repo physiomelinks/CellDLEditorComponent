@@ -42,7 +42,8 @@ enum UndoAction {
     INSERT = 2,
     MOVE = 3,
     PROPERTIES = 4,
-    GROUP = 5
+    GROUP = 5,
+    CHANGE = 6
 }
 
 type UndoObject = CellDLObject | SelectionSet
@@ -118,7 +119,18 @@ export class GroupUndoState extends UndoState {
 
 //==============================================================================
 
-type Direction = 'backwards' | 'forwards'
+export type Direction = 'backwards' | 'forwards'
+
+//==============================================================================
+
+/**
+ * A change that knows how to undo and redo itself, such as resizing a compartment.
+ */
+export class ChangeUndoState extends UndoState {
+    constructor(undoObject: CellDLObject, readonly restore: (direction: Direction) => void) {
+        super(UndoAction.CHANGE, undoObject)
+    }
+}
 
 //==============================================================================
 
@@ -187,11 +199,12 @@ export class MoveUndoState extends UndoState {
     constructor(
         readonly undoObject: CellDLObject,
         position: PointLike,
-        selectionSet: SelectionSet|undefined
+        selectionSet: SelectionSet|undefined,
+        group: MoveGroup|undefined=undefined
     ) {
         super(UndoAction.MOVE, undoObject)
         this.selectionSet = selectionSet || null
-        this.#group = selectionSet?.moveGroup ?? null
+        this.#group = group ?? selectionSet?.moveGroup ?? null
         this.#prevPathArrays = this.#connectionPathArrays()
         this.#startPointer = Point.fromPoint(position)
         this.#prevCentroids = this.#centroids()
@@ -577,12 +590,27 @@ class UndoRedo {
      * group, nothing is put on the undo stack (and the redo stack is kept) until the
      * move is known to have moved something, so a click that selects doesn't clear redo.
      */
-    setMoveUndoState(undoObject: UndoObject, position: PointLike, selectionSet: SelectionSet|undefined=undefined): MoveUndoState {
-        const undoState = new MoveUndoState(undoObject as CellDLObject, position, selectionSet)
+    setMoveUndoState(undoObject: UndoObject, position: PointLike, selectionSet: SelectionSet|undefined=undefined,
+                     group: MoveGroup|undefined=undefined): MoveUndoState {
+        const undoState = new MoveUndoState(undoObject as CellDLObject, position, selectionSet, group)
         if (this.#groupDepth > 0) {
             this.#group.push(undoState)
         } else {
             this.#activeUndoState = undoState
+        }
+        return undoState
+    }
+
+    /**
+     * Keeps a change that has been made, and that `restore` undoes and redoes, as one undo step (or as part of the
+     * group being collected).
+     */
+    pushChange(undoObject: CellDLObject, restore: (direction: Direction) => void): ChangeUndoState {
+        const undoState = new ChangeUndoState(undoObject, restore)
+        if (this.#groupDepth > 0) {
+            this.#group.push(undoState)
+        } else {
+            this.#pushUndoStack(undoState, false)
         }
         return undoState
     }
@@ -681,6 +709,8 @@ class UndoRedo {
             (undoState as MoveUndoState).reposition(direction)
         } else if (undoState.action === UndoAction.PROPERTIES) {
             return (undoState as PropertiesUndoState).restore(direction)
+        } else if (undoState.action === UndoAction.CHANGE) {
+            (undoState as ChangeUndoState).restore(direction)
         } else if (undoState.action === UndoAction.GROUP) {
             const states = (undoState as GroupUndoState).states
             const ordered = backwards ? [...states].reverse() : states

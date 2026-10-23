@@ -26,6 +26,7 @@ import * as vue from 'vue'
 import type { TemplateEventDetails } from '#editor/components'
 import { EDITOR_TOOL_IDS } from '#editor/editor'
 import type { PaletteDomain, PaletteEntry } from '#root/plugins/bondgraph/palette'
+import type { SpatialEntry } from '#root/plugins/drawing/spatial'
 
 //==============================================================================
 
@@ -40,6 +41,16 @@ export function entryEventDetails(entry: PaletteEntry): TemplateEventDetails {
 /** Arm `entry`, so clicks on empty canvas place it, as choosing a tool's template does. */
 export function armEntry(entry: PaletteEntry) {
     document.dispatchEvent(new CustomEvent('component-selected', { detail: entryEventDetails(entry) }))
+}
+
+/** What a drag of a spatial entry places: a box of its default size, centred where it lands */
+export function spatialEventDetails(entry: SpatialEntry): TemplateEventDetails {
+    return { id: entry.id, centre: { x: 0, y: 0 }, offset: { x: 0, y: 0 }, entryId: entry.id }
+}
+
+/** Arm a spatial entry's drawing tool, so a click on the canvas places its box, and a drag draws one. */
+export function armSpatial(entry: SpatialEntry) {
+    document.dispatchEvent(new CustomEvent('celldl-drawing', { detail: { tool: entry.drawingTool } }))
 }
 
 /** Return the editor to selecting, as the Selection tool does. */
