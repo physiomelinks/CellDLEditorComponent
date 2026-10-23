@@ -33,6 +33,45 @@ export const ZOOM_STEP = 1.25
 /** The margin around the diagram when zooming to fit, as a fraction of its size */
 export const FIT_MARGIN = 0.05
 
+/** How far one pixel of a pinch, or of Ctrl/Cmd+wheel, zooms, as a power of e */
+export const PINCH_RATE = 0.01
+
+/** The most one pinch or Ctrl/Cmd+wheel event zooms by, in pixels of `deltaY` */
+export const PINCH_MAX_DELTA = 25
+
+/** Pixels per line, for a wheel that reports its deltas in lines */
+const LINE_HEIGHT = 16
+
+/**
+ * Whether a wheel event is a zoom gesture: a trackpad pinch, which browsers send as a wheel event with
+ * `ctrlKey` set, or a wheel turned with Ctrl or Cmd held. The browser would zoom the page for these.
+ */
+export function isZoomWheel(event: Pick<WheelEvent, 'ctrlKey' | 'metaKey'>): boolean {
+    return event.ctrlKey || event.metaKey
+}
+
+/**
+ * The factor a pinch, or Ctrl/Cmd+wheel, zooms by: in proportion to how far it moved, so a pinch
+ * follows the fingers, and at most a step's worth for a mouse wheel's notch.
+ */
+export function pinchZoomFactor(event: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode'>): number {
+    let delta = event.deltaY === 0 && event.deltaX ? event.deltaX : event.deltaY
+    if (event.deltaMode === 1) {
+        delta *= LINE_HEIGHT
+    } else if (event.deltaMode === 2) {
+        delta = Math.sign(delta) * PINCH_MAX_DELTA
+    }
+    delta = Math.min(Math.max(delta, -PINCH_MAX_DELTA), PINCH_MAX_DELTA)
+    return Math.exp(-delta * PINCH_RATE)
+}
+
+/** Safari's pinch event, which isn't in TypeScript's DOM types */
+interface GestureEvent extends UIEvent {
+    readonly scale: number
+    readonly clientX: number
+    readonly clientY: number
+}
+
 /** Told the view's scale after each change of view */
 export type ViewChangedHandler = (scale: number) => void
 
@@ -55,10 +94,18 @@ export default class PanZoom {
 
     #viewChanged: ViewChangedHandler | null = null
 
+    /** Safari's pinch scale at its last event, while a pinch is under way */
+    #gestureScale: number | null = null
+
     constructor(container: HTMLElement, viewChanged: ViewChangedHandler | null = null) {
         this.#viewChanged = viewChanged
-        // options
-        container.addEventListener('wheel', this.#wheelEvent.bind(this), { passive: true })
+        // Not passive, so that a pinch or Ctrl/Cmd+wheel over the diagram zooms only the diagram,
+        // and not the page as well. A plain wheel or two-finger scroll is left alone.
+        container.addEventListener('wheel', this.#wheelEvent.bind(this), { passive: false })
+        // Safari sends a trackpad pinch as gesture events, and zooms the page unless they're cancelled
+        container.addEventListener('gesturestart', this.#gestureEvent.bind(this) as EventListener)
+        container.addEventListener('gesturechange', this.#gestureEvent.bind(this) as EventListener)
+        container.addEventListener('gestureend', this.#gestureEvent.bind(this) as EventListener)
         this.#container = container
         this.#containerId = container.id
         this.#containerSize = new Point(container.clientWidth, container.clientHeight)
@@ -121,6 +168,7 @@ export default class PanZoom {
     disable() {
         this.#svgDiagram = null
         this.#panning = false
+        this.#gestureScale = null
         this.#scale = 1.0
         this.#viewChanged?.(this.#scale)
     }
@@ -234,25 +282,63 @@ export default class PanZoom {
     }
 
     #wheelEvent(event: WheelEvent) {
-        if (this.#svgDiagram) {
+        if (!this.#svgDiagram) {
+            return
+        }
+        if (isZoomWheel(event)) {
+            // Keep the browser from zooming the page as well
+            event.preventDefault()
+            if (this.#gestureScale === null) {
+                // Safari's gesture events are already zooming a pinch
+                this.#zoomAboutClient(pinchZoomFactor(event), event.clientX, event.clientY)
+            }
+        } else {
             // Normalise in case shift modifier is used on macOS
             const delta = event.deltaY === 0 && event.deltaX ? event.deltaX : event.deltaY
             const wheel = delta < 0 ? 1 : -1
-            const toScale = this.#scale * Math.exp((wheel * this.#step) / 3)
-            this.#scale = Math.min(Math.max(toScale, this.#minScale), this.#maxScale)
-            const viewSize = this.#containerSize.scalarScale(1.0 / this.#scale)
-            const viewbox = this.#currentViewbox()
-            // Where the container is now, as the page may have scrolled or its layout changed
-            const rect = this.#container.getBoundingClientRect()
-            const origin = new Point(rect.left + this.#container.clientLeft, rect.top + this.#container.clientTop)
-            viewbox[0] +=
-                ((viewbox[2] - viewSize.x) * (event.clientX - origin.x)) / this.#containerSize.x
-            viewbox[1] +=
-                ((viewbox[3] - viewSize.y) * (event.clientY - origin.y)) / this.#containerSize.y
-            viewbox[2] = viewSize.x
-            viewbox[3] = viewSize.y
-            this.#setViewbox(viewbox)
+            this.#zoomAboutClient(Math.exp((wheel * this.#step) / 3), event.clientX, event.clientY)
         }
+    }
+
+    #gestureEvent(event: GestureEvent) {
+        // Track the pinch even with no diagram open, so that a pinch's end always clears it and
+        // Ctrl/Cmd+wheel isn't left thinking a pinch is still under way
+        const lastScale = this.#gestureScale
+        if (event.type === 'gesturestart') {
+            this.#gestureScale = event.scale || 1
+        } else if (event.type === 'gesturechange') {
+            this.#gestureScale = event.scale
+        } else {
+            this.#gestureScale = null
+        }
+        if (!this.#svgDiagram) {
+            return
+        }
+        event.preventDefault()
+        if (event.type === 'gesturechange' && lastScale !== null && lastScale > 0 && event.scale > 0) {
+            this.#zoomAboutClient(event.scale / lastScale, event.clientX, event.clientY)
+        }
+    }
+
+    /**
+     * Zooms by a factor, keeping the point under a position in the window (such as the pointer's)
+     * where it is. The scale stays within its limits.
+     */
+    #zoomAboutClient(factor: number, clientX: number, clientY: number) {
+        if (!this.#svgDiagram || !Number.isFinite(factor) || factor <= 0) {
+            return
+        }
+        this.#scale = Math.min(Math.max(this.#scale * factor, this.#minScale), this.#maxScale)
+        const viewSize = this.#containerSize.scalarScale(1.0 / this.#scale)
+        const viewbox = this.#currentViewbox()
+        // Where the container is now, as the page may have scrolled or its layout changed
+        const rect = this.#container.getBoundingClientRect()
+        const origin = new Point(rect.left + this.#container.clientLeft, rect.top + this.#container.clientTop)
+        viewbox[0] += ((viewbox[2] - viewSize.x) * (clientX - origin.x)) / this.#containerSize.x
+        viewbox[1] += ((viewbox[3] - viewSize.y) * (clientY - origin.y)) / this.#containerSize.y
+        viewbox[2] = viewSize.x
+        viewbox[3] = viewSize.y
+        this.#setViewbox(viewbox)
     }
 }
 
