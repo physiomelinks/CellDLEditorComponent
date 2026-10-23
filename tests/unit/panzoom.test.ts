@@ -190,6 +190,12 @@ describe('setting the view, as a host does when a diagram opens', () => {
         expect(panzoom.scale).toBeCloseTo(0.8 * 200 / 1100)
     })
 
+    test('fitting a diagram too large for the smallest scale lowers it', () => {
+        const { panzoom } = diagram()
+        panzoom.zoomToFit(new Bounds(0, 0, 10000, 100), undefined, 1)
+        expect(panzoom.scale).toBeCloseTo(200 / 11000)
+    })
+
     test('a scale and centre are set as given, within the scale limits', () => {
         const { panzoom, svg } = diagram()
         panzoom.zoomTo(2, { x: 50, y: 60 })
