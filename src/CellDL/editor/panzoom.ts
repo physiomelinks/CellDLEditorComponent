@@ -168,6 +168,7 @@ export default class PanZoom {
     disable() {
         this.#svgDiagram = null
         this.#panning = false
+        this.#gestureScale = null
         this.#scale = 1.0
         this.#viewChanged?.(this.#scale)
     }
@@ -300,20 +301,22 @@ export default class PanZoom {
     }
 
     #gestureEvent(event: GestureEvent) {
+        // Track the pinch even with no diagram open, so that a pinch's end always clears it and
+        // Ctrl/Cmd+wheel isn't left thinking a pinch is still under way
+        const lastScale = this.#gestureScale
+        if (event.type === 'gesturestart') {
+            this.#gestureScale = event.scale || 1
+        } else if (event.type === 'gesturechange') {
+            this.#gestureScale = event.scale
+        } else {
+            this.#gestureScale = null
+        }
         if (!this.#svgDiagram) {
             return
         }
         event.preventDefault()
-        if (event.type === 'gesturestart') {
-            this.#gestureScale = event.scale || 1
-        } else if (event.type === 'gesturechange') {
-            const lastScale = this.#gestureScale ?? 1
-            if (event.scale > 0 && lastScale > 0) {
-                this.#zoomAboutClient(event.scale / lastScale, event.clientX, event.clientY)
-            }
-            this.#gestureScale = event.scale
-        } else {
-            this.#gestureScale = null
+        if (event.type === 'gesturechange' && lastScale !== null && lastScale > 0 && event.scale > 0) {
+            this.#zoomAboutClient(event.scale / lastScale, event.clientX, event.clientY)
         }
     }
 

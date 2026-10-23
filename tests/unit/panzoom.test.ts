@@ -84,4 +84,20 @@ describe('zooming the diagram with a pinch or Ctrl/Cmd+wheel', () => {
         expect(gesture('gestureend', 2).defaultPrevented).toBe(true)
         expect(panzoom.scale).toBeCloseTo(Math.min(before * 2, 32))
     })
+
+    test('a Safari pinch that ends after its diagram closes still lets Ctrl/Cmd+wheel zoom the next one', () => {
+        const { panzoom, container, svg } = diagram()
+        const gesture = (type: string, scale: number) => {
+            const event = Object.assign(new UIEvent(type, { bubbles: true, cancelable: true }), { scale, clientX: 0, clientY: 0 })
+            container.dispatchEvent(event)
+            return event
+        }
+        gesture('gesturestart', 1)
+        panzoom.disable()
+        expect(gesture('gestureend', 1.5).defaultPrevented).toBe(false)
+        panzoom.enable(svg)
+        const before = panzoom.scale
+        container.dispatchEvent(wheel({ deltaY: -10, ctrlKey: true }))
+        expect(panzoom.scale).toBeGreaterThan(before)
+    })
 })
