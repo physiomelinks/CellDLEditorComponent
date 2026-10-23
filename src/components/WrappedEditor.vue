@@ -1,5 +1,5 @@
 <template lang="pug">
-    .celldl-editor.flex.flex-col.h-full(:class="arrowClass")
+    .celldl-editor.flex.flex-col.h-full(:class="[arrowClass, { 'no-status-bar': props.chrome?.statusBar === false }]")
         ElementPalette(
             v-if="paletteLayout === 'top'"
             layout="top"
@@ -54,7 +54,7 @@
             @pick="addElementPicked"
             @close="addElementAt = null"
         )
-        footer.status-bar
+        footer.status-bar(v-show="props.chrome?.statusBar !== false")
             span#status-msg
             span#status-pos(v-show="props.chrome?.statusPosition !== false")
         //- Last, so that a host's `.celldl-editor svg` still finds the diagram first
@@ -82,6 +82,7 @@ import * as vueCommon from '#root/utils/vueCommon'
 import { CellDLDiagram } from '#editor/diagram'
 import { CellDLEditor } from '#editor/editor'
 import { DEFAULT_EDITOR_TOOL_ID, EDITOR_TOOL_IDS, SELECTION_CHANGED_EVENT, VIEW_CHANGED_EVENT } from '#editor/editor'
+import type { EditorMessage } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
 import { HOVER_TOOLTIP_DELAY } from '#editor/editor/tooltips'
 import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
@@ -224,7 +225,17 @@ export type EditorChrome = {
     tools?: boolean | EditorToolName[]
     /** The cursor's grid position at the right of the status bar */
     statusPosition?: boolean
-    /** The Undo and Redo buttons below the left toolbar's tools (hidden with the toolbar when `tools` is `false`) */
+    /**
+     * The status bar below the canvas, with the hovered element's name and the
+     * editor's alerts. Hidden, it takes no space; alerts still reach the host as
+     * `message` events, which are emitted either way. Default `true`.
+     */
+    statusBar?: boolean
+    /**
+     * The Undo and Redo buttons below the left toolbar's tools. With `tools: []`
+     * and `undo: false` the left toolbar takes no space. The keys undo and redo
+     * either way. Hidden with the toolbar when `tools` is `false`.
+     */
     undo?: boolean
     /**
      * Whether the Properties panel's values (an element's initial value,
@@ -387,7 +398,8 @@ const emit = defineEmits<{
     'editor-state': [state: {
         error: string
     }],
-    'event': [detail: ViewerEvent]
+    'event': [detail: ViewerEvent],
+    'message': [message: EditorMessage]
 }>()
 
 //==============================================================================
@@ -407,6 +419,11 @@ vue.watch(
 
 celldlEditor.setViewerEventHandler((event: ViewerEvent) => {
     emit('event', event)
+})
+
+// The editor's alerts, for a host that shows them itself, e.g. with the status bar hidden
+celldlEditor.setMessageHandler((message: EditorMessage) => {
+    emit('message', message)
 })
 
 celldlEditor.setAnnotations(props.annotations, props.options)
@@ -962,6 +979,14 @@ vue.onMounted(async () => {
 
 .editor-pane {
     min-height: calc(100% - 1.6em);
+}
+.celldl-editor.no-status-bar .editor-pane:not(.with-top-palette) {
+    min-height: 100%;
+}
+/* An open panel otherwise stops short of the bottom, where the status bar was */
+.celldl-editor.no-status-bar :deep(.panel),
+.celldl-editor.no-status-bar :deep(.panel-content) {
+    bottom: 0;
 }
 .editor-pane.with-top-palette {
     /* the palette above takes its own height */

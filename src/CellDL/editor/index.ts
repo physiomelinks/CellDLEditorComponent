@@ -206,6 +206,17 @@ const SVG_PANEL_ID = 'svg-panel'
 type PointerEventHandler = (eventType: string, svgElement: SVGGraphicsElement, svgCoords: PointLike) => boolean
 export type ViewerEventHandler = (event: ViewerEvent) => void
 
+/** How serious an alert is; `''` clears the alert shown */
+export type EditorMessageLevel = 'error' | 'warn' | 'info' | ''
+
+/** An alert for the host to show, e.g. when the editor's status bar is hidden; `text` is `''` to clear it */
+export type EditorMessage = {
+    text: string
+    level: EditorMessageLevel
+}
+
+export type EditorMessageHandler = (message: EditorMessage) => void
+
 
 export class CellDLEditor {
     static instance: CellDLEditor | null = null
@@ -299,6 +310,8 @@ export class CellDLEditor {
     #annotations: Annotations = {}
     #tooltipField: string | undefined = undefined
     #viewerEventHandler: ViewerEventHandler | null = null
+    #messageHandler: EditorMessageHandler | null = null
+    #alertShown: boolean = false
     #activeEventObject: CellDLObject | null = null
     #selectedEventObjects: Map<string, CellDLObject> = new Map()
     #selectionClicking: boolean = false
@@ -494,6 +507,24 @@ export class CellDLEditor {
 
     setViewerEventHandler(handler: ViewerEventHandler | null) {
         this.#viewerEventHandler = handler
+    }
+
+    /** Hears the editor's alerts (errors, warnings and notes), as the status bar shows them. */
+    setMessageHandler(handler: EditorMessageHandler | null) {
+        this.#messageHandler = handler
+    }
+
+    /**
+     * Shows an alert in the status bar and reports it to the host's message
+     * handler. `''` clears it, which is only reported if an alert was shown.
+     */
+    showAlert(text: string, level: EditorMessageLevel) {
+        this.showMessage(text, level)
+        if (text === '' && !this.#alertShown) {
+            return
+        }
+        this.#alertShown = (text !== '')
+        this.#messageHandler?.({ text, level: text === '' ? '' : level })
     }
 
     #emitViewerEvent(type: ViewerEvent['type'], object: CellDLObject | null = null) {
@@ -1150,7 +1181,7 @@ export class CellDLEditor {
             }
             return objects
         } catch (error) {
-            this.showMessage(`Cannot add the element: ${(error as Error).message}`, 'error')
+            this.showAlert(`Cannot add the element: ${(error as Error).message}`, 'error')
             return []
         }
     }
