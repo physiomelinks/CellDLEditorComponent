@@ -18,13 +18,11 @@ limitations under the License.
 
 ******************************************************************************/
 
-import * as vue from 'vue'
-
 import { Point, type PointLike, PointMath } from '#root/utils/points'
 import { CONNECTION_SPLAY_PADDING, MAX_CONNECTION_SPLAY_PADDING } from '#root/utils/styling'
 import { CONNECTION_WIDTH, SELECTION_STROKE_WIDTH } from '#root/utils/styling'
 import type { Styling } from '#root/utils/styling'
-import { svgCircle } from '#root/utils/svgUtils'
+import { imagesLoaded, svgCircle } from '#root/utils/svgUtils'
 
 import { CELLDL_STYLE_CLASS, type CellDLObject } from '#editor/celldlObjects'
 import { Bounds, type PointMoveOptions, type RestrictedValue } from '#editor/geometry'
@@ -105,9 +103,9 @@ export class CellDLSVGElement {
         // get all transformations that are being applied to the SVG element
         let element = svgElement.parentNode as SVGGraphicsElement
         while (element !== this.#svgDiagramElement) {
-            const transform = getComputedStyle(element).transform
-            if (transform !== 'none') {
-                this.#globalTransform = this.#globalTransform.leftMultiply(Transform.fromString(transform))
+            const transform = Transform.fromElement(element)
+            if (!transform.isIdentity) {
+                this.#globalTransform = this.#globalTransform.leftMultiply(transform)
             }
             element = element.parentNode as SVGGraphicsElement
         }
@@ -173,7 +171,7 @@ export class CellDLSVGElement {
         const bbox = svgElement.getBBox()
         let topLeft = new Point(bbox.x, bbox.y)
         let bottomRight = new Point(bbox.x + bbox.width, bbox.y + bbox.height)
-        const localTransform = Transform.fromString(getComputedStyle(svgElement).transform)
+        const localTransform = Transform.fromElement(svgElement)
         const transform = this.#globalTransform.leftMultiply(localTransform)
         topLeft = transform.transformPoint(topLeft)
         bottomRight = transform.transformPoint(bottomRight)
@@ -666,7 +664,7 @@ export class CellDLSVGElement {
      */
     async updateImageElement(imageData: string) {
         this.svgElement.innerHTML = `<image href="${imageData}"/>`
-        await vue.nextTick()            // Wait for image to render
+        await imagesLoaded(this.svgElement)
         this.#updatedSvgElement()
     }
 

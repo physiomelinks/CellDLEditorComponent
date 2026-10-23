@@ -36,6 +36,7 @@ import { round } from '#editor/utils'
 import { isMacOs } from '#root/utils/common'
 import { type Annotations, PANEL_ID, type SvgViewerOptions, type ViewerEvent } from '#root/utils/editor-types'
 import { type Point, type PointLike, PointMath } from '#root/utils/points'
+import { imagesLoaded } from '#root/utils/svgUtils'
 import type { StringProperties } from '#root/utils/types'
 import { componentLibraryPlugin } from '#root/plugins'
 
@@ -483,8 +484,9 @@ export class CellDLEditor {
             this.#container.appendChild(this.#svgDiagram!)
         }
 
-        // Allow for the diagram to render
+        // Allow for the diagram to render, and its images to load so they can be measured
         await vue.nextTick()
+        await imagesLoaded(this.#svgDiagram!)
 
         // Rewriting metadata during diagram finishSetup might dirty
         this.markClean()

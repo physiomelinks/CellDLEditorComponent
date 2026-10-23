@@ -51,7 +51,7 @@ export class BoundedElement extends CellDLSVGElement {
     constructor(object: CellDLObject, svgElement: SVGGraphicsElement, gridAligned: boolean=false, align: boolean=false) {
         super(object, svgElement)
         // local transform on the element
-        this.#localTransform = Transform.fromString(getComputedStyle(svgElement).transform)
+        this.#localTransform = Transform.fromElement(svgElement)
         this.#controlRect = new ControlRect(
             RestrictedPoint.fromPoint(this.topLeft),
             RestrictedPoint.fromPoint(this.topLeft.add(this.size)),
