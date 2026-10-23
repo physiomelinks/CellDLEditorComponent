@@ -6,6 +6,7 @@
 :root {
     --editor-canvas-background: #eee;
     --editor-statusbar-background: #ececec;
+    --editor-bond-count-colour: #333;
 }
 
 :root {
@@ -19,6 +20,7 @@
 .celldl-dark-mode {
     --editor-canvas-background: var(--p-surface-800);
     --editor-statusbar-background: var(--p-surface-700);
+    --editor-bond-count-colour: var(--p-surface-200);
 }
 
 #svg-container svg {
@@ -31,6 +33,10 @@
     --active-selected: #0ff;
     --connection-selected: #f00;
     --connection-highlighted: #0f8;
+}
+/* A bond's count follows the editor's theme; its own `fill` (#333) is what a saved diagram shows */
+#svg-container .bond-count {
+    fill: var(--editor-bond-count-colour);
 }
 #svg-container .celldl-background {
     pointer-events: none;
