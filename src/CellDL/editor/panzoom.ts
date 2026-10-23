@@ -51,6 +51,25 @@ export function isZoomWheel(event: Pick<WheelEvent, 'ctrlKey' | 'metaKey'>): boo
 }
 
 /**
+ * How far a plain wheel or two-finger scroll pans the view, in screen pixels: its deltas, from lines
+ * or pages if that's how the wheel reports them. Shift+wheel with only a vertical delta, as a mouse
+ * wheel sends, pans across.
+ */
+export function wheelPanDelta(event: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode' | 'shiftKey'>,
+                              pageSize: PointLike): Point {
+    let delta = new Point(event.deltaX, event.deltaY)
+    if (event.shiftKey && delta.x === 0) {
+        delta = new Point(delta.y, 0)
+    }
+    if (event.deltaMode === 1) {
+        delta = delta.scalarScale(LINE_HEIGHT)
+    } else if (event.deltaMode === 2) {
+        delta = new Point(delta.x * pageSize.x, delta.y * pageSize.y)
+    }
+    return delta
+}
+
+/**
  * The factor a pinch, or Ctrl/Cmd+wheel, zooms by: in proportion to how far it moved, so a pinch
  * follows the fingers, and at most a step's worth for a mouse wheel's notch.
  */
@@ -90,7 +109,6 @@ export default class PanZoom {
     #minScale: number = 0.125
     #scale: number = 1
     #maxScale: number = 32
-    #step: number = 0.15
 
     #viewChanged: ViewChangedHandler | null = null
 
@@ -100,7 +118,8 @@ export default class PanZoom {
     constructor(container: HTMLElement, viewChanged: ViewChangedHandler | null = null) {
         this.#viewChanged = viewChanged
         // Not passive, so that a pinch or Ctrl/Cmd+wheel over the diagram zooms only the diagram,
-        // and not the page as well. A plain wheel or two-finger scroll is left alone.
+        // and not the page as well, and so that a plain wheel or two-finger scroll pans the diagram
+        // rather than scrolling the page.
         container.addEventListener('wheel', this.#wheelEvent.bind(this), { passive: false })
         // Safari sends a trackpad pinch as gesture events, and zooms the page unless they're cancelled
         container.addEventListener('gesturestart', this.#gestureEvent.bind(this) as EventListener)
@@ -244,12 +263,9 @@ export default class PanZoom {
 
     pointerMove(event: PointerEvent): boolean {
         if (this.#svgDiagram && this.#panning) {
-            const delta = this.#pointerDownPosition.subtract(event).scalarScale(1.0 / this.#scale)
+            const delta = this.#pointerDownPosition.subtract(event)
             if (!delta.isZero()) {
-                const viewbox = this.#currentViewbox()
-                viewbox[0] += delta.x
-                viewbox[1] += delta.y
-                this.#setViewbox(viewbox)
+                this.panBy(delta)
                 this.#pointerDownPosition = Point.fromPoint(event)
                 return true
             }
@@ -292,11 +308,21 @@ export default class PanZoom {
                 // Safari's gesture events are already zooming a pinch
                 this.#zoomAboutClient(pinchZoomFactor(event), event.clientX, event.clientY)
             }
-        } else {
-            // Normalise in case shift modifier is used on macOS
-            const delta = event.deltaY === 0 && event.deltaX ? event.deltaX : event.deltaY
-            const wheel = delta < 0 ? 1 : -1
-            this.#zoomAboutClient(Math.exp((wheel * this.#step) / 3), event.clientX, event.clientY)
+        } else if (event.target === this.#container
+                || (event.target instanceof Node && this.#svgDiagram.contains(event.target))) {
+            // Over the diagram, not an overlay such as a menu, which keeps its own scroll
+            event.preventDefault()
+            this.panBy(wheelPanDelta(event, this.#containerSize))
+        }
+    }
+
+    /** Pans the view by a distance in screen pixels, without zooming, as dragging the canvas does. */
+    panBy(delta: PointLike) {
+        if (this.#svgDiagram && (delta.x || delta.y)) {
+            const viewbox = this.#currentViewbox()
+            viewbox[0] += delta.x / this.#scale
+            viewbox[1] += delta.y / this.#scale
+            this.#setViewbox(viewbox)
         }
     }
 
