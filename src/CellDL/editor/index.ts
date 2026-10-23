@@ -25,6 +25,7 @@ import { useTippy } from "vue-tippy"
 import '#root/assets/svgContent.css'
 
 import type { CellDLObject } from '#editor/celldlObjects'
+import { ConnectionStyle } from '#editor/connections'
 import { PathMaker, type PathNode } from '#editor/connections/pathmaker'
 import type { TemplateEventDetails } from '#editor/components'
 import { objectMetadataTemplate, ObjectPropertiesPanel } from '#editor/components/properties'
@@ -43,6 +44,7 @@ import { paletteEntry, placeEntry } from '#root/plugins/bondgraph/palette'
 //==============================================================================
 
 import { drawBondCounts } from './bondcounts'
+import { BondDrag } from './bonddrag'
 import { EditorFrame } from './editorframe'
 import { DEFAULT_VIEW_STATE, editGuides, EDITOR_GRID_CLASS } from './editguides'
 import PanZoom from './panzoom'
@@ -207,6 +209,9 @@ export class CellDLEditor {
     #pathMaker: PathMaker | null = null
     #nextPathNode: PathNode | null = null
 
+    // Hover-to-bond, in Selecting mode
+    #bondDrag: BondDrag
+
     #contextMenuActiveItems: Set<CONTEXT_MENU> = new Set()
     // Where the context menu was opened, for its Add element item
     #contextMenuPoint: { client: PointLike, svg: PointLike } | null = null
@@ -277,6 +282,22 @@ export class CellDLEditor {
     constructor() {
         CellDLEditor.instance = this
 
+        // The host's getters read the editor's private fields
+        const editor = this
+        this.#bondDrag = new BondDrag({
+            get celldlDiagram() { return editor.#celldlDiagram },
+            get editorFrame() { return editor.#editorFrame },
+            get canStartBond() {
+                return editor.#editorMode === EDITOR_MODE.Selecting && editor.#celldlDiagram !== null
+                    && !editor.moving && !editor.#panning && editor.#boxMaker === null
+            },
+            get bondStyle() { return editor.#drawConnectionSettings.style || ConnectionStyle.Linear },
+            svgPoint: (event) => editor.#domToSvgCoords(event),
+            objectAt: (element) => editor.#objectAt(element),
+            hideError: () => editor.#hideTooltipOf('error'),
+            click: (event, object) => editor.#selectingClick(event, object.svgElement ?? event.target as SVGGraphicsElement, object)
+        })
+
         // Add a handler for events from toolbar buttons and popovers
         document.addEventListener('toolbar-event', this.#toolBarEvent.bind(this))
         document.addEventListener('component-selected', this.#componentTemplateSelectedEvent.bind(this))
@@ -308,6 +329,7 @@ export class CellDLEditor {
 
         // Create a panzoom handler
         this.#panzoom = new PanZoom(this.#container)
+        this.#bondDrag.mount(this.#container)
 
         // Set up event handlers
         this.#container.addEventListener('click', this.#pointerClickEvent.bind(this))
@@ -520,6 +542,7 @@ export class CellDLEditor {
 
         // Set initial mode
         this.#editorMode = DEFAULT_EDITOR_MODE
+        this.#bondDrag.reset()
         this.#notifyEditorMode()
         this.currentObject = null
         this.pointerMoved = false
@@ -568,6 +591,7 @@ export class CellDLEditor {
         if (this.#celldlDiagram !== null) {
             this.#editorFrame!.clear()
             this.#editorFrame = null
+            this.#bondDrag.reset()
             //            this.#toolBar.enable(false)
             this.#panzoom!.disable()
             if (this.#container) {
@@ -603,6 +627,9 @@ export class CellDLEditor {
     }
 
     #cancelPartialPath(): boolean {
+        if (this.#bondDrag.cancel()) {
+            return true
+        }
         if (this.#pathMaker) {
             this.#pathMaker.close()
             this.#pathMaker = null
@@ -1303,6 +1330,9 @@ export class CellDLEditor {
     }
 
     #pointerOverEvent(event: PointerEvent) {
+        if (this.#bondDrag.pointerOver(event)) {
+            return
+        }
         if (this.#celldlDiagram === null || this.#handlePointerEvents(event)) {
             return
         }
@@ -1393,6 +1423,10 @@ export class CellDLEditor {
     }
 
     #pointerDownEvent(event: PointerEvent) {
+        if (this.#bondDrag.pointerDown(event)) {
+            this.#hideTooltipOf('hover')
+            return
+        }
         this.#pointerDownInContainer = true
         this.#clickDoneOnPointerUp = false
         this.#pointerDownPosn = { x: event.clientX, y: event.clientY }
@@ -1493,6 +1527,9 @@ export class CellDLEditor {
     }
 
     #pointerMoveEvent(event: PointerEvent) {
+        if (this.#bondDrag.pointerMove(event)) {
+            return
+        }
         if (this.#handlePointerEvents(event)) {
             return
         }
@@ -1530,6 +1567,9 @@ export class CellDLEditor {
     }
 
     #pointerUpEvent(event: PointerEvent) {
+        if (this.#bondDrag.pointerUp(event)) {
+            return
+        }
         if (this.#celldlDiagram === null || this.#handlePointerEvents(event)) {
             return
         }

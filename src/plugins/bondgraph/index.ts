@@ -76,6 +76,7 @@ import {
 
 import './bgrdf'    // Run set up code
 import { BGF_ONTOLOGY_URI, bgRdfStatements } from './bgrdf'
+import { type BondEnd, type BondEndKind, type BondPorts, bondRule } from './bondrules'
 
 import {
     BONDGRAPH_COMPONENT_DEFINITIONS,
@@ -98,6 +99,23 @@ import { DomainGraph } from './domainGraph'
 //==============================================================================
 
 export const PLUGIN_ID = 'bondgraph-components'
+
+// Bond ends' kinds, by base component type, for the direction rules
+const BOND_END_KINDS: Map<string, BondEndKind> = new Map([
+    ['QuantityStore', 'storage'],
+    ['FlowStore', 'storage'],
+    ['Resistance', 'dissipator'],
+    ['Reaction', 'reaction'],
+    ['PotentialSource', 'source'],
+    ['FlowSource', 'source'],
+    ['TransformNode', 'transform'],
+    ['ZeroNode', 'zero'],
+    ['OneNode', 'one'],
+    ['ZeroStorageNode', 'composite'],
+    ['OneStorageNode', 'composite'],
+    ['OneResistanceNode', 'composite'],
+    ['OneReactionNode', 'composite']
+].map(([name, kind]) => [`${BGF_URI}${name}`, kind as BondEndKind]))
 
 //==============================================================================
 //==============================================================================
@@ -187,6 +205,8 @@ type ElementTemplate = ElementTypeName & {
     symbol: string
     defaultStyle: BGElementStyle
     baseComponent: BGBaseComponent
+    /** The template's declared ports (`bgf:hasPort`), by direction */
+    ports?: BondPorts
 }
 
 //==============================================================================
@@ -358,6 +378,7 @@ export class BondgraphPlugin implements PluginInterface {
         this.#loadDomains()
         this.#loadBaseComponents()
         this.#assignTemplates()
+        this.#loadTemplatePorts()
         this.#loadTemplateParameters()
     }
 
@@ -977,6 +998,23 @@ export class BondgraphPlugin implements PluginInterface {
         if (sourceDomain && targetDomain && sourceDomain !== targetDomain) {
             return { alert: `Cannot connect ${$rdf.getFragment(sourceDomain)} and ${$rdf.getFragment(targetDomain)} physical domains` }
         }
+        // Which way the bond points
+        const bonds = [...new Set([...sourceObject.connections, ...targetObject.connections])]
+            .filter(bond => bond.source && bond.target)
+            .map(bond => ({ source: this.bondEnd(bond.source!), target: this.bondEnd(bond.target!) }))
+        const status = bondRule(this.bondEnd(sourceObject), this.bondEnd(targetObject), { bonds })
+        if ('alert' in status) {
+            return status
+        }
+    }
+
+    /** What an object is as a bond's end, for the direction rules. */
+    bondEnd(celldlObject: CellDLObject): BondEnd {
+        const pluginData = <PluginData>celldlObject.pluginData(this.id)
+        const baseType = pluginData.managed ? pluginData.baseComponent?.type : undefined
+        const kind: BondEndKind = (baseType && BOND_END_KINDS.get(baseType)) || 'other'
+        const ports = pluginData.elementTemplate?.ports
+        return (kind === 'reaction' && ports) ? { id: celldlObject.id, kind, ports } : { id: celldlObject.id, kind }
     }
 
     connectionDeleted(connection: CellDLConnection) {
@@ -1876,6 +1914,29 @@ export class BondgraphPlugin implements PluginInterface {
                 this.#baseComponentToElementTemplates.get(component.type)!.push(elementTemplate)
             })
         }
+    }
+
+    // Only reads BG-RDF's declared ports, e.g. a chemical reaction's f (inward) and r (outward)
+    #loadTemplatePorts() {
+        this.#query(`
+            SELECT ?element ?portId ?direction WHERE {
+                ?element a bgf:ElementTemplate ;
+                    bgf:hasPort ?port .
+                ?port bgf:portId ?portId ;
+                    bgf:direction ?direction .
+            }`
+        ).forEach((r: Map<string, $rdf.Term>) => {
+            const template = this.#elementTemplates.get(r.get('element')!.value)
+            if (template) {
+                template.ports ??= { inward: 0, outward: 0 }
+                const direction = r.get('direction')!.value
+                if (direction === BGF.uri('InwardPort').value) {
+                    template.ports.inward += 1
+                } else if (direction === BGF.uri('OutwardPort').value) {
+                    template.ports.outward += 1
+                }
+            }
+        })
     }
 
     #saveParametersAndStates(r: Map<string, $rdf.Term>) {
