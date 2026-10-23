@@ -142,8 +142,10 @@ function setConnectionPathArray(connection: CellDLConnection, connectionPathArra
 export class MoveUndoState extends UndoState {
     // What was moved, as the selection may have changed by undo time
     #group: MoveGroup | null
+    #nextCentroids: Map<CellDLObject, Point> = new Map()
     #nextPathArrays: ConnectionPathArrayMap | null = null
     #nextPosition: Point | null = null
+    #prevCentroids: Map<CellDLObject, Point> = new Map()
     #prevPathArrays: ConnectionPathArrayMap = new Map()
     #prevPosition: Point
 
@@ -160,6 +162,32 @@ export class MoveUndoState extends UndoState {
         this.#group = selectionSet?.moveGroup ?? null
         this.#prevPathArrays = this.#connectionPathArrays()
         this.#prevPosition = Point.fromPoint(position)
+        this.#prevCentroids = this.#centroids()
+    }
+
+    // Where the moved objects with a position of their own, i.e. not connections, are
+    #centroids(): Map<CellDLObject, Point> {
+        const centroids: Map<CellDLObject, Point> = new Map()
+        for (const object of this.#group?.objects ?? [this.undoObject]) {
+            const centroid = object.isConnection ? undefined : object.celldlSvgElement?.centroid
+            if (object.isMoveable && centroid) {
+                centroids.set(object, Point.fromPoint(centroid))
+            }
+        }
+        return centroids
+    }
+
+    /**
+     * Puts the moved objects exactly where they were, or were moved to, as moving
+     * them back by the pointer's offset can snap them elsewhere on the grid.
+     */
+    #setPositions(centroids: Map<CellDLObject, Point>) {
+        for (const [object, centroid] of centroids) {
+            const current = object.celldlSvgElement?.centroid
+            if (current && !PointMath.equals(current, centroid)) {
+                object.reposition(Point.fromPoint(current), centroid, { noAlign: true, snapGrid: false })
+            }
+        }
     }
 
     // The connections whose paths a move changes
@@ -187,16 +215,29 @@ export class MoveUndoState extends UndoState {
         return connectionPathArrays
     }
 
-    endMove(position: PointLike|undefined) {
-        if (position !== undefined) {
+    /**
+     * Notes where the move ended, returning whether it moved anything. A move
+     * that ends where it started is kept as not having moved.
+     */
+    endMove(position: PointLike|undefined): boolean {
+        if (position !== undefined && !PointMath.equals(this.#prevPosition, position)) {
+            this.#nextCentroids = this.#centroids()
             this.#nextPathArrays = this.#connectionPathArrays()
             this.#nextPosition = Point.fromPoint(position)
         }
+        return this.moved
+    }
+
+    /** Whether the move, once ended, moved anything */
+    get moved(): boolean {
+        return this.#nextPosition !== null
     }
 
     reposition(direction: Direction) {
-        if (direction === 'backwards' && this.#nextPosition === null) {
+        const backwards = (direction === 'backwards')
+        if (backwards && this.#nextPosition === null) {
             // restoring to original position without having moved
+            this.#setPositions(this.#prevCentroids)
             this.#restoreConnectionPaths(this.#prevPathArrays)
         } else {
             const connectionPathArrays = (direction === 'backwards') ? this.#prevPathArrays : this.#nextPathArrays
@@ -210,6 +251,7 @@ export class MoveUndoState extends UndoState {
                 } else {
                     movedObject.reposition(startPosition, position, this.moveOptions)
                 }
+                this.#setPositions(backwards ? this.#prevCentroids : this.#nextCentroids)
                 this.#restoreConnectionPaths(connectionPathArrays)
             }
         }
@@ -390,6 +432,27 @@ class UndoRedo {
     }
 
     /**
+     * Ends a move started with `setMoveUndoState()`, keeping it to undo (and so
+     * clearing the redo stack) only if it moved something. A move that didn't,
+     * such as a click or a drag back to where it started, is put back as it was.
+     *
+     * @returns Whether the move moved anything.
+     */
+    endMove(undoState: MoveUndoState, position: PointLike|undefined): boolean {
+        const moved = undoState.endMove(position)
+        if (this.#activeUndoState === undoState) {
+            this.#activeUndoState = null
+            if (moved) {
+                this.#pushUndoStack(undoState, false)
+            }
+        }
+        if (!moved) {
+            undoState.reposition('backwards')
+        }
+        return moved
+    }
+
+    /**
      * Starts collecting changes to undo as one step, until the matching
      * `endGroup()`. Groups nest: only the outermost one makes an undo step.
      */
@@ -413,7 +476,8 @@ class UndoRedo {
         if (this.#groupDepth > 0) {
             return this.#group.length > 0
         }
-        const states = this.#group
+        // A move that moved nothing, such as aligning what is already aligned, isn't a change
+        const states = this.#group.filter(state => !(state instanceof MoveUndoState) || state.moved)
         this.#group = []
         if (states.length === 0) {
             return false
@@ -463,8 +527,19 @@ class UndoRedo {
         return changed
     }
 
+    /**
+     * Starts an undoable move; pass it to `endMove()` once the move ends. Outside a
+     * group, nothing is put on the undo stack (and the redo stack is kept) until the
+     * move is known to have moved something, so a click that selects doesn't clear redo.
+     */
     setMoveUndoState(undoObject: UndoObject, position: PointLike, selectionSet: SelectionSet|undefined=undefined): MoveUndoState {
-        return this.#setActiveUndoState(new MoveUndoState(undoObject as CellDLObject, position, selectionSet)) as MoveUndoState
+        const undoState = new MoveUndoState(undoObject as CellDLObject, position, selectionSet)
+        if (this.#groupDepth > 0) {
+            this.#group.push(undoState)
+        } else {
+            this.#activeUndoState = undoState
+        }
+        return undoState
     }
 
     #clearRedoStack() {

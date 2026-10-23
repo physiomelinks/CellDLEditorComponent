@@ -1607,12 +1607,16 @@ export class CellDLEditor {
             if (this.currentObject && this.moving) {
                 this.moving = false
                 if (this.moved) {
-                    this.#moveUndoState?.endMove(svgPoint)
                     if (this.#moveSelection) {
                         this.selectionSet.endMove()
                     } else {
                         this.currentObject.endMove()
                         this.currentObject.finaliseMove()
+                    }
+                    // Kept to undo only if it moved something, e.g. not if dragged back to the start
+                    if (this.#moveUndoState) {
+                        undoRedo.endMove(this.#moveUndoState, svgPoint)
+                        this.#moveUndoState = null
                     }
                 } else if (this.#moveUndoState) {
                     undoRedo.resetActiveUndoState()
