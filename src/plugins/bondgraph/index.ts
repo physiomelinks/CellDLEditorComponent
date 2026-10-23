@@ -725,6 +725,17 @@ export class BondgraphPlugin implements PluginInterface {
         return pluginData.elementTemplate?.type ?? pluginData.baseComponent?.type
     }
 
+    /** The physical domains' IRIs, as the templates define them. */
+    physicalDomains(): string[] {
+        return [...this.#physicalDomains.keys()]
+    }
+
+    /** The element templates of base component `baseType`, with their domains (`''` for none). */
+    baseElementTemplates(baseType: string): { type: string, name: string, domain: string }[] {
+        return (this.#baseComponentToElementTemplates.get(baseType) ?? [])
+                    .map(et => ({ type: et.type, name: et.name, domain: et.domain }))
+    }
+
     /** The id of the component library template to draw a new element of `elementType` from. */
     libraryTemplateId(elementType: string): string|undefined {
         const baseType = this.#elementTemplates.get(elementType)?.baseComponent.type ?? elementType

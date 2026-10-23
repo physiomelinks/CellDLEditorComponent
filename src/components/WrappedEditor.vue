@@ -249,7 +249,10 @@ export type EditorChrome = {
      * shows the same elements whatever this is.
      */
     palette?: boolean | 'top' | 'left'
-    /** The palette's initial filter: chemistry's elements, or every domain's. Default `'chemical'` */
+    /**
+     * The palette's initial filter: a physical domain's id (`'chemical'`, `'electrical'`, `'hydraulic'`,
+     * `'mechanical'`, ...) or `'all'`. An unknown id shows `'chemical'`, the default.
+     */
     paletteDomain?: PaletteDomain
     /**
      * The zoom controls at the bottom right of the canvas: zoom out, the zoom
