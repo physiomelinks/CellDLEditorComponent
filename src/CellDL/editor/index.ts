@@ -1560,6 +1560,10 @@ export class CellDLEditor {
             }
         } else if (this.currentObject && this.moving) {
             // EDITOR_MODE.Selecting or EDITOR_MODE.AddingComponent
+            if (!this.moved && !this.#pointerDragged(event)) {
+                // Still a click: a pointer that shakes a little mustn't move (and snap) what it clicks
+                return
+            }
             if (this.#moveSelection) {
                 this.selectionSet.move(svgPoint)
             } else {
@@ -1607,12 +1611,16 @@ export class CellDLEditor {
             if (this.currentObject && this.moving) {
                 this.moving = false
                 if (this.moved) {
-                    this.#moveUndoState?.endMove(svgPoint)
                     if (this.#moveSelection) {
                         this.selectionSet.endMove()
                     } else {
                         this.currentObject.endMove()
                         this.currentObject.finaliseMove()
+                    }
+                    // Kept to undo only if it moved something, e.g. not if dragged back to the start
+                    if (this.#moveUndoState) {
+                        undoRedo.endMove(this.#moveUndoState, svgPoint)
+                        this.#moveUndoState = null
                     }
                 } else if (this.#moveUndoState) {
                     undoRedo.resetActiveUndoState()
