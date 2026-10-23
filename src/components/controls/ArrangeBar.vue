@@ -60,6 +60,8 @@ const buttons: { op: ArrangeOp, prompt: string, icon: vue.Component }[] = [
     right: 8px;
     z-index: 10;
     display: flex;
+    flex-wrap: wrap;            /* onto more rows beside an open panel on a narrow canvas */
+    justify-content: flex-end;
     align-items: center;
     gap: 2px;
     padding: 2px;

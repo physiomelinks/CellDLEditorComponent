@@ -17,7 +17,7 @@
                 @button-event="buttonEvent"
             )
             //- The canvas's own controls follow the diagram's container, so they aren't styled as its SVG
-            .canvas-area
+            .canvas-area(ref="canvasArea")
                 div#svg-container(ref="svgContainer")
                     EditorContextMenu(
                         :contextMenuProps="contextMenuProps"
@@ -29,6 +29,8 @@
                     <!-- context-menu(id="context-menu")  -->
                 CanvasControls(
                     v-if="props.chrome?.zoom !== false"
+                    :style="{ right: `${8 + panelInset}px` }"
+                    :vertical="zoomVertical"
                     :scale="zoomScale"
                     @zoom-in="celldlEditor.zoomIn()"
                     @zoom-out="celldlEditor.zoomOut()"
@@ -36,6 +38,7 @@
                 )
                 ArrangeBar(
                     v-if="props.chrome?.arrange !== false && arrangeableCount >= 2"
+                    :style="{ right: `${8 + panelInset}px`, maxWidth: `calc(100% - ${16 + panelInset}px)` }"
                     :count="arrangeableCount"
                     @arrange="(op) => celldlEditor.arrangeSelection(op)"
                 )
@@ -606,6 +609,47 @@ vue.onUnmounted(() => {
     document.removeEventListener(SELECTION_CHANGED_EVENT, selectionChangedEvent)
 })
 
+// The canvas's controls keep clear of an open right-hand panel, which lies over the canvas: they move left by
+// the width it covers, and stand on end when the canvas left beside it is too narrow for them across
+
+const ZOOM_CONTROLS_WIDTH = 160         // across, with a margin
+const canvasArea = vue.ref<HTMLElement|null>(null)
+const panelInset = vue.ref(0)
+const zoomVertical = vue.ref(false)
+
+function measurePanelInset() {
+    const area = canvasArea.value
+    if (!area) return
+    const bounds = area.getBoundingClientRect()
+    let inset = 0
+    for (const panel of area.parentElement?.querySelectorAll<HTMLElement>('.panel') ?? []) {
+        const rect = panel.getBoundingClientRect()
+        if (rect.width > 0 && rect.left < bounds.right) {
+            inset = Math.max(inset, Math.min(bounds.width, bounds.right - rect.left))
+        }
+    }
+    panelInset.value = Math.round(inset)
+    zoomVertical.value = bounds.width - inset < ZOOM_CONTROLS_WIDTH
+}
+
+// A panel's size changes as it opens (from none), closes, or is dragged wider, and the canvas's with the window
+let panelObserver: ResizeObserver|null = null
+
+function observePanels() {
+    panelObserver?.disconnect()
+    const area = canvasArea.value
+    if (!area || typeof ResizeObserver === 'undefined') return
+    panelObserver ??= new ResizeObserver(measurePanelInset)
+    panelObserver.observe(area)
+    for (const panel of area.parentElement?.querySelectorAll<HTMLElement>('.panel') ?? []) {
+        panelObserver.observe(panel)
+    }
+    measurePanelInset()
+}
+
+vue.onMounted(observePanels)
+vue.onUnmounted(() => panelObserver?.disconnect())
+
 //==============================================================================
 //==============================================================================
 
@@ -765,6 +809,7 @@ vue.watch(shownPanelButtons, (shown) => {
             despatchToolbarEvent('state', button.toolId, false)
         }
     }
+    vue.nextTick(observePanels)
 })
 
 //==============================================================================

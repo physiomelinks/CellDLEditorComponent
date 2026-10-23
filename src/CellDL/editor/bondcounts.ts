@@ -81,7 +81,7 @@ export function drawBondCounts(diagram: CellDLDiagram): number {
         text.setAttribute('font-size', '10')
         text.setAttribute('font-weight', 'bold')
         text.setAttribute('font-family', 'sans-serif')
-        text.setAttribute('fill', '#333')
+        text.setAttribute('fill', '#333')    // in a saved diagram; the editor's stylesheet follows its theme
         text.textContent = String(count)
         group.append(text)
     }
