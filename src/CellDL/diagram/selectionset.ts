@@ -21,6 +21,7 @@ limitations under the License.
 import type { CellDLConnection, CellDLObject } from "#editor/celldlObjects"
 import { type CellDLEditor, notifyChanges } from "#editor/editor"
 import { undoRedo } from '#editor/diagram/undoredo'
+import type { ElementMoveOptions } from '#editor/SVGElements'
 import { Point, type PointLike } from "#root/utils/points"
 
 //==============================================================================
@@ -184,11 +185,12 @@ export class SelectionSet {
         this.#movedObjectOffset = Point.fromPoint(svgPoint).subtract(this.#movedObject?.celldlSvgElement?.centroid as Point)
     }
 
-    move(svgPoint: PointLike) {
+    /** Moves the selection with its moved object, which `options` can say not to snap to the grid */
+    move(svgPoint: PointLike, options: ElementMoveOptions={}) {
         // First move this.#movedObject without moving and redrawing paths, and get its change in centroid.
         // Use this delta to adjust svgpoint before moving other components (without grid alignment nor
         // moving/redrawing paths) and then connections (without grid aligning or limiting control points)
-        this.#movedObject?.move(svgPoint)
+        this.#movedObject?.move(svgPoint, options)
         const newPosn = this.#movedObjectOffset.add(this.#movedObject?.celldlSvgElement?.centroid as Point)
         for (const object of this.#moveGroup.objects) {
             if (object.isMoveable && object.id !== this.#movedObject?.id) {
@@ -217,9 +219,10 @@ export class SelectionSet {
         this.#moveGroup = { objects: [], connections: [] }
     }
 
-    reposition(movedObject: CellDLObject, startPosn: PointLike, endPosn: PointLike, group?: MoveGroup) {
+    reposition(movedObject: CellDLObject, startPosn: PointLike, endPosn: PointLike, group?: MoveGroup,
+               options: ElementMoveOptions={}) {
         this.startMove(startPosn, movedObject, group)
-        this.move(endPosn)
+        this.move(endPosn, options)
         this.endMove()
     }
 }

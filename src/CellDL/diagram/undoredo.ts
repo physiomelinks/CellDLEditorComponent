@@ -146,6 +146,8 @@ export class MoveUndoState extends UndoState {
     #nextPosition: Point | null = null
     #prevPathArrays: ConnectionPathArrayMap = new Map()
     #prevPosition: Point
+    // Whether the positions are the moved component's centroid, as drawn, rather than the pointer's
+    #byCentroid: boolean
 
     /** How a lone object is moved back and forth, such as without snapping to the grid */
     moveOptions: ElementMoveOptions = {}
@@ -159,7 +161,12 @@ export class MoveUndoState extends UndoState {
         this.selectionSet = selectionSet || null
         this.#group = selectionSet?.moveGroup ?? null
         this.#prevPathArrays = this.#connectionPathArrays()
-        this.#prevPosition = Point.fromPoint(position)
+        // A component is moved back and forth between where it was drawn, as the pointer's positions would be
+        // snapped to the grid again, leaving it short of where its bonds are restored to. A bond's control point
+        // is moved by the pointer, as its path is restored anyway.
+        const centroid = undoObject.isConnection ? null : undoObject.celldlSvgElement?.centroid
+        this.#byCentroid = !!centroid
+        this.#prevPosition = Point.fromPoint(centroid ?? position)
     }
 
     // The connections whose paths a move changes
@@ -190,7 +197,8 @@ export class MoveUndoState extends UndoState {
     endMove(position: PointLike|undefined) {
         if (position !== undefined) {
             this.#nextPathArrays = this.#connectionPathArrays()
-            this.#nextPosition = Point.fromPoint(position)
+            const centroid = this.#byCentroid ? this.undoObject.celldlSvgElement?.centroid : null
+            this.#nextPosition = Point.fromPoint(centroid ?? position)
         }
     }
 
@@ -205,10 +213,11 @@ export class MoveUndoState extends UndoState {
             if (position && startPosition && connectionPathArrays
              && !PointMath.equals(startPosition, position)) {
                 const movedObject = this.undoObject as CellDLObject
+                const moveOptions = this.#byCentroid ? { ...this.moveOptions, noAlign: true } : this.moveOptions
                 if (this.selectionSet && this.#group) {
-                    this.selectionSet.reposition(movedObject, startPosition, position, this.#group)
+                    this.selectionSet.reposition(movedObject, startPosition, position, this.#group, moveOptions)
                 } else {
-                    movedObject.reposition(startPosition, position, this.moveOptions)
+                    movedObject.reposition(startPosition, position, moveOptions)
                 }
                 this.#restoreConnectionPaths(connectionPathArrays)
             }

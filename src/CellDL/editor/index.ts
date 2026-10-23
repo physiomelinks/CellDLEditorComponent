@@ -227,6 +227,9 @@ export class CellDLEditor {
     protected moved: boolean = false
     #moveSelection: boolean = false
     #movingBoxContents: boolean = false
+    // A press in the canvas whose release is still to come, and where the pointer last was in it
+    #pointerHeld: boolean = false
+    #lastSvgPoint: DOMPoint | null = null
 
     #editorMode: EDITOR_MODE = DEFAULT_EDITOR_MODE
     #dirty: boolean = false
@@ -368,6 +371,10 @@ export class CellDLEditor {
         this.#container.addEventListener('pointerdown', this.#pointerDownEvent.bind(this))
         this.#container.addEventListener('pointermove', this.#pointerMoveEvent.bind(this))
         this.#container.addEventListener('pointerup', this.#pointerUpEvent.bind(this))
+        // A drag released outside the canvas, such as over the palette or another window, or taken away
+        document.addEventListener('pointerup', this.#documentPointerUpEvent.bind(this))
+        document.addEventListener('pointercancel', this.#documentPointerUpEvent.bind(this))
+        window.addEventListener('blur', () => this.#endDragElsewhere(null))
 
         // Keyboard handlers. A popup's own handler may close it before ours runs, so note first whether one is open
         window.addEventListener('keydown', this.#keyDownCaptureEvent.bind(this), true)
@@ -632,9 +639,13 @@ export class CellDLEditor {
         }
     }
 
-    /** Undoes the last change, after cancelling any partial bond or selection box. */
+    /** Undoes the last change, after cancelling any move being dragged, partial bond or selection box. */
     undo() {
         if (this.#celldlDiagram === null) {
+            return
+        }
+        if (this.#cancelMove()) {
+            // Undoing a move being dragged just puts it back
             return
         }
         if (this.#cancelPartialPath()) {
@@ -1451,6 +1462,8 @@ export class CellDLEditor {
         }
         this.pointerMoved = false
         this.#pointerDownTime = Date.now()
+        this.#pointerHeld = true
+        this.#lastSvgPoint = this.#domToSvgCoords(event)
         const element = event.target as SVGGraphicsElement
         if (event.button === 2
          || (!event.shiftKey
@@ -1547,12 +1560,20 @@ export class CellDLEditor {
         if (this.#handlePointerEvents(event)) {
             return
         }
+        if (this.#pointerHeld && event.buttons === 0) {
+            // The button was released where we didn't see it, such as outside the window, so the drag
+            // ended where the pointer last was in the canvas
+            this.#endDragElsewhere(event)
+        }
         if (this.#panning) {
             this.pointerMoved = this.#panzoom!.pointerMove(event) || this.pointerMoved
             return
         }
         this.pointerMoved = true
         const svgPoint = this.#domToSvgCoords(event)
+        if (this.#pointerHeld) {
+            this.#lastSvgPoint = svgPoint
+        }
         this.#showStatus(svgPoint)
         if (this.#editorMode === EDITOR_MODE.PathDrawing) {
             if (this.#pathMaker) {
@@ -1581,13 +1602,50 @@ export class CellDLEditor {
     }
 
     #pointerUpEvent(event: PointerEvent) {
+        this.#pointerHeld = false
         if (this.#bondDrag.pointerUp(event)) {
             return
         }
         if (this.#celldlDiagram === null || this.#handlePointerEvents(event)) {
             return
         }
-        const svgPoint = this.#domToSvgCoords(event)
+        this.#endDrag(event, this.#domToSvgCoords(event))
+    }
+
+    /**
+     * A release outside the canvas, which the canvas doesn't see, or a cancelled pointer, ends a drag
+     * as a release in the canvas would, where the pointer last was in it.
+     */
+    #documentPointerUpEvent(event: PointerEvent) {
+        if (event.type === 'pointerup' && this.#container?.contains(event.target as Node|null)) {
+            return
+        }
+        this.#endDragElsewhere(event)
+    }
+
+    #endDragElsewhere(event: PointerEvent|null) {
+        if (!this.#pointerHeld || this.#celldlDiagram === null) {
+            return
+        }
+        const upEvent = new PointerEvent('pointerup', {
+            clientX: event?.clientX ?? 0,
+            clientY: event?.clientY ?? 0,
+            pointerId: event?.pointerId ?? 1,
+            pointerType: event?.pointerType ?? 'mouse'
+        })
+        const svgPoint = this.#lastSvgPoint ?? this.#domToSvgCoords(upEvent)
+        const moved = this.moving && this.moved
+        this.#endDrag(upEvent, svgPoint)
+        if (moved) {
+            // A host waiting for the release to read the diagram may not see one
+            notifyChanges()
+        }
+    }
+
+    /** Ends a move, pan or selection box at `svgPoint`, as the pointer is released there */
+    #endDrag(event: PointerEvent, svgPoint: DOMPoint) {
+        this.#pointerHeld = false
+        this.#lastSvgPoint = null
         if (this.#panning) {
             this.#panzoom!.pointerUp(event)
             this.#panning = false
@@ -1619,7 +1677,7 @@ export class CellDLEditor {
                     this.#moveUndoState.reposition('backwards')
                     this.#moveUndoState = null
                     if (this.#editorMode === EDITOR_MODE.Selecting && this.currentObject.isConnection
-                     && (event.target as Element).classList?.contains('control-point')) {
+                     && (event.target as Element|null)?.classList?.contains('control-point')) {
                         // Repositioning redraws a bond's control handles, so a click on one
                         // never arrives: select the bond now
                         this.#selectingClick(event, event.target as SVGGraphicsElement, this.currentObject)
@@ -1705,7 +1763,9 @@ export class CellDLEditor {
         if (this.#popupOpenAtKeyDown) {
             return
         }
-        if (toolPopoverOpen()) {
+        if (this.#cancelMove()) {
+            return
+        } else if (toolPopoverOpen()) {
             document.dispatchEvent(new CustomEvent('close-tool-popover'))
         } else if (this.#cancelPartialPath()) {
             return
@@ -1716,6 +1776,45 @@ export class CellDLEditor {
             // Show the Selection tool as the toolbar's active one
             document.dispatchEvent(new CustomEvent('editor-reset-tools'))
         }
+    }
+
+    /**
+     * Cancels a move being dragged, putting what was moved, and its bonds, back where they were
+     * and recording nothing to undo. The pointer's release then does nothing.
+     *
+     * @returns Whether a move was being dragged.
+     */
+    #cancelMove(): boolean {
+        if (!this.moving || !this.currentObject) {
+            return false
+        }
+        this.moving = false
+        this.#pointerHeld = false
+        const moved = this.moved
+        if (moved) {
+            this.#moveUndoState?.endMove(this.#lastSvgPoint ?? undefined)
+            if (this.#moveSelection) {
+                this.selectionSet.endMove()
+            } else {
+                this.currentObject.endMove()
+                this.currentObject.finaliseMove()
+            }
+        }
+        this.#lastSvgPoint = null
+        if (this.#moveUndoState) {
+            undoRedo.resetActiveUndoState()
+            this.#moveUndoState.reposition('backwards')
+            this.#moveUndoState = null
+        }
+        if (this.#movingBoxContents) {
+            this.#boxMaker?.followMove()
+            this.#movingBoxContents = false
+            this.currentObject = null
+        }
+        if (moved) {
+            notifyChanges()
+        }
+        return true
     }
 
     #keyUpEvent(event: KeyboardEvent) {
