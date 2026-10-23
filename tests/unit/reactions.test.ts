@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test'
 import { countEdits, editor, openFixture, settle } from './support/editor'
 
 import type { CellDLObject } from '#editor/celldlObjects'
+import { addElement } from '#editor/editor/placing'
 import { addReaction, applyEquation } from '#editor/editor/reactions'
 import { componentLibraryPlugin } from '#root/plugins'
 import { equationText } from '#root/plugins/bondgraph/equations'
@@ -105,9 +106,40 @@ describe('the Reactions panel\'s equations', () => {
         expect(parameters(store)).toEqual({ K: '1 mol-1' })
         expect(values(store, `${BGF}hasValue`)).toEqual(['0 mol'])
         expect(equations()[REACTION_1]).toBe('S[c] + E[c] + X[c] ⇌ C[c]')
+        const after = await diagram.rdf()
         editor.undo()
         await settle()
         expect(await diagram.rdf()).toBe(before)
+        editor.redo()
+        await settle()
+        expect(await diagram.rdf()).toBe(after)
+    })
+
+    test('a chemostat\'s copy for another step keeps its potential, undone and redone as one step', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        const chemostat = await addElement(`${BGF}ChemicalPotential`, { x: 600, y: 600 }, 'ATP', 'c')
+        expect(values(chemostat, `${BGF}hasValue`)).toEqual(['0 J/mol'])
+        diagram.rdfStore.update(`
+            DELETE { ?n <${BGF}hasValue> ?v } INSERT { ?n <${BGF}hasValue> "2 J/mol"^^<https://w3id.org/cdt/ucum> }
+            WHERE { ?n <${BGF}hasSpecies> "ATP" ; <${BGF}hasValue> ?v }`)
+        const before = await diagram.rdf()
+        await applyEquation(REACTION_1, 'S[c] + E[c] + ATP[c] ⇌ C[c]')
+        const copies = [...diagram.svgDiagram.querySelectorAll('g.celldl-Component')]
+            .map(e => diagram.objectById(e.id)!)
+            .filter(o => values(o, `${BGF}hasSpecies`).includes('ATP'))
+        expect(copies).toHaveLength(2)
+        const copy = copies.find(o => o.uri.value !== chemostat.uri.value)!
+        expect(values(copy, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type')).toContain(`${BGF}ChemicalPotential`)
+        expect(values(copy, `${BGF}hasLocation`)).toEqual(['c'])
+        expect(values(copy, `${BGF}hasValue`)).toEqual(['2 J/mol'])
+        expect(equations()[REACTION_1]).toBe('S[c] + E[c] + ATP[c] ⇌ C[c]')
+        const after = await diagram.rdf()
+        editor.undo()
+        await settle()
+        expect(await diagram.rdf()).toBe(before)
+        editor.redo()
+        await settle()
+        expect(await diagram.rdf()).toBe(after)
     })
 
     test('a new reaction gets an unused name, the most used location and a kappa of 1', async () => {
