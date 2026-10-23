@@ -304,6 +304,45 @@ export function svgToDataUrl(svg: string, base64: boolean=false): string {
 
 //==============================================================================
 
+// How long to wait for an image to load before measuring it anyway
+const IMAGE_LOAD_TIMEOUT = 2000
+
+/** Settles once an `<image>` has loaded, or failed to, or after `IMAGE_LOAD_TIMEOUT`. */
+function imageLoaded(image: SVGImageElement): Promise<void> {
+    return new Promise((resolve) => {
+        const timer = setTimeout(done, IMAGE_LOAD_TIMEOUT)
+        function done() {
+            clearTimeout(timer)
+            resolve()
+        }
+        image.addEventListener('load', done, { once: true })
+        image.addEventListener('error', done, { once: true })
+        // `decode()` resolves once the picture can be drawn, so stands in for a load
+        // event that never comes (as in a test DOM). TypeScript's DOM types don't
+        // have it on an SVG image. A failed decode waits for the load event.
+        const decode = (image as SVGImageElement & { decode?: () => Promise<void> }).decode
+        if (typeof decode === 'function') {
+            decode.call(image).then(done, () => {})
+        }
+    })
+}
+
+/**
+ * Waits until the `<image>`s in an SVG element have loaded, so it can be measured.
+ *
+ * An image without a width and height takes its size from its picture, and
+ * Safari and Firefox load even a data URL's picture after a pause, measuring it
+ * as 0 x 0 until then.
+ *
+ * @param element An SVG element, e.g. a component's group or a whole diagram.
+ */
+export async function imagesLoaded(element: Element): Promise<void> {
+    const images = [...element.querySelectorAll('image')].filter((image) => image instanceof SVGImageElement)
+    await Promise.all(images.map(imageLoaded))
+}
+
+//==============================================================================
+
 export function svgFromDataUrl(dataUri: string): string|undefined {
     const data = dataUri.match(/data:image\/svg\+xml(?<base64>;base64)?,(?<svgText>.*)/)
     if (data) {

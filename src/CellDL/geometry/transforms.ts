@@ -22,7 +22,9 @@ import {
     applyToPoint,
     applyToPoints,
     compose,
+    fromDefinition,
     fromString,
+    fromTransformAttribute,
     identity,
     inverse,
     type Matrix,
@@ -87,6 +89,26 @@ export class Transform {
         } else {
             return new Transform(fromString(matrix))
         }
+    }
+
+    /**
+     * An SVG element's own transform.
+     *
+     * Its computed style has it, except in Safari, whose computed style leaves out
+     * a `transform` attribute, so then the attribute is read.
+     *
+     * @param element An SVG element.
+     */
+    static fromElement(element: SVGGraphicsElement): Transform {
+        const transform = getComputedStyle(element).transform
+        if (transform && transform !== 'none') {
+            return Transform.fromString(transform)
+        }
+        const attribute = element.getAttribute('transform')?.trim()
+        if (attribute) {
+            return new Transform(compose(fromDefinition(fromTransformAttribute(attribute))))
+        }
+        return Transform.Identity()
     }
 
     static Identity(): Transform {
