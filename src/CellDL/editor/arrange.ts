@@ -117,3 +117,25 @@ function centre(bounds: ArrangeBounds, start: 'left'|'top', end: 'right'|'bottom
 }
 
 //==============================================================================
+
+/**
+ * The bonds whose two ends are both among the objects, once each. Arranging
+ * straightens these; a bond with only one end among them keeps its bends.
+ */
+export function bondsWithin<Bond extends { readonly connectedObjects: readonly unknown[] }>(
+    objects: readonly { readonly connections: readonly Bond[] }[]
+): Bond[] {
+    const arranged: Set<unknown> = new Set(objects)
+    const bonds: Set<Bond> = new Set()
+    for (const object of objects) {
+        for (const bond of object.connections) {
+            const ends = bond.connectedObjects
+            if (ends.length >= 2 && arranged.has(ends[0]) && arranged.has(ends[ends.length - 1])) {
+                bonds.add(bond)
+            }
+        }
+    }
+    return [...bonds]
+}
+
+//==============================================================================

@@ -115,6 +115,11 @@ export class SvgConnection extends CellDLSVGElement {
         return this.#pathElements
     }
 
+    /** Whether any of the connection's paths has points between its ends */
+    get hasControlPoints(): boolean {
+        return this.#pathElements.some(pathElement => pathElement.hasControlPoints)
+    }
+
     activate(active = true) {
         super.activate(active)
         this.#pathElements.forEach((element) => { element.activate(active) })
@@ -209,6 +214,19 @@ export class SvgConnection extends CellDLSVGElement {
     setPathElements(pathElements: PathElement[]) {
         this.#pathElements = pathElements
         this.redraw()
+    }
+
+    /**
+     * Removes the control points of the connection's straight-line paths.
+     *
+     * @returns Whether any path had control points to remove.
+     */
+    straighten(): boolean {
+        let straightened = false
+        for (const pathElement of this.#pathElements) {
+            straightened = pathElement.straighten() || straightened
+        }
+        return straightened
     }
 
     startMove(svgPoint: PointLike, options: ElementMoveOptions={}) {

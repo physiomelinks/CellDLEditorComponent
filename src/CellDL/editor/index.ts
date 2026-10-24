@@ -34,6 +34,7 @@ import type { CellDLDiagram } from '#editor/diagram'
 import { SelectionSet } from '#editor/diagram/selectionset'
 import { type MoveUndoState, undoRedo } from '#editor/diagram/undoredo'
 import type { Bounds } from '#editor/geometry'
+import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 import { round } from '#editor/utils'
 
 import { isMacOs } from '#root/utils/common'
@@ -46,7 +47,7 @@ import { paletteEntry, placeEntry } from '#root/plugins/bondgraph/palette'
 
 //==============================================================================
 
-import { type ArrangeBounds, type ArrangeOp, arrangeTargets, minimumForArrange } from './arrange'
+import { type ArrangeBounds, type ArrangeOp, arrangeTargets, bondsWithin, minimumForArrange } from './arrange'
 import { drawBondCounts } from './bondcounts'
 import { BondDrag } from './bonddrag'
 import { EditorFrame } from './editorframe'
@@ -1909,9 +1910,10 @@ export class CellDLEditor {
 
     /**
      * Aligns or distributes the selected components, as one undoable step.
-     * Their bonds follow them. Nothing snaps to the grid.
+     * Their bonds follow them, and those between two of them are straightened.
+     * Nothing snaps to the grid.
      *
-     * @returns Whether anything moved.
+     * @returns Whether anything moved or was straightened.
      */
     arrangeSelection(op: ArrangeOp): boolean {
         // Not while dragging, nor while a bond is being drawn, whose path would lose its ends
@@ -1919,6 +1921,9 @@ export class CellDLEditor {
             return false
         }
         const objects = this.#arrangeableObjects()
+        if (objects.length < minimumForArrange(op)) {
+            return false
+        }
         const bounds: ArrangeBounds[] = objects.map(object => {
             const b = object.celldlSvgElement!.svgBounds()
             return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }
@@ -1926,7 +1931,9 @@ export class CellDLEditor {
         const deltas = arrangeTargets(bounds, op)
         const moving = objects.map((object, i) => ({ object, delta: deltas[i]! }))
                               .filter(({ delta }) => Math.abs(delta.dx) > 1e-6 || Math.abs(delta.dy) > 1e-6)
-        if (moving.length === 0) {
+        const straightening = bondsWithin(objects)
+                                .filter(connection => (<SvgConnection|null>connection.celldlSvgElement)?.hasControlPoints)
+        if (moving.length === 0 && straightening.length === 0) {
             return false
         }
         const moveOptions = { noAlign: true }
@@ -1941,10 +1948,21 @@ export class CellDLEditor {
             object.finaliseMove()
             undoState.endMove(target)
         }
-        undoRedo.endGroup()
-        this.setDirty()
-        notifyChanges()
-        return true
+        // Once every end is where it goes
+        if (straightening.length) {
+            const pathsUndoState = undoRedo.setPathsUndoState(straightening)
+            for (const connection of straightening) {
+                (<SvgConnection>connection.celldlSvgElement).straighten()
+                this.#celldlDiagram.objectMoved(connection)
+            }
+            undoRedo.endPathsEdit(pathsUndoState)
+        }
+        const changed = undoRedo.endGroup()
+        if (changed) {
+            this.setDirty()
+            notifyChanges()
+        }
+        return changed
     }
 
     /* WIP

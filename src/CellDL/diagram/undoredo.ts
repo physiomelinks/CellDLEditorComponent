@@ -42,7 +42,8 @@ enum UndoAction {
     INSERT = 2,
     MOVE = 3,
     PROPERTIES = 4,
-    GROUP = 5
+    GROUP = 5,
+    PATHS = 6
 }
 
 type UndoObject = CellDLObject | SelectionSet
@@ -135,6 +136,15 @@ function setConnectionPathArray(connection: CellDLConnection, connectionPathArra
             pathElement.redraw()
         })
     }
+}
+
+function connectionPathArrays(connections: Iterable<CellDLConnection>): ConnectionPathArrayMap {
+    const pathArrays: ConnectionPathArrayMap = new Map()
+    for (const connection of connections) {
+        const pathElements = (connection.celldlSvgElement as SvgConnection)?.pathElements
+        pathArrays.set(connection.id, pathElements.map(pathElement => pathElement.pathArray))
+    }
+    return pathArrays
 }
 
 /** Whether objects are at the same positions in both maps */
@@ -244,13 +254,7 @@ export class MoveUndoState extends UndoState {
     }
 
     #connectionPathArrays(): ConnectionPathArrayMap {
-        const connectionPathArrays: ConnectionPathArrayMap = new Map()
-        for (const connection of this.#movedConnections()) {
-            const pathElements = (connection.celldlSvgElement as SvgConnection)?.pathElements
-            const pathArrays = pathElements.map(pathElement => pathElement.pathArray)
-            connectionPathArrays.set(connection.id, pathArrays)
-        }
-        return connectionPathArrays
+        return connectionPathArrays(this.#movedConnections())
     }
 
     /**
@@ -304,6 +308,38 @@ export class MoveUndoState extends UndoState {
 
     #restoreConnectionPaths(pathArrays: ConnectionPathArrayMap) {
         for (const connection of this.#movedConnections()) {
+            setConnectionPathArray(connection, pathArrays)
+        }
+    }
+}
+
+//==============================================================================
+
+/**
+ * Undoes and redoes a change to connections' paths that moves nothing, such as
+ * straightening bonds once their ends are aligned.
+ */
+export class PathsUndoState extends UndoState {
+    #connections: CellDLConnection[]
+    #nextPathArrays: ConnectionPathArrayMap = new Map()
+    #prevPathArrays: ConnectionPathArrayMap
+
+    constructor(connections: CellDLConnection[]) {
+        // biome-ignore lint/style/noNonNullAssertion: there is at least one connection
+        super(UndoAction.PATHS, connections[0]!)
+        this.#connections = connections
+        this.#prevPathArrays = connectionPathArrays(connections)
+    }
+
+    /** Notes the connections' paths once changed, returning whether any changed. */
+    endEdit(): boolean {
+        this.#nextPathArrays = connectionPathArrays(this.#connections)
+        return !samePathArrays(this.#prevPathArrays, this.#nextPathArrays)
+    }
+
+    restore(direction: Direction) {
+        const pathArrays = (direction === 'backwards') ? this.#prevPathArrays : this.#nextPathArrays
+        for (const connection of this.#connections) {
             setConnectionPathArray(connection, pathArrays)
         }
     }
@@ -573,6 +609,32 @@ class UndoRedo {
     }
 
     /**
+     * Starts an undoable change to connections' paths; pass it to `endPathsEdit()`
+     * once they are changed. As with a properties edit, nothing is put on the undo
+     * stack until the paths are known to have changed.
+     */
+    setPathsUndoState(connections: CellDLConnection[]): PathsUndoState {
+        return new PathsUndoState(connections)
+    }
+
+    /**
+     * Ends a change to connections' paths, keeping it to undo only if it changed them.
+     *
+     * @returns Whether the change changed any path.
+     */
+    endPathsEdit(undoState: PathsUndoState): boolean {
+        const changed = undoState.endEdit()
+        if (changed) {
+            if (this.#groupDepth > 0) {
+                this.#group.push(undoState)
+            } else {
+                this.#pushUndoStack(undoState, false)
+            }
+        }
+        return changed
+    }
+
+    /**
      * Starts an undoable move; pass it to `endMove()` once the move ends. Outside a
      * group, nothing is put on the undo stack (and the redo stack is kept) until the
      * move is known to have moved something, so a click that selects doesn't clear redo.
@@ -681,6 +743,8 @@ class UndoRedo {
             (undoState as MoveUndoState).reposition(direction)
         } else if (undoState.action === UndoAction.PROPERTIES) {
             return (undoState as PropertiesUndoState).restore(direction)
+        } else if (undoState.action === UndoAction.PATHS) {
+            (undoState as PathsUndoState).restore(direction)
         } else if (undoState.action === UndoAction.GROUP) {
             const states = (undoState as GroupUndoState).states
             const ordered = backwards ? [...states].reverse() : states
