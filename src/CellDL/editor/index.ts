@@ -73,11 +73,15 @@ import {
     MEMBRANE_GAP,
     MEMBRANE_STROKE_WIDTH
 } from '#root/utils/styling'
-document.documentElement.style.setProperty('--editor-compartment-fill', COMPARTMENT_BACKGROUND)
-document.documentElement.style.setProperty('--editor-membrane-colour', MEMBRANE_COLOUR)
-document.documentElement.style.setProperty('--editor-membrane-gap', String(MEMBRANE_GAP))
-document.documentElement.style.setProperty('--editor-membrane-radius', String(MEMBRANE_CORNER_RADIUS))
-document.documentElement.style.setProperty('--editor-membrane-width', String(MEMBRANE_STROKE_WIDTH))
+// Only in a page: importing the package elsewhere (Node, a worker) must not touch a document
+if (typeof document !== 'undefined') {
+    const style = document.documentElement.style
+    style.setProperty('--editor-compartment-fill', COMPARTMENT_BACKGROUND)
+    style.setProperty('--editor-membrane-colour', MEMBRANE_COLOUR)
+    style.setProperty('--editor-membrane-gap', String(MEMBRANE_GAP))
+    style.setProperty('--editor-membrane-radius', String(MEMBRANE_CORNER_RADIUS))
+    style.setProperty('--editor-membrane-width', String(MEMBRANE_STROKE_WIDTH))
+}
 
 //==============================================================================
 
