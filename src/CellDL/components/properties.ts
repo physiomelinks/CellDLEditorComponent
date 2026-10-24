@@ -98,7 +98,7 @@ const GENERIC_GROUPS: Map<PANEL_ID, { groupId: string, template: () => PropertyG
     [PANEL_ID.METADATA_PANEL, { groupId: OBJECT_METADATA_GROUP, template: objectMetadataTemplate,
                                 applies: () => true }],
     [PANEL_ID.PROPERTIES_PANEL, { groupId: COMPARTMENT_GROUP, template: compartmentPropertiesTemplate,
-                                  applies: (celldlObject) => celldlObject.isCompartment }]
+                                  applies: (celldlObject: CellDLObject) => celldlObject.isCompartment }]
 ])
 
 //==============================================================================
