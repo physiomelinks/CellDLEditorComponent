@@ -7,7 +7,10 @@
                 :min="minGap"
                 :max="maxGap"
                 :step="gapStep"
-                @change="emitChange"
+                @change="slide"
+                @slideend="slideCommit"
+                @click="slideCommit"
+                @keyup="slideCommit"
             )
             label Membrane gap (px)
         Divider
@@ -46,8 +49,25 @@ const minGap = vue.ref<number>(0)
 const maxGap = vue.ref<number>(8)
 const gapStep = vue.ref<number>(0.5)
 
-function emitChange() {
-    emit('change', String(gap.value))
+// The slider's changes are `live` while it is dragged or stepped; a drag's end,
+// a click or a key's release commits them, but only a slide's: focus stays on
+// the slider, so the release of e.g. the undo key mustn't record a step.
+let sliding = false
+
+function slide() {
+    sliding = true
+    emitChange(true)
+}
+
+function slideCommit() {
+    if (sliding) {
+        sliding = false
+        emitChange()
+    }
+}
+
+function emitChange(live: boolean = false) {
+    emit('change', String(gap.value), live)
 }
 
 //==============================================================================

@@ -31,6 +31,7 @@ import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 
 import { componentLibraryPlugin } from '#root/plugins'
 import { Point, PointMath, type PointLike } from '#root/utils/points'
+import type { Styling } from '#root/utils/styling'
 
 import { type MoveGroup, SelectionSet } from './selectionset'
 import { StoredObject } from './storedobject'
@@ -43,7 +44,8 @@ enum UndoAction {
     MOVE = 3,
     PROPERTIES = 4,
     GROUP = 5,
-    PATHS = 6
+    PATHS = 6,
+    STYLE = 7
 }
 
 type UndoObject = CellDLObject | SelectionSet
@@ -457,6 +459,166 @@ export class PropertiesUndoState extends UndoState {
 
 //==============================================================================
 
+/**
+ * An object's styling, with what its styling draws: an element's image, and a
+ * compartment's boundary rectangles, whose corners also follow its gap.
+ */
+export type StyleSnapshot = {
+    styling: Styling
+    image?: string
+    rects: Record<string, string>[]
+    /** The attributes styling is saved in, `null` when absent */
+    saved: Record<string, string|null>
+    /** The paths of an element's bonds, whose ends follow its image's size */
+    paths: ConnectionPathArrayMap
+}
+
+/** Where a compartment saves styling that its boundaries don't show, and a connection its stroke */
+const STYLE_ATTRIBUTES = [
+    'data-fill-style', 'data-stroke-gap', 'data-text-style',
+    'stroke', 'stroke-width', 'stroke-dasharray'
+]
+
+function objectConnections(object: CellDLObject): CellDLConnection[] {
+    return object.isConnection ? [] : [...((<CellDLConnectedObject>object).connections ?? [])]
+}
+
+/** Sets an element's attributes, removing those that are `null` */
+function setAttributes(element: Element, attributes: Record<string, string|null>) {
+    for (const [name, value] of Object.entries(attributes)) {
+        if (value === null) {
+            element.removeAttribute(name)
+        } else if (element.getAttribute(name) !== value) {
+            element.setAttribute(name, value)
+        }
+    }
+}
+
+function boundaryRects(object: CellDLObject): SVGRectElement[] {
+    return Array.from(object.svgElement?.querySelectorAll<SVGRectElement>(':scope > rect') ?? [])
+}
+
+/** An object's styling as it is now, for `recordStyleEdit()` */
+export function styleSnapshot(object: CellDLObject): StyleSnapshot {
+    const image = object.svgElement?.querySelector(':scope > image')?.getAttribute('href') ?? undefined
+    const rects = boundaryRects(object).map(rect => Object.fromEntries(
+        Array.from(rect.attributes).map(attribute => [attribute.name, attribute.value])
+    ))
+    const saved = Object.fromEntries(STYLE_ATTRIBUTES.map(name => [name, object.svgElement?.getAttribute(name) ?? null]))
+    const paths: ConnectionPathArrayMap = new Map()
+    for (const connection of objectConnections(object)) {
+        const pathElements = (connection.celldlSvgElement as SvgConnection)?.pathElements ?? []
+        paths.set(connection.id, structuredClone(pathElements.map(pathElement => pathElement.pathArray)))
+    }
+    return {
+        styling: componentLibraryPlugin.componentStyling(object),
+        image,
+        rects,
+        saved,
+        paths
+    }
+}
+
+/**
+ * Undoes and redoes a change to an object's styling, as the Style panel makes
+ * it, by restoring just the style fields the change altered, and an element's
+ * image as it was drawn, so the saved diagram is as it was.
+ *
+ * A change still being made, such as a colour picker being dragged, stays
+ * `open` and takes in later changes to the same fields until it's committed.
+ */
+export class StyleUndoState extends UndoState {
+    #after: StyleSnapshot
+    #before: StyleSnapshot
+    #fields: Set<string>
+    #object: CellDLObject
+    #open: boolean
+
+    constructor(object: CellDLObject, fields: string[], before: StyleSnapshot, after: StyleSnapshot, open: boolean) {
+        super(UndoAction.STYLE, object)
+        this.#object = object
+        this.#fields = new Set(fields)
+        this.#before = before
+        this.#after = after
+        this.#open = open
+    }
+
+    get object() {
+        return this.#object
+    }
+
+    get open() {
+        return this.#open
+    }
+
+    /** Whether the styling now differs from before the change */
+    get changed(): boolean {
+        return this.#changedFields().length > 0
+    }
+
+    /** Whether a further change to `object`'s `fields` continues this one */
+    continues(object: CellDLObject, fields: string[]): boolean {
+        return this.#open && object === this.#object
+            && fields.length === this.#fields.size && fields.every(field => this.#fields.has(field))
+    }
+
+    /** Takes in a further change, closing the step if the change is committed */
+    extend(after: StyleSnapshot, open: boolean) {
+        this.#after = after
+        this.#open = open
+    }
+
+    close() {
+        this.#open = false
+    }
+
+    #changedFields(): (keyof Styling)[] {
+        const before = this.#before.styling
+        const after = this.#after.styling
+        const fields = new Set([...Object.keys(before), ...Object.keys(after)]) as Set<keyof Styling>
+        return [...fields].filter(field => before[field] !== after[field])
+    }
+
+    async restore(direction: Direction) {
+        this.#open = false
+        const to = (direction === 'backwards') ? this.#before : this.#after
+        const styling: Styling = {}
+        for (const field of this.#changedFields()) {
+            if (to.styling[field] !== undefined) {
+                styling[field] = to.styling[field]
+            }
+        }
+        await componentLibraryPlugin.updatedComponentStyling(this.#object, styling)
+        // Redrawn from its styling, what's drawn may not be byte for byte as it was saved
+        const svgElement = this.#object.celldlSvgElement
+        if (to.image !== undefined && svgElement && styleSnapshot(this.#object).image !== to.image) {
+            await svgElement.updateImageElement(to.image)
+            svgElement.redraw()
+        }
+        const rects = boundaryRects(this.#object)
+        if (rects.length === to.rects.length) {
+            rects.forEach((rect, index) => {
+                const attributes: Record<string, string|null> = { ...to.rects[index] }
+                for (const name of rect.getAttributeNames()) {
+                    if (!Object.hasOwn(attributes, name)) {
+                        attributes[name] = null
+                    }
+                }
+                setAttributes(rect, attributes)
+            })
+        }
+        if (this.#object.svgElement) {
+            setAttributes(this.#object.svgElement, to.saved)
+        }
+        for (const connection of objectConnections(this.#object)) {
+            setConnectionPathArray(connection, to.paths)
+        }
+        CellDLEditor.instance?.refreshPropertiesPanel([this.#object])
+    }
+}
+
+//==============================================================================
+
 /** Whether there is anything to undo or redo, for the toolbar's buttons */
 export const undoRedoState = vue.reactive({
     canUndo: false,
@@ -635,6 +797,53 @@ class UndoRedo {
     }
 
     /**
+     * Records a change to an object's styling as an undo step, if it changed
+     * anything. A change that continues the open step on top of the undo stack
+     * (the same object and fields, e.g. while a colour picker is dragged) is
+     * taken into it, so a drag is one step; `open: false` commits the step.
+     *
+     * @param fields The style fields the change set.
+     * @param before The object's styling before the change.
+     * @param after Its styling after the change.
+     * @param open Whether the change is still being made.
+     * @returns Whether an undo step now holds the change.
+     */
+    recordStyleEdit(object: CellDLObject, fields: string[], before: StyleSnapshot, after: StyleSnapshot, open: boolean): boolean {
+        const top = this.#undoStack.at(-1)
+        if (top instanceof StyleUndoState && top.continues(object, fields)) {
+            top.extend(after, open)
+            if (!open && !top.changed) {
+                // Dragged back to where it started
+                this.#popUndoStack()
+                return false
+            }
+            return true
+        }
+        if (top instanceof StyleUndoState) {
+            top.close()
+        }
+        const undoState = new StyleUndoState(object, fields, before, after, open)
+        if (!undoState.changed) {
+            return false
+        }
+        if (this.#groupDepth > 0) {
+            undoState.close()
+            this.#group.push(undoState)
+        } else {
+            this.#pushUndoStack(undoState, false)
+        }
+        return true
+    }
+
+    /** Commits an open style change, so the next change is a step of its own */
+    closeStyleEdit() {
+        const top = this.#undoStack.at(-1)
+        if (top instanceof StyleUndoState) {
+            top.close()
+        }
+    }
+
+    /**
      * Starts an undoable move; pass it to `endMove()` once the move ends. Outside a
      * group, nothing is put on the undo stack (and the redo stack is kept) until the
      * move is known to have moved something, so a click that selects doesn't clear redo.
@@ -745,6 +954,8 @@ class UndoRedo {
             return (undoState as PropertiesUndoState).restore(direction)
         } else if (undoState.action === UndoAction.PATHS) {
             (undoState as PathsUndoState).restore(direction)
+        } else if (undoState.action === UndoAction.STYLE) {
+            return (undoState as StyleUndoState).restore(direction)
         } else if (undoState.action === UndoAction.GROUP) {
             const states = (undoState as GroupUndoState).states
             const ordered = backwards ? [...states].reverse() : states

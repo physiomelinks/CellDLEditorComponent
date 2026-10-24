@@ -291,8 +291,9 @@ export class Compartment {
             } else if (fillString.startsWith('url(') && fillString.endsWith(')')) {
                 fillString = 'yellow'
             }
-            this.#styling.fillStyle = fillString
         }
+        // As saved in `data-fill-style`, so the Style panel and undo know a styled fill
+        this.#styling.fillStyle = fillString
         let cornerRadius = 0
         if (innerRects.length) {
             this.#styling.pathStyle = getStrokeString(this.#boundary0 as SVGRectElement, {

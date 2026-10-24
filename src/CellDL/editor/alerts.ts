@@ -27,7 +27,7 @@ export namespace alert {
 
     export function clear() {
         if (holding === 0) {
-            CellDLEditor.instance?.showMessage('')
+            CellDLEditor.instance?.showAlert('', '')
         }
     }
 
@@ -43,11 +43,11 @@ export namespace alert {
 
     export function error(msg: string) {
         console.error(msg)
-        CellDLEditor.instance?.showMessage(msg, 'error')
+        CellDLEditor.instance?.showAlert(msg, 'error')
     }
 
     export function info(msg: string) {
-        CellDLEditor.instance?.showMessage(msg, 'info')
+        CellDLEditor.instance?.showAlert(msg, 'info')
     }
 
     export function tooltip(msg: string) {
@@ -56,7 +56,7 @@ export namespace alert {
 
     export function warn(msg: string) {
         console.warn(msg)
-        CellDLEditor.instance?.showMessage(msg, 'warn')
+        CellDLEditor.instance?.showAlert(msg, 'warn')
     }
 
     export function elementError(msg: string, svgElement?: SVGGraphicsElement) {

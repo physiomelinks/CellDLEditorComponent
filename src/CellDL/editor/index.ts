@@ -32,7 +32,7 @@ import type { TemplateEventDetails } from '#editor/components'
 import { objectMetadataTemplate, ObjectPropertiesPanel } from '#editor/components/properties'
 import type { CellDLDiagram } from '#editor/diagram'
 import { SelectionSet } from '#editor/diagram/selectionset'
-import { type MoveUndoState, undoRedo } from '#editor/diagram/undoredo'
+import { type MoveUndoState, styleSnapshot, undoRedo } from '#editor/diagram/undoredo'
 import type { Bounds } from '#editor/geometry'
 import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 import { round } from '#editor/utils'
@@ -41,6 +41,7 @@ import { isMacOs } from '#root/utils/common'
 import { type Annotations, PANEL_ID, type SvgViewerOptions, type ViewerEvent, type ViewInfo } from '#root/utils/editor-types'
 import { type Point, type PointLike, PointMath } from '#root/utils/points'
 import { imagesLoaded } from '#root/utils/svgUtils'
+import type { Styling } from '#root/utils/styling'
 import type { StringProperties } from '#root/utils/types'
 import { componentLibraryPlugin } from '#root/plugins'
 import { paletteEntry, placeEntry } from '#root/plugins/bondgraph/palette'
@@ -207,6 +208,17 @@ const SVG_PANEL_ID = 'svg-panel'
 type PointerEventHandler = (eventType: string, svgElement: SVGGraphicsElement, svgCoords: PointLike) => boolean
 export type ViewerEventHandler = (event: ViewerEvent) => void
 
+/** How serious an alert is; `''` clears the alert shown */
+export type EditorMessageLevel = 'error' | 'warn' | 'info' | ''
+
+/** An alert for the host to show, e.g. when the editor's status bar is hidden; `text` is `''` to clear it */
+export type EditorMessage = {
+    text: string
+    level: EditorMessageLevel
+}
+
+export type EditorMessageHandler = (message: EditorMessage) => void
+
 
 export class CellDLEditor {
     static instance: CellDLEditor | null = null
@@ -300,6 +312,8 @@ export class CellDLEditor {
     #annotations: Annotations = {}
     #tooltipField: string | undefined = undefined
     #viewerEventHandler: ViewerEventHandler | null = null
+    #messageHandler: EditorMessageHandler | null = null
+    #alertShown: boolean = false
     #activeEventObject: CellDLObject | null = null
     #selectedEventObjects: Map<string, CellDLObject> = new Map()
     #selectionClicking: boolean = false
@@ -495,6 +509,24 @@ export class CellDLEditor {
 
     setViewerEventHandler(handler: ViewerEventHandler | null) {
         this.#viewerEventHandler = handler
+    }
+
+    /** Hears the editor's alerts (errors, warnings and notes), as the status bar shows them. */
+    setMessageHandler(handler: EditorMessageHandler | null) {
+        this.#messageHandler = handler
+    }
+
+    /**
+     * Shows an alert in the status bar and reports it to the host's message
+     * handler. `''` clears it, which is only reported if an alert was shown.
+     */
+    showAlert(text: string, level: EditorMessageLevel) {
+        this.showMessage(text, level)
+        if (text === '' && !this.#alertShown) {
+            return
+        }
+        this.#alertShown = (text !== '')
+        this.#messageHandler?.({ text, level: text === '' ? '' : level })
     }
 
     #emitViewerEvent(type: ViewerEvent['type'], object: CellDLObject | null = null) {
@@ -853,10 +885,37 @@ export class CellDLEditor {
         const detail = (<CustomEvent>event).detail
         if (detail.source === this.#openPanel?.panelId) {
             if (this.#openPanel && this.selectionSet.size === 1) {
-                await this.#openPanel.updateObjectStyling(this.selectionSet.objects[0]!, detail.styling)
-                notifyChanges()
+                await this.editStyling(this.selectionSet.objects[0]!, detail.styling, !!detail.live)
             }
         }
+    }
+
+    /**
+     * Changes an object's styling as an undoable step, as the Style panel does,
+     * reporting the change.
+     *
+     * @param styling The style fields to set.
+     * @param live Whether the change is still being made, e.g. while a colour
+     *             picker or slider is dragged: such changes to the same fields
+     *             are one step, until one that isn't live commits it.
+     * @returns Whether the styling changed.
+     */
+    editStyling(object: CellDLObject, styling: Styling, live: boolean=false): Promise<boolean> {
+        const run = async () => {
+            const fields = Object.keys(styling)
+            const before = styleSnapshot(object)
+            await componentLibraryPlugin.updatedComponentStyling(object, styling)
+            const after = styleSnapshot(object)
+            const changed = undoRedo.recordStyleEdit(object, fields, before, after, live)
+            if (changed) {
+                notifyChanges()
+            }
+            return changed
+        }
+        // In turn with other edits, so each change starts from the last one's styling
+        const result = this.#propertiesEditing.then(run, run)
+        this.#propertiesEditing = result.then(() => undefined, () => undefined)
+        return result
     }
 
     showMessage(msg: string, style: string = '') {
@@ -1151,7 +1210,7 @@ export class CellDLEditor {
             }
             return objects
         } catch (error) {
-            this.showMessage(`Cannot add the element: ${(error as Error).message}`, 'error')
+            this.showAlert(`Cannot add the element: ${(error as Error).message}`, 'error')
             return []
         }
     }

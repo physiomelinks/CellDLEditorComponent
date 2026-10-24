@@ -57,6 +57,8 @@ export type {
     ViewStateChange
 } from '#root/components/WrappedEditor.vue'
 
+export type { EditorMessage, EditorMessageLevel } from '#editor/editor'
+
 export type { ValuesMode } from '#root/plugins/bondgraph/values'
 
 export type { PaletteDomain } from '#root/plugins/bondgraph/palette'
