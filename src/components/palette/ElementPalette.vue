@@ -21,6 +21,28 @@
             )
                 img.palette-glyph(:src="entry.imageData" alt="" draggable="false")
                 span.palette-label {{ entry.label }}
+        //- Drawn boxes, which aren't any domain's, so shown whatever the filter
+        .palette-group.spatial(role="group" aria-label="Spatial")
+            span.palette-group-label Spatial
+            .palette-tiles
+                .palette-tile(
+                    v-for="entry in SPATIAL_ENTRIES"
+                    :key="entry.id"
+                    :data-entry-id="entry.id"
+                    :class="{ armed: entry.id === armedId }"
+                    role="button"
+                    tabindex="0"
+                    :aria-label="entry.name"
+                    :aria-pressed="entry.id === armedId"
+                    v-tippy="{ content: entry.name, placement: layout === 'left' ? 'right' : 'bottom' }"
+                    draggable="true"
+                    @dragstart="spatialDragStart($event, entry)"
+                    @click="toggleSpatial(entry)"
+                    @keydown.enter.prevent="toggleSpatial(entry)"
+                    @keydown.space.prevent="toggleSpatial(entry)"
+                )
+                    img.palette-glyph(:src="entry.imageData" alt="" draggable="false")
+                    span.palette-label {{ entry.label }}
 </template>
 
 <script setup lang="ts">
@@ -31,7 +53,9 @@ import * as vue from 'vue'
 
 import { type PaletteEntry, paletteDomains, paletteEntries } from '#root/plugins/bondgraph/palette'
 
-import { armEntry, disarm, entryEventDetails, shownDomain } from './paletteState'
+import { type SpatialEntry, spatialEntries } from '#root/plugins/drawing/spatial'
+
+import { armEntry, armSpatial, disarm, entryEventDetails, shownDomain, spatialEventDetails } from './paletteState'
 
 //==============================================================================
 
@@ -42,6 +66,8 @@ defineProps<{
 const domainOptions = paletteDomains()
 
 const entries = vue.computed(() => paletteEntries(shownDomain.value))
+
+const SPATIAL_ENTRIES = spatialEntries()
 
 //==============================================================================
 
@@ -56,9 +82,21 @@ function toggleArmed(entry: PaletteEntry) {
     }
 }
 
-// The editor has left adding (Escape, another tool), or another tool's template is armed
+function toggleSpatial(entry: SpatialEntry) {
+    if (armedId.value === entry.id) {
+        disarm()
+    } else {
+        armSpatial(entry)
+        armedId.value = entry.id
+    }
+}
+
+// The editor has left adding (Escape, another tool), or another tool's template is armed. Drawing boxes keeps a
+// spatial tile armed while it's that tile's kind they draw.
 function editorModeEvent(event: Event) {
-    if ((<CustomEvent>event).detail.mode !== 'ADD-COMPONENT') {
+    const { mode, spatialKind } = (<CustomEvent>event).detail
+    const armedKind = SPATIAL_ENTRIES.find(entry => entry.id === armedId.value)?.kind
+    if (mode === 'DRAW-COMPARTMENT' ? spatialKind !== armedKind : mode !== 'ADD-COMPONENT') {
         armedId.value = null
     }
 }
@@ -82,18 +120,26 @@ vue.onUnmounted(() => {
 //==============================================================================
 
 function dragStart(event: DragEvent, entry: PaletteEntry) {
+    startDrag(event, entry.id, entryEventDetails(entry))
+}
+
+function spatialDragStart(event: DragEvent, entry: SpatialEntry) {
+    startDrag(event, entry.id, spatialEventDetails(entry))
+}
+
+function startDrag(event: DragEvent, entryId: string, details: object) {
     if (!event.dataTransfer) {
         return
     }
     event.dataTransfer.effectAllowed = 'copy'
-    event.dataTransfer.setData('text/plain', JSON.stringify(entryEventDetails(entry)))
+    event.dataTransfer.setData('text/plain', JSON.stringify(details))
     const glyph = (event.currentTarget as HTMLElement).querySelector('img')
     if (glyph) {
         event.dataTransfer.setDragImage(glyph, glyph.width / 2, glyph.height / 2)
     }
     // Lets the canvas accept the drop
     document.dispatchEvent(new CustomEvent('component-drag', {
-        detail: { type: 'dragstart', source: 'element-palette', value: entry.id }
+        detail: { type: 'dragstart', source: 'element-palette', value: entryId }
     }))
 }
 </script>
@@ -141,6 +187,46 @@ function dragStart(event: DragEvent, entry: PaletteEntry) {
 .palette-tiles {
     display: flex;
     gap: 4px;
+}
+/* The domain's tiles scroll, so the spatial ones stay in view however many there are */
+.element-palette.top > .palette-tiles {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+}
+.element-palette.left > .palette-tiles {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+.palette-group {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+}
+.element-palette.top .palette-group {
+    flex-direction: row;
+    padding-left: 6px;
+    border-left: 1px solid var(--editor-border-color);
+}
+.element-palette.left .palette-group {
+    flex-direction: column;
+    padding-top: 6px;
+    border-top: 1px solid var(--editor-border-color);
+}
+.element-palette.left .palette-group .palette-tiles {
+    flex-direction: column;
+}
+.palette-group-label {
+    color: var(--p-text-muted-color);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.element-palette.top .palette-group-label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
 }
 .element-palette.top .palette-tiles {
     flex-direction: row;

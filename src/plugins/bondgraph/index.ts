@@ -354,6 +354,9 @@ function nameFromType(type: string): string {
 
 const TRANSFORM_NODE_PROMPT = 'Ratio'
 
+/** The base classes of the elements that a compartment gives a location (`isLocatedElement()`) */
+const LOCATED_CLASSES = ['QuantityStore', 'FlowStore', 'PotentialSource', 'FlowSource']
+
 //==============================================================================
 //==============================================================================
 
@@ -376,6 +379,7 @@ export class BondgraphPlugin implements PluginInterface {
     #physicalDomains: Map<string, PhysicalDomain> = new Map()
     #rdfStore: $rdf.RdfStore = new $rdf.RdfStore()
     #transformNodeType = BGF.uri('TransformNode').value
+    #locatedTypes: Set<string>|undefined
 
     constructor() {
         for (const group of elementPropertiesTemplate()) {
@@ -717,6 +721,34 @@ export class BondgraphPlugin implements PluginInterface {
             })
         }
         return [...elements.values()]
+    }
+
+    /**
+     * Whether an element takes its location from the compartment it is in: a store or a source (a chemostat), but
+     * not a step (a reaction or transporter, which may join locations), a transformer or a junction.
+     */
+    isLocatedElement(celldlObject: CellDLObject): boolean {
+        const description = this.describeElement(celldlObject)
+        if (!description) {
+            return false
+        }
+        // The framework's classes don't change, so are found once
+        const located = this.#locatedTypes
+                     ?? new Set(LOCATED_CLASSES.flatMap(base => [...this.#subclassesOf(BGF.uri(base).value)]))
+        this.#locatedTypes = located
+        return [description.template, description.kind].some(type => !!type && located.has(type))
+    }
+
+    /** An element's own location (its `bgf:hasLocation`), if it has one. */
+    elementLocation(celldlObject: CellDLObject): string|undefined {
+        let location: string|undefined
+        celldlObject.rdfStore.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT ?location WHERE { ${celldlObject.uri.toString()} bgf:hasLocation ?location }`
+        ).forEach((r: Map<string, $rdf.Term>) => {
+            location = r.get('location')?.value
+        })
+        return location
     }
 
     /** The element type of a component (its template's, else its base component's). */

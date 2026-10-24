@@ -541,54 +541,31 @@ export class CellDLCompartment extends CellDLConnectedObject {
     static readonly celldlStyleClass = CELLDL_STYLE_CLASS.Compartment
     static celldlTypeName = 'Compartment'
 
-
-    constructor(
-        uri: NamedNode,
-        objectTemplate: ObjectTemplate,
-        celldlDiagram: CellDLDiagram,
-        updateStore: boolean=true
-    ) {
-        super(uri, objectTemplate, celldlDiagram, updateStore)
-    }
-    #associatedComponents: CellDLMoveableObject[] = []
     #compartmentElement: CompartmentElement|undefined
 
     get isAlignable() {
         return false
     }
 
+    /** A compartment is drawn round elements, not bonded to them */
+    get isConnectable() {
+        return false
+    }
+
+    get compartmentElement() {
+        return this.#compartmentElement
+    }
+
+    // What is inside a compartment moves with it as a group (../editor/compartments.ts), so that the move is undone
+    // as one step and the bonds between them move too
     assignSvgElement(svgElement: SVGGraphicsElement, align: boolean) {
         this.#compartmentElement = new CompartmentElement(this, svgElement, this.isAlignable, align)
-        if (this.celldlSvgElement) {
-            for (const object of this.celldlDiagram.objectsContainedIn(this.celldlSvgElement.bounds)) {
-                const celldlObject = object.object
-                if (celldlObject.isMoveable) {
-                    this.#associatedComponents.push(celldlObject as CellDLMoveableObject)
-                }
-            }
-        }
     }
 
-    startMove(svgPoint: PointLike, options: ElementMoveOptions={}) {
-        super.startMove(svgPoint, options)
-        for (const component of this.#associatedComponents) {
-            component.startMove(svgPoint, { noAlign: true, snapGrid: false })
-        }
-    }
-
-    move(svgPoint: PointLike, options: ElementMoveOptions={}) {
-        super.move(svgPoint, options)
-        // A move of the compartment moves associated components.
-        for (const component of this.#associatedComponents) {
-            component.move(svgPoint, { noAlign: true, snapGrid: false })
-        }
-    }
-
-    endMove() {
-        super.endMove()
-        for (const component of this.#associatedComponents) {
-            component.endMove()
-        }
+    /** Its label is the location it gives what is inside it (../editor/locations.ts), and is drawn on it */
+    setLabel(label: string|undefined) {
+        super.setLabel(label)
+        this.#compartmentElement?.updateElement()
     }
 }
 

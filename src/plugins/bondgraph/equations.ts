@@ -48,6 +48,7 @@ export interface StepEquation {
     products: Participant[]
     charge?: { count: number, location?: string }   // positive charges moved into location per turnover
     sides?: Partial<Record<Side, string>>           // the step's side 1-junctions, when it has them
+    regions: string[]           // the locations of its species, sorted: one, or several for a step between them
 }
 
 export interface BondInfo {
@@ -198,7 +199,9 @@ export function stepEquation(id: string, isResistance: boolean, bonds: BondInfo[
     }
     const kind: StepKind = isResistance ? 'flow' : isTransport(substrates, products) ? 'transport' : 'reaction'
     const name = nodes.get(id)?.species ?? id
-    const equation: StepEquation = { id, name, kind, substrates, products, charge }
+    const regions = [...new Set([...substrates, ...products].map(p => p.location)
+                                    .filter((l): l is string => !!l))].sort()
+    const equation: StepEquation = { id, name, kind, substrates, products, charge, regions }
     if (sides.substrate || sides.product) equation.sides = sides
     return equation
 }

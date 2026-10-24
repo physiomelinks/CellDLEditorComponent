@@ -25,14 +25,14 @@ import { useTippy } from "vue-tippy"
 
 import '#root/assets/svgContent.css'
 
-import type { CellDLObject } from '#editor/celldlObjects'
+import type { CellDLCompartment, CellDLObject } from '#editor/celldlObjects'
 import { ConnectionStyle } from '#editor/connections'
 import { PathMaker, type PathNode } from '#editor/connections/pathmaker'
 import type { TemplateEventDetails } from '#editor/components'
-import { objectMetadataTemplate, ObjectPropertiesPanel } from '#editor/components/properties'
+import { compartmentPropertiesTemplate, objectMetadataTemplate, ObjectPropertiesPanel } from '#editor/components/properties'
 import type { CellDLDiagram } from '#editor/diagram'
 import { SelectionSet } from '#editor/diagram/selectionset'
-import { type MoveUndoState, styleSnapshot, undoRedo } from '#editor/diagram/undoredo'
+import { type MoveUndoState, styleSnapshot, type UndoState, undoRedo } from '#editor/diagram/undoredo'
 import type { Bounds } from '#editor/geometry'
 import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 import { round } from '#editor/utils'
@@ -44,14 +44,18 @@ import { imagesLoaded } from '#root/utils/svgUtils'
 import type { Styling } from '#root/utils/styling'
 import type { StringProperties } from '#root/utils/types'
 import { componentLibraryPlugin } from '#root/plugins'
+import { setElementField } from '#root/plugins/bondgraph/elements'
 import { paletteEntry, placeEntry } from '#root/plugins/bondgraph/palette'
+import { DRAWING_TOOLS, type SpatialKind, spatialEntry } from '#root/plugins/drawing/spatial'
 
 //==============================================================================
 
 import { type ArrangeBounds, type ArrangeOp, arrangeTargets, bondsWithin, minimumForArrange } from './arrange'
 import { drawBondCounts } from './bondcounts'
 import { BondDrag } from './bonddrag'
+import { CompartmentHandles, compartmentMoveGroup, defaultBounds, placeSpatial } from './compartments'
 import { EditorFrame } from './editorframe'
+import { CompartmentTracker } from './locations'
 import { DEFAULT_VIEW_STATE, editGuides, EDITOR_GRID_CLASS } from './editguides'
 import PanZoom, { ZOOM_STEP } from './panzoom'
 import { BoxMaker } from './boxmaker'
@@ -286,6 +290,10 @@ export class CellDLEditor {
     #boxMaker: BoxMaker | null = null
     #boxMaking: boolean = false
 
+    // What the Draw compartment mode draws, and the handles that resize a selected compartment
+    #spatialKind: SpatialKind = 'compartment'
+    #compartmentHandles: CompartmentHandles
+
     #pointerDownTime: number = 0
     // A click counts only when it started on the canvas, not when a closing popup's click lands there
     #pointerDownInContainer: boolean = false
@@ -307,9 +315,11 @@ export class CellDLEditor {
             ])
         ],
         [
-            PANEL_ID.PROPERTIES_PANEL, new ObjectPropertiesPanel(PANEL_ID.PROPERTIES_PANEL,
-                componentLibraryPlugin.getPanelTemplates(PANEL_ID.PROPERTIES_PANEL)
-            )
+            // after the plugins' groups, which they find by position
+            PANEL_ID.PROPERTIES_PANEL, new ObjectPropertiesPanel(PANEL_ID.PROPERTIES_PANEL, [
+                ...componentLibraryPlugin.getPanelTemplates(PANEL_ID.PROPERTIES_PANEL),
+                compartmentPropertiesTemplate()
+            ])
         ],
         [
             PANEL_ID.STYLE_PANEL, new ObjectPropertiesPanel(PANEL_ID.STYLE_PANEL,
@@ -333,6 +343,9 @@ export class CellDLEditor {
     // Events about this editor's diagram, for code that must not hear another editor's
     #events = new EventTarget()
 
+    // Which compartment each store and source is in, so a change of compartment gives it that location
+    #compartments = new CompartmentTracker()
+
     constructor() {
         CellDLEditor.instance = this
 
@@ -353,6 +366,20 @@ export class CellDLEditor {
             click: (event, object) => editor.#selectingClick(event, object.svgElement ?? event.target as SVGGraphicsElement, object)
         })
 
+        this.#compartmentHandles = new CompartmentHandles({
+            get editorFrame() { return editor.#editorFrame },
+            get selectedCompartment() {
+                const objects = editor.selectionSet.objects
+                // also while drawing them, so that one just drawn can be resized at once
+                const mode = editor.#editorMode
+                return ((mode === EDITOR_MODE.Selecting || mode === EDITOR_MODE.DrawCompartment)
+                        && objects.length === 1 && objects[0]!.isCompartment)
+                    ? objects[0] as CellDLCompartment : null
+            }
+        })
+        this.addPointerEventHandler('compartment-handles',
+            (type, target, svgPoint) => this.#compartmentHandles.pointerEvent(type, target, svgPoint))
+
         // Add a handler for events from toolbar buttons and popovers
         document.addEventListener('toolbar-event', this.#toolBarEvent.bind(this))
         document.addEventListener('component-selected', this.#componentTemplateSelectedEvent.bind(this))
@@ -363,6 +390,8 @@ export class CellDLEditor {
         // Redraw bond counts after a change, in this editor's diagram
         document.addEventListener('file-edited', () => {
             this.#scheduleBondCounts()
+            // A selected compartment's handles follow it as it moves, is resized or is undone
+            this.#compartmentHandles.refresh()
             // at once, so a reaction side's caption follows its junction as it is dragged
             if (this.#celldlDiagram !== null) {
                 drawSideLabels(this.#celldlDiagram)
@@ -375,6 +404,12 @@ export class CellDLEditor {
 
         // Handle click events on control points
         document.addEventListener('select-object', this.#objectClickEvent.bind(this))
+
+        // An edit that moves elements into another compartment gives them its location, as part of its undo step
+        undoRedo.listen({
+            stepAdded: (undoState) => this.#followCompartments(undoState),
+            stepRestored: () => this.#compartments.note(this.#celldlDiagram)
+        })
     }
 
     mount(svgContainer: HTMLElement) {
@@ -447,7 +482,9 @@ export class CellDLEditor {
                 svg: this.#domToSvgCoords(event)
             }
             // Elements are only added from empty canvas: a right click on an element is about that element
-            this.enableContextMenuItem(CONTEXT_MENU.ADD_ELEMENT, this.#celldlDiagram !== null && !clickedObject)
+            // and so is a compartment's inside, where elements are added to it
+            this.enableContextMenuItem(CONTEXT_MENU.ADD_ELEMENT,
+                this.#celldlDiagram !== null && (!clickedObject || clickedObject.isCompartment))
             document.dispatchEvent(new CustomEvent('open-context-menu', {
                 detail: {
                     state: this.#contextMenuActiveItems,
@@ -578,6 +615,7 @@ export class CellDLEditor {
         if (!this.#selectionClicking) {
             this.#emitUnselectEvents()
         }
+        this.#compartmentHandles.refresh()
         document.dispatchEvent(new CustomEvent(SELECTION_CHANGED_EVENT, {
             detail: { arrangeable: this.#arrangeableObjects().length }
         }))
@@ -637,6 +675,7 @@ export class CellDLEditor {
         this.#tooltips.reset()
         this.selectionSet.clear()
 
+        this.#compartments.note(celldlDiagram)
         this.#events.dispatchEvent(new CustomEvent('diagram-opened', { detail: { diagram: celldlDiagram } }))
         this.#scheduleBondCounts()
         drawSideLabels(celldlDiagram)
@@ -740,10 +779,15 @@ export class CellDLEditor {
         } else if (this.#editorMode === EDITOR_MODE.PathDrawing) {
             label = 'Drawing bonds'
         } else if (this.#editorMode === EDITOR_MODE.DrawCompartment) {
-            label = 'Drawing compartments'
+            label = this.#spatialKind === 'region' ? 'Drawing regions' : 'Drawing compartments'
         }
         document.dispatchEvent(new CustomEvent('editor-mode', {
-            detail: { mode: this.#editorMode, label }
+            detail: {
+                mode: this.#editorMode,
+                label,
+                // what Draw compartment draws, for the palette's armed tile
+                spatialKind: this.#editorMode === EDITOR_MODE.DrawCompartment ? this.#spatialKind : undefined
+            }
         }))
     }
 
@@ -805,8 +849,10 @@ export class CellDLEditor {
                 const values = detail.value
                 if (values.oldValue !== values.newValue) {
                     const object = this.selectionSet.objects[0]!
-                    if (panel.panelId === PANEL_ID.PROPERTIES_PANEL) {
-                        // Undoable, as the host's `element` command's edits are
+                    if (panel.panelId === PANEL_ID.PROPERTIES_PANEL
+                     || (panel.panelId === PANEL_ID.METADATA_PANEL && object.isCompartment)) {
+                        // Undoable, as the host's `element` command's edits are, and as a compartment's label is
+                        // the location of what's inside it
                         await this.editProperties([object], async () => {
                             await panel.updateObjectProperties(object, detail.itemId, detail.value)
                         })
@@ -853,6 +899,45 @@ export class CellDLEditor {
         const result = this.#propertiesEditing.then(run, run)
         this.#propertiesEditing = result.then(() => undefined, () => undefined)
         return result
+    }
+
+    /**
+     * Once the edit that made the undo step `undoState` is done, gives each store or source it moved into another
+     * labelled compartment (or added to one, or whose compartment it relabelled) that compartment's location, as
+     * part of that step. Variable names follow the location, as when it is set in Properties.
+     */
+    #followCompartments(undoState: UndoState) {
+        const follow = async () => {
+            const diagram = this.#celldlDiagram
+            if (diagram === null) {
+                return
+            }
+            const edits = this.#compartments.changes(diagram)
+            if (edits.length === 0) {
+                return
+            }
+            const objects = edits.map(edit => edit.object)
+            const locationsState = undoRedo.setPropertiesUndoState(objects)
+            let changed = false
+            try {
+                for (const { object, location } of edits) {
+                    await setElementField(object, 'location', location)
+                }
+            } finally {
+                changed = undoRedo.endPropertiesEdit(locationsState, undoState)
+            }
+            if (changed) {
+                notifyChanges()
+                this.refreshPropertiesPanel(objects)
+            }
+        }
+        // After the edit, which may still be under way (a deletion is its undo step's before it's made), and any
+        // properties edit before it
+        const previous = this.#propertiesEditing
+        const result = new Promise<void>(resolve => setTimeout(resolve, 0)).then(() => previous).then(follow)
+        this.#propertiesEditing = result.then(() => undefined, (error) => {
+            console.error('Cannot give elements their compartment\'s location:', error)
+        })
     }
 
     /** Reloads the panels if they show one of the objects, e.g. after its properties changed elsewhere. */
@@ -1173,7 +1258,9 @@ export class CellDLEditor {
         // A drawing tool has been selected
 
         const tool = (<CustomEvent>event).detail.tool
-        if (tool === 'draw-closed-compartment') { // draw-background-region
+        const kind = DRAWING_TOOLS[tool]
+        if (kind) {
+            this.#spatialKind = kind
             this.#changeMode(EDITOR_MODE.DrawCompartment)
         }
 
@@ -1215,6 +1302,15 @@ export class CellDLEditor {
         if (this.#celldlDiagram === null) {
             return []
         }
+        const spatial = spatialEntry(entryId)
+        if (spatial) {
+            // Placed at its default size, then resized by its handles
+            const compartment = placeSpatial(this.#celldlDiagram, spatial.kind, defaultBounds(svgPoint))
+            this.#unsetActiveObjects()
+            this.unsetSelectedObjects()
+            this.setSelectedObject(compartment)
+            return [compartment]
+        }
         try {
             const objects = await placeEntry(entryId, svgPoint)
             this.#unsetActiveObjects()
@@ -1232,8 +1328,9 @@ export class CellDLEditor {
     }
 
     #addCompartment() {
-        if (this.#boxMaker) {
-            const celldlObject = this.#boxMaker.makeCompartment()
+        if (this.#boxMaker && this.#celldlDiagram) {
+            // A click, rather than a drag, places one at its default size
+            const celldlObject = placeSpatial(this.#celldlDiagram, this.#spatialKind, this.#boxMaker.bounds)
             this.#unsetActiveObjects()
             if (celldlObject) {
                 // Select newly added object
@@ -1313,7 +1410,8 @@ export class CellDLEditor {
             return
         }
         const clickedObject = this.#celldlDiagram.objectById(getElementId(element))
-        if (this.#editorMode === EDITOR_MODE.AddingComponent && clickedObject === null) {
+        // A compartment's inside is where elements are added to it
+        if (this.#editorMode === EDITOR_MODE.AddingComponent && (clickedObject === null || clickedObject.isCompartment)) {
             if (this.#currentTemplateDetails) {
                 this.addComponentTemplate(event, this.#currentTemplateDetails)
             }
@@ -1572,13 +1670,18 @@ export class CellDLEditor {
                     }
                 }
             }
-        } else if (this.currentObject?.moveInitialised) {
+        } else if (this.currentObject?.moveInitialised
+               // Shift and drag on a compartment selects inside it, as on the canvas
+               && !(event.shiftKey && this.currentObject.isCompartment && this.#editorMode === EDITOR_MODE.Selecting)) {
             // EDITOR_MODE.Selecting or EDITOR_MODE.AddingComponent
-            this.#moveSelection = !this.currentObject?.isConnection && this.selectionSet.has(this.currentObject)
+            // A compartment moves with what's inside it
+            const group = compartmentMoveGroup(this.#celldlDiagram!, this.currentObject, this.selectionSet)
+            this.#moveSelection = group !== undefined
+                || (!this.currentObject?.isConnection && this.selectionSet.has(this.currentObject))
             if (this.#moveSelection) {
                 // Moving a set of selected components
-                this.#moveUndoState = undoRedo.setMoveUndoState(this.currentObject, svgPoint, this.selectionSet)
-                this.selectionSet.startMove(svgPoint, this.currentObject)
+                this.#moveUndoState = undoRedo.setMoveUndoState(this.currentObject, svgPoint, this.selectionSet, group)
+                this.selectionSet.startMove(svgPoint, this.currentObject, group)
             } else {
                 // Either moving a control point or an active component
                 this.#moveUndoState = undoRedo.setMoveUndoState(this.currentObject, svgPoint)
@@ -1613,7 +1716,7 @@ export class CellDLEditor {
                 this.#boxMaker.pointerEvent(event, svgPoint)
             } else {
                 this.unsetSelectedObjects()
-                this.#boxMaker = new BoxMaker(this, svgPoint, true)
+                this.#boxMaker = new BoxMaker(this, svgPoint, this.#spatialKind === 'compartment')
                 this.#boxMaking = true
             }
         }

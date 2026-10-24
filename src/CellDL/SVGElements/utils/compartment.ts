@@ -2,6 +2,7 @@
 
 import type { CellDLObject } from '#editor/celldlObjects'
 import type { CellDLDiagram } from '#editor/diagram'
+import { Transform } from '#editor/geometry/transforms'
 
 import type { PointLike } from '#root/utils/points'
 import {
@@ -24,7 +25,7 @@ import {
 
 //==============================================================================
 
-type CompartmentStyling = {
+export type CompartmentStyling = {
     cornerRadius: number
     fill: string[]
     strokeGap: number,
@@ -54,8 +55,9 @@ const PADDING = 24
 
 //==============================================================================
 
-export function createCompartmentSvgElement(id: string, topLeft: PointLike, bottomRight: PointLike): SVGGElement {
-    const styling = DEFAULT_COMPARTMENT_STYLE
+export function createCompartmentSvgElement(id: string, topLeft: PointLike, bottomRight: PointLike,
+                                            style: Partial<CompartmentStyling>={}): SVGGElement {
+    const styling = { ...DEFAULT_COMPARTMENT_STYLE, ...style }
     const svgElement = document.createElementNS(SVG_URI, 'g')
     svgElement.id = id
     svgElement.insertAdjacentHTML('beforeend', createRectAsString(topLeft, bottomRight, styling, styling.strokeGap/2))
@@ -83,7 +85,7 @@ function createRectAsString(topLeft: PointLike, bottomRight: PointLike,
     }
     // Background only when a single compartment boundary or this is the innermost boundary
     if (offset <= 0) {
-        attributes.fill = COMPARTMENT_BACKGROUND
+        attributes.fill = styling.fill[0] ?? COMPARTMENT_BACKGROUND
         attributes['fill-opacity'] = '0.8'
     } else {
         attributes.fill = 'none'
@@ -119,6 +121,53 @@ function updateRectDimensions(rect: SVGRectElement, delta: number) {  // -ve `de
     rect.setAttribute('y', `${dims.y - delta}`)
     rect.setAttribute('width', `${Math.max(0, dims.width + 2*delta)}`)
     rect.setAttribute('height', `${Math.max(0, dims.height + 2*delta)}`)
+}
+
+/** A compartment's boundary rectangles, outer first, without the editor's selection rectangle */
+function boundaryRects(svgElement: SVGGElement): SVGRectElement[] {
+    return [...svgElement.children].filter(
+        (child): child is SVGRectElement => child.tagName.toLowerCase() === 'rect' && !child.classList.contains('editor-specific')
+    )
+}
+
+/** A box, as x, y, width and height */
+export type Box = RectDimensions
+
+/**
+ * A compartment's box in the diagram's coordinates: the rectangle it was drawn as, midway between a double wall's
+ * boundaries.
+ */
+export function compartmentBox(svgElement: SVGGElement): Box {
+    const rect = boundaryRects(svgElement)[0]
+    if (!rect) {
+        return { x: 0, y: 0, width: 0, height: 0 }
+    }
+    const gap = Number(svgElement.getAttribute('data-stroke-gap')) || 0
+    const dims = getRectDimensions(rect)
+    const transform = Transform.fromElement(svgElement)
+    const topLeft = transform.transformPoint({ x: dims.x + gap/2, y: dims.y + gap/2 })
+    const bottomRight = transform.transformPoint({ x: dims.x + dims.width - gap/2, y: dims.y + dims.height - gap/2 })
+    return { x: topLeft.x, y: topLeft.y, width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y }
+}
+
+/**
+ * Redraws a compartment's boundaries round `box`, in the diagram's coordinates, keeping their style. The caller
+ * rebuilds the compartment's editor element, as its selection rectangle and bounds are those of its old box.
+ */
+export function setCompartmentBox(svgElement: SVGGElement, box: Box) {
+    const gap = Number(svgElement.getAttribute('data-stroke-gap')) || 0
+    const inverse = Transform.fromElement(svgElement).inverse()
+    const topLeft = inverse.transformPoint({ x: box.x, y: box.y })
+    const bottomRight = inverse.transformPoint({ x: box.x + box.width, y: box.y + box.height })
+    const rects = boundaryRects(svgElement)
+    rects.forEach((rect, index) => {
+        // the outer wall is outside the box, the inner one inside it
+        const offset = gap === 0 ? 0 : index === 0 ? gap/2 : -gap/2
+        rect.setAttribute('x', String(topLeft.x - offset))
+        rect.setAttribute('y', String(topLeft.y - offset))
+        rect.setAttribute('width', String(Math.max(0, bottomRight.x - topLeft.x + 2*offset)))
+        rect.setAttribute('height', String(Math.max(0, bottomRight.y - topLeft.y + 2*offset)))
+    })
 }
 
 //==============================================================================
@@ -272,7 +321,7 @@ export class Compartment {
         this.#celldlDiagram = celldlObject.celldlDiagram
         this.#objectId = celldlObject.id
         this.#svgElement = celldlObject.svgElement as SVGGElement
-        const innerRects = [...this.#svgElement.querySelectorAll('rect').values()]
+        const innerRects = boundaryRects(this.#svgElement)
         this.#boundary0 = innerRects[0] as SVGRectElement
         this.#boundary1 = innerRects[1]
         const strokeGap = Number(this.#svgElement.getAttribute('data-stroke-gap')) || 0

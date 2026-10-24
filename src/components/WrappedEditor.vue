@@ -90,6 +90,7 @@ import {
 } from '#editor/editor'
 import type { EditorMessage } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
+import { compartmentsKey } from '#editor/editor/locations'
 import { HOVER_TOOLTIP_DELAY } from '#editor/editor/tooltips'
 import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
 import { isMacOs } from '#root/utils/common'
@@ -473,6 +474,8 @@ vue.onUnmounted(() => celldlEditor.clearTooltips())
 
 let rdfRevision = 0
 let lastRdf: string|undefined
+// Which compartment each store and source is in, which a move changes without changing the RDF
+let lastCompartments: string|undefined
 let rdfQueued = false
 let rdfReading = false
 let rdfReadAgain = false
@@ -525,10 +528,18 @@ async function reportDiagramChange() {
     rdfReading = true
     try {
         const rdf = await diagram.rdf()
+        const compartments = compartmentsKey(diagram)
         if (diagram === celldlDiagram && rdf !== lastRdf) {
             lastRdf = rdf
+            lastCompartments = compartments
             rdfRevision += 1
             emit('diagram-changed', { revision: rdfRevision, rdf })
+            if (props.options?.elementList) {
+                emit('elements', { revision: rdfRevision, elements: listElements(diagram) })
+            }
+        } else if (diagram === celldlDiagram && compartments !== lastCompartments) {
+            // Elements moved in or out of a compartment, so may now disagree with its location, or no longer
+            lastCompartments = compartments
             if (props.options?.elementList) {
                 emit('elements', { revision: rdfRevision, elements: listElements(diagram) })
             }
@@ -546,6 +557,7 @@ async function reportDiagramChange() {
 
 async function setRdfBaseline() {
     lastRdf = await celldlDiagram?.rdf()
+    lastCompartments = celldlDiagram ? compartmentsKey(celldlDiagram) : undefined
 }
 
 vue.onMounted(() => document.addEventListener('file-edited', diagramEdited))

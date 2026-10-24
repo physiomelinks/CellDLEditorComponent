@@ -72,6 +72,36 @@ export function objectMetadataTemplate(): PropertyGroup {
 }
 
 //==============================================================================
+
+const COMPARTMENT_GROUP = 'compartment-group'
+
+/**
+ * A compartment's Properties: the location it gives the stores and sources inside it, which is its label
+ * (../editor/locations.ts).
+ */
+export function compartmentPropertiesTemplate(): PropertyGroup {
+    return {
+        groupId: COMPARTMENT_GROUP,
+        title: 'Compartment',
+        items: [{
+            itemId: `${COMPARTMENT_GROUP}/location`,
+            property: RDFS.uri('label').value,
+            name: 'Location',
+            defaultValue: ''
+        }]
+    }
+}
+
+// The groups whose items are an object's own RDF properties, by panel
+const GENERIC_GROUPS: Map<PANEL_ID, { groupId: string, template: () => PropertyGroup,
+                                      applies: (celldlObject: CellDLObject) => boolean }> = new Map([
+    [PANEL_ID.METADATA_PANEL, { groupId: OBJECT_METADATA_GROUP, template: objectMetadataTemplate,
+                                applies: () => true }],
+    [PANEL_ID.PROPERTIES_PANEL, { groupId: COMPARTMENT_GROUP, template: compartmentPropertiesTemplate,
+                                  applies: (celldlObject) => celldlObject.isCompartment }]
+])
+
+//==============================================================================
 //==============================================================================
 
 export function getItemProperty(celldlObject: CellDLObject,
@@ -161,11 +191,12 @@ export function loadPropertyGroups(panelId: PANEL_ID, groupTemplate: PropertyGro
         group.items = []
         group.styling = {}
     }
-    if (panelId === PANEL_ID.METADATA_PANEL) {
+    const generic = GENERIC_GROUPS.get(panelId)
+    if (generic?.applies(celldlObject)) {
         // First get generic metadata
-        const group = groups.find(group => group.groupId === OBJECT_METADATA_GROUP)
+        const group = groups.find(group => group.groupId === generic.groupId)
         if (group) {
-            for (const itemTemplate of objectMetadataTemplate().items) {
+            for (const itemTemplate of generic.template().items) {
                 const item = getItemProperty(celldlObject, itemTemplate)
                 if (item) {
                     group.items.push(item)
@@ -217,10 +248,11 @@ export class ObjectPropertiesPanel {
     async updateObjectProperties(celldlObject: CellDLObject|null,
                                  itemId: string, value: ValueChange) {
         if (celldlObject) {
-            if (this.#panelId === PANEL_ID.METADATA_PANEL) {
+            const generic = GENERIC_GROUPS.get(this.#panelId)
+            if (generic) {
                 // First update generic metadata
                 for (const group of this.#componentPropertiesRef.value.groups) {
-                    if (group.groupId === OBJECT_METADATA_GROUP) {
+                    if (group.groupId === generic.groupId) {
                         for (const itemTemplate of group.items) {
                             if (itemId === itemTemplate.itemId) {
                                 updateItemProperty(itemTemplate.property, value, celldlObject)

@@ -45,7 +45,8 @@
 
 import * as vue from 'vue'
 
-import { type PaletteEntry, paletteDomains, searchEntries } from '#root/plugins/bondgraph/palette'
+import { paletteDomains, searchEntries } from '#root/plugins/bondgraph/palette'
+import { searchSpatialEntries } from '#root/plugins/drawing/spatial'
 
 import { shownDomain } from './paletteState'
 
@@ -69,7 +70,8 @@ const search = vue.ref<HTMLInputElement | null>(null)
 const query = vue.ref('')
 const index = vue.ref(0)
 
-const matches = vue.computed(() => searchEntries(query.value, shownDomain.value))
+// and the spatial ones, whatever the domain
+const matches = vue.computed(() => [...searchEntries(query.value, shownDomain.value), ...searchSpatialEntries(query.value)])
 const current = vue.computed(() => matches.value[index.value])
 
 vue.watch(matches, () => {
@@ -84,7 +86,7 @@ const position = vue.computed(() => {
     return { left: `${left}px`, top: `${top}px` }
 })
 
-function pick(entry: PaletteEntry) {
+function pick(entry: { id: string }) {
     emit('pick', entry.id)
 }
 
