@@ -62,6 +62,9 @@ export type { PaletteDomain } from '#root/plugins/bondgraph/palette'
 /** Dispatched on `document` when a pointer is pressed on the canvas, for a host to close its own menus */
 export { CANVAS_PRESS_EVENT } from '#editor/editor'
 
+/** Dispatched on `document` when a plain click on empty canvas clears the selection, closing Properties and Style */
+export { CANVAS_EMPTY_CLICK_EVENT } from '#editor/editor'
+
 export { ARROW_STYLES, type ArrowStyle, DEFAULT_ARROW_STYLE } from '#root/utils/arrows'
 
 export type {

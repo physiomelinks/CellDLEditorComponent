@@ -81,7 +81,13 @@ import * as vueCommon from '#root/utils/vueCommon'
 
 import { CellDLDiagram } from '#editor/diagram'
 import { CellDLEditor } from '#editor/editor'
-import { DEFAULT_EDITOR_TOOL_ID, EDITOR_TOOL_IDS, SELECTION_CHANGED_EVENT, VIEW_CHANGED_EVENT } from '#editor/editor'
+import {
+    CANVAS_EMPTY_CLICK_EVENT,
+    DEFAULT_EDITOR_TOOL_ID,
+    EDITOR_TOOL_IDS,
+    SELECTION_CHANGED_EVENT,
+    VIEW_CHANGED_EVENT
+} from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
 import { HOVER_TOOLTIP_DELAY } from '#editor/editor/tooltips'
 import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
@@ -131,6 +137,7 @@ import { paletteDomain } from './palette/paletteState'
 import ArrangeBar from './controls/ArrangeBar.vue'
 import CanvasControls from './controls/CanvasControls.vue'
 import EditorToolbar from './toolbar/EditorToolbar.vue'
+import { closeSelectionPanels } from './toolbar/selectionPanels'
 import EditorContextMenu from './widgets/EditorContextMenu.vue'
 import type { ContextMenuProps } from './widgets/EditorContextMenu.vue'
 
@@ -814,6 +821,17 @@ vue.watch(shownPanelButtons, (shown) => {
     }
     vue.nextTick(observePanels)
 })
+
+// A plain click on empty canvas clears the selection, so closes the panels that show it (Properties and Style).
+// Only the panel's display changes: nothing is undoable or edited
+function canvasEmptyClickEvent() {
+    for (const toolId of closeSelectionPanels(panelButtons.value)) {
+        despatchToolbarEvent('state', toolId, false)
+    }
+}
+
+vue.onMounted(() => document.addEventListener(CANVAS_EMPTY_CLICK_EVENT, canvasEmptyClickEvent))
+vue.onUnmounted(() => document.removeEventListener(CANVAS_EMPTY_CLICK_EVENT, canvasEmptyClickEvent))
 
 //==============================================================================
 

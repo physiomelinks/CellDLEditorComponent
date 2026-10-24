@@ -40,6 +40,7 @@ import { CANVAS_PRESS_EVENT } from '#editor/editor'
 import type { PropertyGroup } from '#root/utils/editor-types'
 
 import { clampPanelWidth, MIN_PANEL_WIDTH, panelWidth, savePanelWidth } from './panelWidth'
+import { commitFocusedField } from './selectionPanels'
 
 const props = defineProps<{
     toolId: string
@@ -145,13 +146,20 @@ function closePopover() {
         panelVisible.value = false
     }
 }
+// A press on the canvas commits a panel's half-typed value, while what it was typed for is still selected
+function canvasPressEvent() {
+    closePopover()
+    if (props.type === 'panel') {
+        commitFocusedField(panelRef.value)
+    }
+}
 vue.onMounted(() => {
     document.addEventListener('close-tool-popover', closePopover)
-    document.addEventListener(CANVAS_PRESS_EVENT, closePopover)
+    document.addEventListener(CANVAS_PRESS_EVENT, canvasPressEvent)
 })
 vue.onUnmounted(() => {
     document.removeEventListener('close-tool-popover', closePopover)
-    document.removeEventListener(CANVAS_PRESS_EVENT, closePopover)
+    document.removeEventListener(CANVAS_PRESS_EVENT, canvasPressEvent)
 })
 
 // Make sure popover is closed when button is deactivated

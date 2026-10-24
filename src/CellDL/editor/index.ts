@@ -196,6 +196,12 @@ export const SELECTION_CHANGED_EVENT = 'editor-selection-changed'
  */
 export const CANVAS_PRESS_EVENT = 'editor-canvas-press'
 
+/**
+ * A plain click on empty canvas, while selecting, left nothing selected, as `detail.event`: the panels showing the
+ * selection close. A press that pans, draws a selection box or lands on an element doesn't send it.
+ */
+export const CANVAS_EMPTY_CLICK_EVENT = 'editor-canvas-empty-click'
+
 //==============================================================================
 
 export function getElementId(element: SVGGraphicsElement): string {
@@ -1260,6 +1266,12 @@ export class CellDLEditor {
             }
         } else if (this.#editorMode === EDITOR_MODE.Selecting) {
             this.#selectingClick(event, element, clickedObject)
+            if (clickedObject === null
+             && this.selectionSet.size === 0
+             && !this.#pointerDragged(event)
+             && !(event.shiftKey || event.metaKey || event.ctrlKey || event.altKey)) {
+                document.dispatchEvent(new CustomEvent(CANVAS_EMPTY_CLICK_EVENT, { detail: { event } }))
+            }
         }
     }
 
