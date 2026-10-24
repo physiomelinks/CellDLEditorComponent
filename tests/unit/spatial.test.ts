@@ -17,6 +17,7 @@ import {
     compartmentContents,
     compartmentMoveGroup,
     placeSpatial,
+    resizeCompartment,
     resizedBox
 } from '#editor/editor/compartments'
 import { DEFAULT_SPATIAL_SIZE, searchSpatialEntries, spatialEntries, spatialEntry } from '#root/plugins/drawing/spatial'
@@ -144,6 +145,16 @@ describe('a compartment', () => {
         const order = [...outer.svgElement!.parentNode!.children].map(element => element.id)
         expect(order.indexOf(outer.id)).toBeLessThan(order.indexOf(inner.id))
         expect(order.indexOf(inner.id)).toBeLessThan(order.indexOf(STORE_E))
+    })
+
+    test('resized round a larger one goes behind it', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        const small = placeSpatial(diagram, 'compartment', new Bounds(100, 100, 200, 200))
+        const large = placeSpatial(diagram, 'compartment', new Bounds(300, 100, 600, 400))
+        const ids = () => [...small.svgElement!.parentNode!.children].map(element => element.id)
+        expect(ids().indexOf(large.id)).toBeLessThan(ids().indexOf(small.id))
+        resizeCompartment(small, { x: 50, y: 50, width: 800, height: 600 })
+        expect(ids().indexOf(small.id)).toBeLessThan(ids().indexOf(large.id))
     })
 
     test('resized by a handle is one undo step', async () => {

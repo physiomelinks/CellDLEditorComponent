@@ -122,6 +122,11 @@
 }
 
 /* Compartments */
+/* A compartment's or region's default background follows the editor's theme; its own `fill` is what a saved
+   diagram shows, and a fill chosen in the Style panel is kept */
+.celldl-dark-mode #svg-container .celldl-Compartment > rect:is([fill="#ddd"], [fill="#eee"]) {
+    fill: var(--p-surface-700);
+}
 #svg-container .compartment-handle {
     fill: #fff;
     stroke: #2f6fd6;
