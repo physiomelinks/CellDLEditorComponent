@@ -354,6 +354,9 @@ function nameFromType(type: string): string {
 
 const TRANSFORM_NODE_PROMPT = 'Ratio'
 
+/** The base classes of the elements that a compartment gives a location (`isLocatedElement()`) */
+const LOCATED_CLASSES = ['QuantityStore', 'FlowStore', 'PotentialSource', 'FlowSource']
+
 //==============================================================================
 //==============================================================================
 
@@ -717,6 +720,34 @@ export class BondgraphPlugin implements PluginInterface {
             })
         }
         return [...elements.values()]
+    }
+
+    /**
+     * Whether an element takes its location from the compartment it is in: a store or a source (a chemostat), but
+     * not a step (a reaction or transporter, which may join locations), a transformer or a junction.
+     */
+    isLocatedElement(celldlObject: CellDLObject): boolean {
+        const description = this.describeElement(celldlObject)
+        if (!description) {
+            return false
+        }
+        const types = [description.template, description.kind].filter((type): type is string => !!type)
+        return LOCATED_CLASSES.some(base => {
+            const located = this.#subclassesOf(BGF.uri(base).value)
+            return types.some(type => located.has(type))
+        })
+    }
+
+    /** An element's own location (its `bgf:hasLocation`), if it has one. */
+    elementLocation(celldlObject: CellDLObject): string|undefined {
+        let location: string|undefined
+        celldlObject.rdfStore.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT ?location WHERE { ${celldlObject.uri.toString()} bgf:hasLocation ?location }`
+        ).forEach((r: Map<string, $rdf.Term>) => {
+            location = r.get('location')?.value
+        })
+        return location
     }
 
     /** The element type of a component (its template's, else its base component's). */

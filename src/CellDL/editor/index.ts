@@ -29,10 +29,10 @@ import type { CellDLCompartment, CellDLObject } from '#editor/celldlObjects'
 import { ConnectionStyle } from '#editor/connections'
 import { PathMaker, type PathNode } from '#editor/connections/pathmaker'
 import type { TemplateEventDetails } from '#editor/components'
-import { objectMetadataTemplate, ObjectPropertiesPanel } from '#editor/components/properties'
+import { compartmentPropertiesTemplate, objectMetadataTemplate, ObjectPropertiesPanel } from '#editor/components/properties'
 import type { CellDLDiagram } from '#editor/diagram'
 import { SelectionSet } from '#editor/diagram/selectionset'
-import { type MoveUndoState, undoRedo } from '#editor/diagram/undoredo'
+import { type MoveUndoState, type UndoState, undoRedo } from '#editor/diagram/undoredo'
 import type { Bounds } from '#editor/geometry'
 import { round } from '#editor/utils'
 
@@ -42,6 +42,7 @@ import { type Point, type PointLike, PointMath } from '#root/utils/points'
 import { imagesLoaded } from '#root/utils/svgUtils'
 import type { StringProperties } from '#root/utils/types'
 import { componentLibraryPlugin } from '#root/plugins'
+import { setElementField } from '#root/plugins/bondgraph/elements'
 import { paletteEntry, placeEntry } from '#root/plugins/bondgraph/palette'
 import { DRAWING_TOOLS, type SpatialKind, spatialEntry } from '#root/plugins/drawing/spatial'
 
@@ -52,6 +53,7 @@ import { drawBondCounts } from './bondcounts'
 import { BondDrag } from './bonddrag'
 import { CompartmentHandles, compartmentMoveGroup, defaultBounds, placeSpatial } from './compartments'
 import { EditorFrame } from './editorframe'
+import { CompartmentTracker } from './locations'
 import { DEFAULT_VIEW_STATE, editGuides, EDITOR_GRID_CLASS } from './editguides'
 import PanZoom, { ZOOM_STEP } from './panzoom'
 import { BoxMaker } from './boxmaker'
@@ -288,9 +290,11 @@ export class CellDLEditor {
             ])
         ],
         [
-            PANEL_ID.PROPERTIES_PANEL, new ObjectPropertiesPanel(PANEL_ID.PROPERTIES_PANEL,
-                componentLibraryPlugin.getPanelTemplates(PANEL_ID.PROPERTIES_PANEL)
-            )
+            // after the plugins' groups, which they find by position
+            PANEL_ID.PROPERTIES_PANEL, new ObjectPropertiesPanel(PANEL_ID.PROPERTIES_PANEL, [
+                ...componentLibraryPlugin.getPanelTemplates(PANEL_ID.PROPERTIES_PANEL),
+                compartmentPropertiesTemplate()
+            ])
         ],
         [
             PANEL_ID.STYLE_PANEL, new ObjectPropertiesPanel(PANEL_ID.STYLE_PANEL,
@@ -311,6 +315,9 @@ export class CellDLEditor {
 
     // Events about this editor's diagram, for code that must not hear another editor's
     #events = new EventTarget()
+
+    // Which compartment each store and source is in, so a change of compartment gives it that location
+    #compartments = new CompartmentTracker()
 
     constructor() {
         CellDLEditor.instance = this
@@ -370,6 +377,12 @@ export class CellDLEditor {
 
         // Handle click events on control points
         document.addEventListener('select-object', this.#objectClickEvent.bind(this))
+
+        // An edit that moves elements into another compartment gives them its location, as part of its undo step
+        undoRedo.listen({
+            stepAdded: (undoState) => this.#followCompartments(undoState),
+            stepRestored: () => this.#compartments.note(this.#celldlDiagram)
+        })
     }
 
     mount(svgContainer: HTMLElement) {
@@ -613,6 +626,7 @@ export class CellDLEditor {
         this.#tooltips.reset()
         this.selectionSet.clear()
 
+        this.#compartments.note(celldlDiagram)
         this.#events.dispatchEvent(new CustomEvent('diagram-opened', { detail: { diagram: celldlDiagram } }))
         this.#scheduleBondCounts()
         drawSideLabels(celldlDiagram)
@@ -786,8 +800,10 @@ export class CellDLEditor {
                 const values = detail.value
                 if (values.oldValue !== values.newValue) {
                     const object = this.selectionSet.objects[0]!
-                    if (panel.panelId === PANEL_ID.PROPERTIES_PANEL) {
-                        // Undoable, as the host's `element` command's edits are
+                    if (panel.panelId === PANEL_ID.PROPERTIES_PANEL
+                     || (panel.panelId === PANEL_ID.METADATA_PANEL && object.isCompartment)) {
+                        // Undoable, as the host's `element` command's edits are, and as a compartment's label is
+                        // the location of what's inside it
                         await this.editProperties([object], async () => {
                             await panel.updateObjectProperties(object, detail.itemId, detail.value)
                         })
@@ -834,6 +850,45 @@ export class CellDLEditor {
         const result = this.#propertiesEditing.then(run, run)
         this.#propertiesEditing = result.then(() => undefined, () => undefined)
         return result
+    }
+
+    /**
+     * Once the edit that made the undo step `undoState` is done, gives each store or source it moved into another
+     * labelled compartment (or added to one, or whose compartment it relabelled) that compartment's location, as
+     * part of that step. Variable names follow the location, as when it is set in Properties.
+     */
+    #followCompartments(undoState: UndoState) {
+        const follow = async () => {
+            const diagram = this.#celldlDiagram
+            if (diagram === null) {
+                return
+            }
+            const edits = this.#compartments.changes(diagram)
+            if (edits.length === 0) {
+                return
+            }
+            const objects = edits.map(edit => edit.object)
+            const locationsState = undoRedo.setPropertiesUndoState(objects)
+            let changed = false
+            try {
+                for (const { object, location } of edits) {
+                    await setElementField(object, 'location', location)
+                }
+            } finally {
+                changed = undoRedo.endPropertiesEdit(locationsState, undoState)
+            }
+            if (changed) {
+                notifyChanges()
+                this.refreshPropertiesPanel(objects)
+            }
+        }
+        // After the edit, which may still be under way (a deletion is its undo step's before it's made), and any
+        // properties edit before it
+        const previous = this.#propertiesEditing
+        const result = new Promise<void>(resolve => setTimeout(resolve, 0)).then(() => previous).then(follow)
+        this.#propertiesEditing = result.then(() => undefined, (error) => {
+            console.error('Cannot give elements their compartment\'s location:', error)
+        })
     }
 
     /** Reloads the panels if they show one of the objects, e.g. after its properties changed elsewhere. */

@@ -21,7 +21,7 @@ limitations under the License.
 import type { NormalArray } from 'svg-path-commander'
 import * as vue from 'vue'
 
-import { isBlankNode, type Statement } from '@celldl/rdf'
+import { isBlankNode, isLiteral, RDFS, type Statement } from '@celldl/rdf'
 
 import { type CellDLConnectedObject, type CellDLConnection, CellDLObject } from '#editor/celldlObjects'
 import type { CellDLDiagram } from '#editor/diagram'
@@ -424,6 +424,12 @@ export class PropertiesUndoState extends UndoState {
             object.rdfStore.removeStatements(fromStatements.filter(st => !toKeys.has(statementKey(st))))
             object.rdfStore.addStatementList(toStatements.filter(st => !fromKeys.has(statementKey(st))))
         }
+        // A compartment's label, drawn on it, is the location it gives what is inside it
+        for (const object of this.#objects.filter(object => object.isCompartment)) {
+            const label = object.rdfStore.statementsMatching(object.uri, RDFS.uri('label'), null, null)
+                                         .map(st => st.object).find(isLiteral)
+            object.setLabel(label?.value)
+        }
         // Bring every object's plugin data up to date before any (slower) SVG update
         for (const object of this.#objects) {
             await componentLibraryPlugin.refreshObject(object)
@@ -442,9 +448,16 @@ export const undoRedoState = vue.reactive({
 
 //==============================================================================
 
+/** Hears the undo stack: each new step, and each step undone or redone once it is restored */
+export interface UndoListener {
+    stepAdded?: (undoState: UndoState) => void
+    stepRestored?: () => void
+}
+
 class UndoRedo {
     static #instance: UndoRedo | null = null
 
+    #listeners: Set<UndoListener> = new Set()
     #activeUndoState: UndoState|null = null
     #group: UndoState[] = []
     #groupDepth = 0
@@ -467,6 +480,28 @@ class UndoRedo {
 
     get activeUndoState() {
         return this.#activeUndoState
+    }
+
+    /** Listens to the undo stack, until the returned function is called */
+    listen(listener: UndoListener): () => void {
+        this.#listeners.add(listener)
+        return () => this.#listeners.delete(listener)
+    }
+
+    /**
+     * Makes `extra`, a change that follows from the step `undoState` (such as the locations a move gives the
+     * elements it moved into a compartment), part of that step, so both are undone and redone together. When
+     * `undoState` is no longer the last step, e.g. as it has been undone, `extra` is its own step.
+     */
+    amend(undoState: UndoState, extra: UndoState) {
+        if (this.#undoStack.at(-1) === undoState) {
+            this.#undoStack[this.#undoStack.length - 1] = new GroupUndoState([undoState, extra])
+            if (this.#activeUndoState === undoState) {
+                this.#activeUndoState = null
+            }
+        } else {
+            this.#pushUndoStack(extra, false)
+        }
     }
 
     clean() {
@@ -573,10 +608,12 @@ class UndoRedo {
      *
      * @returns Whether the edit changed the objects' properties.
      */
-    endPropertiesEdit(undoState: PropertiesUndoState): boolean {
+    endPropertiesEdit(undoState: PropertiesUndoState, amending: UndoState|null=null): boolean {
         const changed = undoState.endEdit()
         if (changed) {
-            if (this.#groupDepth > 0) {
+            if (amending) {
+                this.amend(amending, undoState)
+            } else if (this.#groupDepth > 0) {
                 this.#group.push(undoState)
             } else {
                 this.#pushUndoStack(undoState, false)
@@ -651,6 +688,11 @@ class UndoRedo {
             this.#clearRedoStack() // Can no longer redo once there are new items
         }
         this.#updateState()
+        if (!reDoing) {
+            for (const listener of this.#listeners) {
+                listener.stepAdded?.(undoState)
+            }
+        }
         return undoState
     }
 
@@ -682,11 +724,17 @@ class UndoRedo {
 
     #restore(diagram: CellDLDiagram, undoState: UndoState, direction: Direction) {
         const restored = this.#apply(diagram, undoState, direction)
+        const done = () => {
+            for (const listener of this.#listeners) {
+                listener.stepRestored?.()
+            }
+            notifyChanges()
+        }
         if (restored) {
             // Report the change once the objects are up to date with their RDF
-            void restored.finally(notifyChanges)
+            void restored.finally(done)
         } else {
-            notifyChanges()
+            done()
         }
     }
 

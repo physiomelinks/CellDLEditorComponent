@@ -561,6 +561,12 @@ export class CellDLCompartment extends CellDLConnectedObject {
     assignSvgElement(svgElement: SVGGraphicsElement, align: boolean) {
         this.#compartmentElement = new CompartmentElement(this, svgElement, this.isAlignable, align)
     }
+
+    /** Its label is the location it gives what is inside it (../editor/locations.ts), and is drawn on it */
+    setLabel(label: string|undefined) {
+        super.setLabel(label)
+        this.#compartmentElement?.updateElement()
+    }
 }
 
 //==============================================================================

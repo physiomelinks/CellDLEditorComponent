@@ -27,6 +27,7 @@ import { loadPropertyGroups } from '#editor/components/properties'
 import type { CellDLDiagram } from '#editor/diagram'
 import type { CellDLEditor } from '#editor/editor'
 import { alert } from '#editor/editor/alerts'
+import { compartmentLocations } from '#editor/editor/locations'
 
 import { componentLibraryPlugin } from '#root/plugins'
 import type { IUiJsonDiscreteInputPossibleValue } from '#root/libopencor/locUIJsonApi'
@@ -81,6 +82,11 @@ export type DiagramElement = {
     }[]
     species?: string
     location?: string
+    /**
+     * For a store or source in a labelled compartment, the location that compartment gives it. When its own
+     * `location` differs (e.g. set by hand), the two disagree.
+     */
+    compartment?: string
     value?: ElementValue
     parameters: NamedElementValue[]
     variables: NamedElementValue[]
@@ -187,7 +193,7 @@ function numberText(value: string): string|undefined {
 //==============================================================================
 
 function describe(plugin: BondgraphPlugin, celldlObject: CellDLObject,
-                  description: BGElementDescription): DiagramElement {
+                  description: BGElementDescription, compartment: string|undefined): DiagramElement {
     const groups = propertyGroups(celldlObject)
     const typeItem = findItem(groups, BG_ELEMENT_TYPE_ITEM)
     const valueItem = findItem(groups, BG_ELEMENT_VALUE_ITEM)
@@ -222,6 +228,9 @@ function describe(plugin: BondgraphPlugin, celldlObject: CellDLObject,
     if (location !== undefined) {
         element.location = location
     }
+    if (compartment !== undefined) {
+        element.compartment = compartment
+    }
     if (valueItem) {
         element.value = {
             value: String(valueItem.value),
@@ -246,10 +255,11 @@ export function listElements(diagram: CellDLDiagram|null|undefined): DiagramElem
     // Reading properties mustn't clear a message the editor is showing
     return alert.keepShown(() => {
         const elements: DiagramElement[] = []
+        const compartments = compartmentLocations(diagram)
         for (const celldlObject of diagram.objects) {
             const description = plugin.describeElement(celldlObject)
             if (description) {
-                elements.push(describe(plugin, celldlObject, description))
+                elements.push(describe(plugin, celldlObject, description, compartments.get(celldlObject)))
             }
         }
         return elements
@@ -292,6 +302,18 @@ export async function setElements(editor: CellDLEditor, diagram: CellDLDiagram|n
         }
     }, true)
     return errors.length ? { ok: false, errors } : { ok: true }
+}
+
+/**
+ * Sets one field of an element, as the Properties panel would, returning why it couldn't be set, or `''`. It isn't
+ * an undo step of its own: the caller makes it part of one.
+ */
+export async function setElementField(celldlObject: CellDLObject, field: ElementField, value: string): Promise<string> {
+    const plugin = bondgraphPlugin()
+    if (!plugin || !plugin.describeElement(celldlObject)) {
+        return `'${celldlObject.id}' is not a bond graph element`
+    }
+    return await setElement(plugin, celldlObject, { id: celldlObject.id, field, value })
 }
 
 /** Makes one edit, returning why it couldn't be made, or `''`. */
