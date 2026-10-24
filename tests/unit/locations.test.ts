@@ -141,6 +141,20 @@ describe('a labelled compartment', () => {
     })
 })
 
+describe('an opened diagram', () => {
+    test('has its stores and sources noted, so a location set by hand is kept by an unrelated edit', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        // S, E, C and P's stores
+        expect(compartmentLocations(diagram).size).toBe(4)
+        await labelledRound(centreOf(diagram, STORE_E), 60, 'm')
+        await setElements(editor, diagram, [{ id: STORE_E, field: 'location', value: 'x' }])
+        // as when the diagram is opened with E's location disagreeing
+        await settle()
+        await drag(diagram, STORE_S, { x: 0, y: -20 })
+        expect(locationOf(diagram, STORE_E)).toBe('x')
+    })
+})
+
 describe('a store', () => {
     test('moved out of every compartment keeps its location, and into another takes that one\'s', async () => {
         const diagram = await openFixture('enzyme.celldl')

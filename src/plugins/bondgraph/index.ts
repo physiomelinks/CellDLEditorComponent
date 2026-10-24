@@ -379,6 +379,7 @@ export class BondgraphPlugin implements PluginInterface {
     #physicalDomains: Map<string, PhysicalDomain> = new Map()
     #rdfStore: $rdf.RdfStore = new $rdf.RdfStore()
     #transformNodeType = BGF.uri('TransformNode').value
+    #locatedTypes: Set<string>|undefined
 
     constructor() {
         for (const group of elementPropertiesTemplate()) {
@@ -731,11 +732,11 @@ export class BondgraphPlugin implements PluginInterface {
         if (!description) {
             return false
         }
-        const types = [description.template, description.kind].filter((type): type is string => !!type)
-        return LOCATED_CLASSES.some(base => {
-            const located = this.#subclassesOf(BGF.uri(base).value)
-            return types.some(type => located.has(type))
-        })
+        // The framework's classes don't change, so are found once
+        const located = this.#locatedTypes
+                     ?? new Set(LOCATED_CLASSES.flatMap(base => [...this.#subclassesOf(BGF.uri(base).value)]))
+        this.#locatedTypes = located
+        return [description.template, description.kind].some(type => !!type && located.has(type))
     }
 
     /** An element's own location (its `bgf:hasLocation`), if it has one. */
