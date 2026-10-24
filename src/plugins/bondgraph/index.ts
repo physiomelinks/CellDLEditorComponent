@@ -335,8 +335,19 @@ const BG_STYLING_TEMPLATE: PropertyGroup = {
 
 const DEFAULT_TRANSFORM_RATIO = 1
 
-/** The value a parameter gets when its element's template is chosen */
+/** The value a parameter or variable gets when its element's template is chosen */
 const DEFAULT_PARAMETER_VALUE = 1
+
+/**
+ * Defaults, by template (and its subclasses), for parameters that 1 would make singular: an elastic vessel's
+ * `u = E(q - q_hat)/(q_bar - q)^2` needs its maximum volume above its unstressed one.
+ */
+const TEMPLATE_PARAMETER_DEFAULTS: Map<string, Record<string, number>> = new Map([
+    [`${BGF_URI}ElasticVessel`, { q_bar: 3 }]
+])
+
+/** The predicate of an element's variable values, as BG-RDF and bg2cellml have it */
+const VARIABLE_VALUE = 'bgf:variableValue'
 
 /**
  * A readable name for a template that BG-RDF gives no label, from its type: `ChemicalPotential` → "Chemical potential",
@@ -462,6 +473,12 @@ export class BondgraphPlugin implements PluginInterface {
 
         this.#currentDocumentUri = uri
         this.#documentStore = rdfStore
+
+        // Variable values saved under the editor's old predicate
+        rdfStore.update(`${SPARQL_PREFIXES}
+            DELETE { ?element bgf:VariableValue ?value }
+            INSERT { ?element ${VARIABLE_VALUE} ?value }
+            WHERE { ?element bgf:VariableValue ?value }`)
 
         // Add a copy of the BG-RDF framework as a **named graph**, to use when
         // finding BondElements and JunctionStructures
@@ -769,18 +786,21 @@ export class BondgraphPlugin implements PluginInterface {
 
     /**
      * Store the defaults the Properties panel shows for a new element's template, as choosing the template there
-     * does: `DEFAULT_PARAMETER_VALUE` (1) for each parameter, and 0 for an initial value. Values already stored
-     * are kept.
+     * does: the template's default (usually 1) for each parameter and variable, and 0 for an initial value. Values
+     * already stored are kept.
      */
     storeDefaultParameters(celldlObject: CellDLObject) {
         const elementTemplate = (<PluginData>celldlObject.pluginData(this.id)).elementTemplate
         if (!elementTemplate) {
             return
         }
-        const group: PropertyGroup = { groupId: BG_PROPERTY_GROUP_ID.ElementParameters, items: [] }
-        this.#setVariableItems(elementTemplate.parameters, group)
-        this.#loadVariableItems(celldlObject, group)
-        this.#storeDefaultParameters(celldlObject, group, elementTemplate)
+        for (const [groupId, variables] of [[BG_PROPERTY_GROUP_ID.ElementParameters, elementTemplate.parameters],
+                                            [BG_PROPERTY_GROUP_ID.ElementVariables, elementTemplate.variables]] as const) {
+            const group: PropertyGroup = { groupId, items: [] }
+            this.#setVariableItems(variables, group)
+            this.#loadVariableItems(celldlObject, group)
+            this.#storeDefaultParameters(celldlObject, group, elementTemplate)
+        }
         const value = elementTemplate.value
         if (value && elementTemplate.baseComponent.type !== this.#transformNodeType) {
             const objectUri = celldlObject.uri.toString()
@@ -1037,8 +1057,13 @@ export class BondgraphPlugin implements PluginInterface {
         `)
     }
 
+    /** An element's bond limit: its template's declared ports, if it has them, else its base component's. */
     getMaxConnections(celldlObject: CellDLObject): number {
         const pluginData = (<PluginData>celldlObject.pluginData(this.id))
+        const ports = pluginData.elementTemplate?.ports
+        if (ports && ports.inward + ports.outward > 0) {
+            return ports.inward + ports.outward
+        }
         return pluginData.baseComponent?.numPorts || Infinity
     }
 
@@ -1128,7 +1153,7 @@ export class BondgraphPlugin implements PluginInterface {
     #deleteVariableItems(celldlObject: CellDLObject, group: PropertyGroup) {
         const predicate = (group.groupId === BG_PROPERTY_GROUP_ID.ElementParameters)
                         ? 'bgf:parameterValue'
-                        : 'bgf:VariableValue'
+                        : VARIABLE_VALUE
         const objectUri = celldlObject.uri.toString()
         celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
             PREFIX : <${this.#currentDocumentUri}#>
@@ -1142,7 +1167,7 @@ export class BondgraphPlugin implements PluginInterface {
     #loadVariableItems(celldlObject: CellDLObject, group: PropertyGroup) {
         const predicate = (group.groupId === BG_PROPERTY_GROUP_ID.ElementParameters)
                         ? 'bgf:parameterValue'
-                        : 'bgf:VariableValue'
+                        : VARIABLE_VALUE
         const objectUri = celldlObject.uri.toString()
 
         const values: Map<string, string> = new Map()
@@ -1174,11 +1199,21 @@ export class BondgraphPlugin implements PluginInterface {
         })
     }
 
-    /** Stores `DEFAULT_PARAMETER_VALUE` for each parameter shown with an unstored default. */
+    /** A template's default for a parameter or variable: its `TEMPLATE_PARAMETER_DEFAULTS` value, else 1. */
+    #defaultValue(elementTemplate: ElementTemplate, varName: string): number {
+        for (const [type, defaults] of TEMPLATE_PARAMETER_DEFAULTS) {
+            if (varName in defaults && this.#subclassesOf(type).has(elementTemplate.type)) {
+                return defaults[varName]!
+            }
+        }
+        return DEFAULT_PARAMETER_VALUE
+    }
+
+    /** Stores its template's default for each parameter or variable shown with an unstored default. */
     #storeDefaultParameters(celldlObject: CellDLObject, group: PropertyGroup, elementTemplate: ElementTemplate) {
         for (const item of group.items) {
             if (item.stored === false) {
-                const value = String(DEFAULT_PARAMETER_VALUE)
+                const value = String(this.#defaultValue(elementTemplate, item.itemId.split('/')[1]!))
                 this.#updateVariableProperties({ oldValue: '', newValue: value }, group.groupId,
                                                item.itemId, celldlObject, elementTemplate)
                 item.value = value
@@ -1243,7 +1278,7 @@ export class BondgraphPlugin implements PluginInterface {
         if (group.items.length === 0) {
             const property = (group.groupId === BG_PROPERTY_GROUP_ID.ElementParameters)
                             ? BGF.uri('parameterValue').value
-                            : BGF.uri('valueVariableValue').value
+                            : BGF.uri('variableValue').value
             for (const variable of variables.values()) {
                 group.items.push({
                     itemId: `${group.groupId}/${variable.name}`,
@@ -1336,6 +1371,7 @@ export class BondgraphPlugin implements PluginInterface {
                         if (elementTemplate?.variables) {
                             this.#setVariableItems(elementTemplate.variables, componentGroup)
                             this.#loadVariableItems(celldlObject, componentGroup)
+                            this.#storeDefaultParameters(celldlObject, componentGroup, elementTemplate)
                         }
                     }
                 }
@@ -1447,7 +1483,7 @@ export class BondgraphPlugin implements PluginInterface {
         const objectUri = celldlObject.uri.toString()
         const predicate = (groupId === BG_PROPERTY_GROUP_ID.ElementParameters)
                         ? 'bgf:parameterValue'
-                        : 'bgf:VariableValue'
+                        : VARIABLE_VALUE
         celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
             PREFIX : <${this.#currentDocumentUri}#>
 

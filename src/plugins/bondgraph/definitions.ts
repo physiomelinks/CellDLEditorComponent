@@ -93,6 +93,12 @@ const _UNITS_STYLE: BGElementStyle = {
     background: '#DDD'
 }
 
+const ONE_STORAGE_STYLE: BGElementStyle = {
+    text: KINETIC_STORAGE_STYLE.text,
+    background: KINETIC_STORAGE_STYLE.background,
+    border: 'green'
+}
+
 const ZERO_STORAGE_STYLE: BGElementStyle = {
     text: FLOW_STYLE.text,
     background: FLOW_STYLE.background,
@@ -190,6 +196,14 @@ export const BONDGRAPH_COMPONENT_DEFINITIONS: BGComponentDefinition[] = [
         numPorts: 1,
         symbol: 'L',
         style: KINETIC_STORAGE_STYLE
+    },
+    {
+        id: 'OneStorageNode',
+        type: 'https://bg-rdf.org/ontologies/bondgraph-framework#OneStorageNode',
+        name: 'One storage node',
+        numPorts: Infinity,
+        symbol: 'L',
+        style: ONE_STORAGE_STYLE
     },
     {
         id: 'PotentialSource',
