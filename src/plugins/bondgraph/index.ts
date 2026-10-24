@@ -95,6 +95,16 @@ import type {
     BGElementStyle
 } from './utils'
 import { DomainGraph } from './domainGraph'
+import {
+    effectiveUnits,
+    IMPLICIT_UNIT_SYSTEM,
+    NEW_DIAGRAM_UNIT_SYSTEM,
+    rescaledValue,
+    UNIT_SYSTEM_IRIS,
+    UNIT_SYSTEM_PREDICATE,
+    type UnitSystemId,
+    unitSystemForIri
+} from './unitsystem'
 
 //==============================================================================
 
@@ -391,6 +401,7 @@ export class BondgraphPlugin implements PluginInterface {
     #rdfStore: $rdf.RdfStore = new $rdf.RdfStore()
     #transformNodeType = BGF.uri('TransformNode').value
     #locatedTypes: Set<string>|undefined
+    #newDiagramUnitSystem: UnitSystemId = NEW_DIAGRAM_UNIT_SYSTEM
 
     constructor() {
         for (const group of elementPropertiesTemplate()) {
@@ -471,9 +482,13 @@ export class BondgraphPlugin implements PluginInterface {
 
     //==========================================================================
 
-    openDiagram(uri: string, rdfStore: MetadataStore) {
+    openDiagram(uri: string, rdfStore: MetadataStore, newDiagram: boolean=false) {
         // We are creating a BondgraphModel
         rdfStore.add($rdf.namedNode(uri), $rdf.RDF.uri('type'), BGF.uri('BondgraphModel'))
+        if (newDiagram) {
+            rdfStore.add($rdf.namedNode(uri), $rdf.namedNode(UNIT_SYSTEM_PREDICATE),
+                         $rdf.namedNode(UNIT_SYSTEM_IRIS[this.#newDiagramUnitSystem]))
+        }
 
         this.#currentDocumentUri = uri
         this.#documentStore = rdfStore
@@ -491,6 +506,100 @@ export class BondgraphPlugin implements PluginInterface {
             rdfStore.add(statement.subject, statement.predicate, statement.object, bgfGraph)
         }
         this.#domainGraph = new DomainGraph(rdfStore, uri)
+    }
+
+    //======================================
+
+    /** The unit system new diagrams are given. */
+    get newDiagramUnitSystem(): UnitSystemId {
+        return this.#newDiagramUnitSystem
+    }
+    set newDiagramUnitSystem(id: UnitSystemId) {
+        this.#newDiagramUnitSystem = id
+    }
+
+    /**
+     * The open diagram's unit system: its `pml:unitSystem`, SI when it has none, and `null` when the editor doesn't
+     * know it (or it has more than one).
+     */
+    unitSystemId(): UnitSystemId|null {
+        const store = this.#documentStore
+        if (!store) {
+            return IMPLICIT_UNIT_SYSTEM
+        }
+        const objects = store.statementsMatching($rdf.namedNode(this.#currentDocumentUri),
+                                                 $rdf.namedNode(UNIT_SYSTEM_PREDICATE), null)
+        if (objects.length === 0) {
+            return IMPLICIT_UNIT_SYSTEM
+        }
+        return (objects.length === 1 && $rdf.isNamedNode(objects[0]!.object)) ? unitSystemForIri(objects[0]!.object.value)
+                                                                              : null
+    }
+
+    /** The unit system values are stored in: the diagram's, or SI when the editor doesn't know it. */
+    get unitSystem(): UnitSystemId {
+        return this.unitSystemId() ?? IMPLICIT_UNIT_SYSTEM
+    }
+
+    /** Sets the open diagram's unit system, replacing any it has. */
+    setUnitSystem(id: UnitSystemId) {
+        const store = this.#documentStore
+        if (store) {
+            const documentNode = $rdf.namedNode(this.#currentDocumentUri)
+            const predicate = $rdf.namedNode(UNIT_SYSTEM_PREDICATE)
+            store.removeStatementsMatching(documentNode, predicate, null)
+            store.add(documentNode, predicate, $rdf.namedNode(UNIT_SYSTEM_IRIS[id]))
+        }
+    }
+
+    /**
+     * Converts an element's stored values into a unit system's units, as the same quantities: "1 mol-1" is
+     * "1e-15 fmol-1" in Cellular. A transform node's ratio, and a value that can't be converted, are kept.
+     */
+    rescaleValues(celldlObject: CellDLObject, id: UnitSystemId) {
+        const pluginData = <PluginData>celldlObject.pluginData(this.id)
+        if (!pluginData.managed || pluginData.baseComponent?.type === this.#transformNodeType) {
+            return
+        }
+        const store = celldlObject.rdfStore
+        const hasValue = BGF.uri('hasValue')
+        const subjects: $rdf.SubjectType[] = [celldlObject.uri]
+        for (const predicate of [BGF.uri('parameterValue'), BGF.uri('variableValue')]) {
+            for (const statement of store.statementsMatching(celldlObject.uri, predicate, null)) {
+                if ($rdf.isBlankNode(statement.object)) {
+                    subjects.push(statement.object as $rdf.SubjectType)
+                }
+            }
+        }
+        for (const subject of subjects) {
+            for (const statement of store.statementsMatching(subject, hasValue, null)) {
+                const value = rescaledValue(statement.object.value, id)
+                if (value !== undefined && $rdf.isLiteral(statement.object)) {
+                    store.removeStatements([statement])
+                    store.add(subject, hasValue,
+                              $rdf.literal(value, $rdf.namedNode((statement.object as $rdf.Literal).datatype.value)))
+                }
+            }
+        }
+    }
+
+    // A template's units in the diagram's unit system
+    #units(code: string): string {
+        return effectiveUnits(code, this.unitSystem)
+    }
+
+    // A stored value's units ("1 mmol" has "mmol"), if it has any: the element's own, or its parameter's or variable's
+    #storedUnits(objectUri: string, variable?: { predicate: string, varName: string }): string|undefined {
+        const pattern = variable === undefined ? `${objectUri} bgf:hasValue ?value`
+                      : `${objectUri} ${variable.predicate} [ bgf:varName "${variable.varName}" ; bgf:hasValue ?value ]`
+        for (const r of this.#documentStore?.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT ?value WHERE { ${pattern} }`) ?? []) {
+            const units = (r as Map<string, $rdf.Term>).get('value')?.value.trim().split(/\s+/)[1]
+            if (units) {
+                return units
+            }
+        }
     }
 
     //======================================
@@ -853,7 +962,7 @@ export class BondgraphPlugin implements PluginInterface {
             if (stored.length === 0) {
                 celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
                     PREFIX : <${this.#currentDocumentUri}#>
-                    INSERT DATA { ${objectUri} bgf:hasValue "0 ${value.units}"^^cdt:ucum }`)
+                    INSERT DATA { ${objectUri} bgf:hasValue "0 ${this.#units(value.units)}"^^cdt:ucum }`)
             }
         }
     }
@@ -1282,7 +1391,7 @@ export class BondgraphPlugin implements PluginInterface {
             let item = group.items[0]
             if (item) {
                 if (variable) {
-                    item.name = `${itemDefn.name} (${variable.units})`
+                    item.name = `${itemDefn.name} (${this.#units(variable.units)})`
                     item.optional = false
                 } else {
                     item.optional = false
@@ -1290,7 +1399,7 @@ export class BondgraphPlugin implements PluginInterface {
                 }
             } else if (variable) {
                 item = Object.assign({}, itemDefn, {
-                    name: `${itemDefn.name} (${variable.units})`,
+                    name: `${itemDefn.name} (${this.#units(variable.units)})`,
                     optional: false,
                     value: itemDefn.defaultValue
                 })
@@ -1306,7 +1415,7 @@ export class BondgraphPlugin implements PluginInterface {
                         PREFIX : <${this.#currentDocumentUri}#>
 
                         INSERT DATA {
-                           ${objectUri} bgf:hasValue "${newValue} ${variable!.units}"^^cdt:ucum .
+                           ${objectUri} bgf:hasValue "${newValue} ${this.#units(variable!.units)}"^^cdt:ucum .
                         }
                     `)
                 }
@@ -1327,7 +1436,7 @@ export class BondgraphPlugin implements PluginInterface {
                     itemId: `${group.groupId}/${variable.name}`,
                     property: property,
                     name: variable.name,
-                    units: variable.units,
+                    units: this.#units(variable.units),
                     minimumValue: 0,
                     defaultValue: 0,
                     value: 0,
@@ -1499,6 +1608,8 @@ export class BondgraphPlugin implements PluginInterface {
 
     #updateElementValue(value: ValueChange, celldlObject: CellDLObject) {
         const objectUri = celldlObject.uri.toString()
+        // An edit keeps the value's units
+        const storedUnits = this.#storedUnits(objectUri)
 
         celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
             PREFIX : <${this.#currentDocumentUri}#>
@@ -1513,11 +1624,12 @@ export class BondgraphPlugin implements PluginInterface {
         const elementTemplate = (<PluginData>celldlObject.pluginData(this.id)).elementTemplate
         const variable = elementTemplate!.value
         if (newValue) {
+            const units = storedUnits ?? this.#units(variable!.units)
             celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
                 PREFIX : <${this.#currentDocumentUri}#>
 
                 INSERT DATA {
-                   ${objectUri} bgf:hasValue "${newValue} ${variable!.units}"^^cdt:ucum .
+                   ${objectUri} bgf:hasValue "${newValue} ${units}"^^cdt:ucum .
                 }
             `)
         }
@@ -1535,6 +1647,8 @@ export class BondgraphPlugin implements PluginInterface {
         const predicate = (groupId === BG_PROPERTY_GROUP_ID.ElementParameters)
                         ? 'bgf:parameterValue'
                         : VARIABLE_VALUE
+        // An edit keeps the value's units
+        const storedUnits = this.#storedUnits(objectUri, { predicate, varName })
         celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
             PREFIX : <${this.#currentDocumentUri}#>
 
@@ -1555,7 +1669,7 @@ export class BondgraphPlugin implements PluginInterface {
             INSERT DATA {
                 ${objectUri} ${predicate} _:pv .
                 _:pv bgf:varName "${varName}" ;
-                     bgf:hasValue "${value.newValue} ${variable.units}"^^cdt:ucum .
+                     bgf:hasValue "${value.newValue} ${storedUnits ?? this.#units(variable.units)}"^^cdt:ucum .
             }
         `)
 // Check units...
@@ -1615,7 +1729,7 @@ export class BondgraphPlugin implements PluginInterface {
             template: elementTemplate?.type,
             templateName: elementTemplate?.name,
             symbol: pluginData.symbol ?? elementTemplate?.symbol ?? baseComponent.symbol,
-            valueUnits: elementTemplate?.value?.units
+            valueUnits: elementTemplate?.value ? this.#units(elementTemplate.value.units) : undefined
         }
     }
 

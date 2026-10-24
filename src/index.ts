@@ -43,6 +43,7 @@ export type {
     DiagramChange,
     EditorChrome,
     EditorData,
+    EditorDocumentCommand,
     EditorEditCommand,
     EditorElementCommand,
     EditorExportCommand,
@@ -77,8 +78,16 @@ export type {
     ElementError,
     ElementField,
     ElementValue,
-    NamedElementValue
+    NamedElementValue,
+    UnitSystemResult
 } from '#root/plugins/bondgraph/elements'
+
+export {
+    UNIT_SYSTEM_IDS,
+    UNIT_SYSTEM_IRIS,
+    UNIT_SYSTEM_PREDICATE,
+    type UnitSystemId
+} from '#root/plugins/bondgraph/unitsystem'
 
 export { bgRdfStatements } from '#root/plugins/bondgraph/bgrdf'
 
