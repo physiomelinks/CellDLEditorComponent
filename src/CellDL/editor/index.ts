@@ -38,7 +38,7 @@ import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 import { round } from '#editor/utils'
 
 import { isMacOs } from '#root/utils/common'
-import { type Annotations, PANEL_ID, type SvgViewerOptions, type ViewerEvent } from '#root/utils/editor-types'
+import { type Annotations, PANEL_ID, type SvgViewerOptions, type ViewerEvent, type ViewInfo } from '#root/utils/editor-types'
 import { type Point, type PointLike, PointMath } from '#root/utils/points'
 import { imagesLoaded } from '#root/utils/svgUtils'
 import type { StringProperties } from '#root/utils/types'
@@ -1846,14 +1846,35 @@ export class CellDLEditor {
         this.#panzoom?.zoomBy(1 / ZOOM_STEP)
     }
 
-    /** Zooms and pans so that every component is in view */
-    zoomToFit() {
-        this.#panzoom?.zoomToFit(this.#contentBounds())
+    /** Zooms and pans so that every component is in view, zooming in no further than `maxScale` */
+    zoomToFit(maxScale?: number) {
+        this.#panzoom?.zoomToFit(this.#contentBounds(), undefined, maxScale)
+    }
+
+    /**
+     * Zooms to a scale, with a point (in SVG coordinates) at the centre of the view:
+     * by default the components' centre, or, with none, the view's.
+     */
+    zoomTo(scale: number, centre: PointLike|null = null) {
+        const bounds = this.#contentBounds()
+        this.#panzoom?.zoomTo(scale, centre ?? (bounds ? { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 } : null))
     }
 
     /** The view's scale, screen pixels per SVG unit */
     get zoomScale(): number {
         return this.#panzoom?.scale ?? 1
+    }
+
+    /** The view, and where the components are, in SVG coordinates */
+    get viewState(): ViewInfo {
+        const bounds = this.#contentBounds()
+        const centre = this.#panzoom?.centre ?? { x: 0, y: 0 }
+        return {
+            scale: this.zoomScale,
+            centre: { x: centre.x, y: centre.y },
+            fitScale: this.#panzoom?.fitScale(bounds) ?? null,
+            bounds: bounds ? { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom } : null
+        }
     }
 
     #contentBounds(): Bounds|null {
