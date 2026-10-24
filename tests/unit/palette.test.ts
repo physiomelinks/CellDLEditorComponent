@@ -12,7 +12,9 @@ import { addBond } from '#editor/editor/placing'
 import { sideLabels } from '#editor/editor/sidelabels'
 import { componentLibraryPlugin } from '#root/plugins'
 import { equationText } from '#root/plugins/bondgraph/equations'
-import { paletteEntries, placeEntry, searchEntries, SIDE_OFFSET } from '#root/plugins/bondgraph/palette'
+import {
+    knownDomain, paletteDomains, paletteEntries, placeEntry, searchEntries, SIDE_OFFSET
+} from '#root/plugins/bondgraph/palette'
 
 //==============================================================================
 
@@ -66,6 +68,45 @@ describe('the palette\'s entries', () => {
         expect(all.slice(0, 8)).toEqual(paletteEntries('chemical'))
         expect(all.filter(e => e.label.startsWith('Zero storage node')).map(e => e.label))
             .toEqual(['Zero storage node (q)', 'Zero storage node (u)'])
+    })
+
+    test('the filter offers Chemical, every other template domain, then All domains', () => {
+        expect(paletteDomains().map(o => o.domain)).toEqual(['chemical', 'electrical', 'hydraulic', 'mechanical', 'all'])
+        expect(paletteDomains().map(o => o.label)).toEqual(['Chemical', 'Electrical', 'Hydraulic', 'Mechanical', 'All domains'])
+        expect(knownDomain('Electrical')).toBe('electrical')
+        expect(knownDomain('all')).toBe('all')
+        expect(knownDomain('optical')).toBe('chemical')
+        expect(knownDomain(undefined)).toBe('chemical')
+        expect(paletteEntries('optical')).toEqual(paletteEntries('chemical'))
+    })
+
+    test('another domain lists its own element templates, with the elements every domain shares', () => {
+        const plugin = componentLibraryPlugin.getPlugin('bondgraph-components') as unknown as {
+            templateDomain(type: string): string|undefined
+        }
+        for (const domain of ['electrical', 'hydraulic', 'mechanical']) {
+            const entries = paletteEntries(domain)
+            const labels = entries.map(e => e.label.toLowerCase())
+            expect(new Set(labels).size).toBe(labels.length)
+            expect(new Set(entries.map(e => e.id)).size).toBe(entries.length)
+            for (const entry of entries) {
+                expect(entry.domain).toBe(domain)
+                expect(entry.id).toStartWith(`${domain}/`)
+                if (entry.elementType) {
+                    expect(plugin.templateDomain(entry.elementType)).toBe(`${BGF}${domain[0]!.toUpperCase()}${domain.slice(1)}`)
+                }
+            }
+            // junctions and the transform node have no domain, so show in each
+            for (const shared of ['Zero node', 'One node', 'Transform node']) {
+                expect(entries.map(e => e.label)).toContain(shared)
+            }
+            expect(entries.map(e => e.label)).not.toContain('Species')
+        }
+        expect(paletteEntries('electrical').filter(e => e.elementType).map(e => e.label)).toEqual(expect.arrayContaining([
+            'Electrical capacitor', 'Electrical resistor', 'Electrical inductor', 'Voltage source', 'Current source'
+        ]))
+        // every domain's entries are reachable by id, but All domains keeps to the chemical and generic ones
+        expect(paletteEntries('all').some(e => e.domain === 'electrical')).toBe(false)
     })
 
     test('search by label first, then by name', () => {
@@ -127,6 +168,16 @@ describe('placing a palette entry', () => {
         const reaction = [...diagram.svgDiagram.querySelectorAll('g.celldl-Component')]
             .map(e => diagram.objectById(e.id)!).find(o => values(o, `${BGF}hasSpecies`)[0] === 'R1')!
         expect(parameters(reaction)).toEqual({ kappa: '1 mol/s' })
+    })
+
+    test('gives an electrical element its domain\'s type', async () => {
+        await diagramWithElements()
+        const capacitor = paletteEntries('electrical').find(e => e.label === 'Electrical capacitor')!
+        const [main] = await placeEntry(capacitor.id, { x: 0, y: 500 })
+        expect(values(main!, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type')).toContain(capacitor.elementType!)
+        const junction = paletteEntries('electrical').find(e => e.label === 'Zero node')!
+        const [zero] = await placeEntry(junction.id, { x: 200, y: 500 })
+        expect(values(zero!, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type')).toContain(`${BGF}ZeroNode`)
     })
 
     test('uses the diagram\'s most used location', async () => {

@@ -1,16 +1,7 @@
 <template lang="pug">
     .element-palette(:class="layout" role="toolbar" aria-label="Elements")
-        .palette-filter(role="radiogroup" aria-label="Which domains' elements")
-            button.filter-option(
-                v-for="option in DOMAIN_OPTIONS"
-                :key="option.domain"
-                type="button"
-                role="radio"
-                :aria-checked="paletteDomain === option.domain"
-                :class="{ active: paletteDomain === option.domain }"
-                :data-domain="option.domain"
-                @click="paletteDomain = option.domain"
-            ) {{ option.label }}
+        select.palette-filter(v-model="shownDomain" aria-label="Which domain's elements")
+            option(v-for="option in domainOptions" :key="option.domain" :value="option.domain") {{ option.label }}
         .palette-tiles
             .palette-tile(
                 v-for="entry in entries"
@@ -38,9 +29,9 @@
 
 import * as vue from 'vue'
 
-import { type PaletteDomain, type PaletteEntry, paletteEntries } from '#root/plugins/bondgraph/palette'
+import { type PaletteEntry, paletteDomains, paletteEntries } from '#root/plugins/bondgraph/palette'
 
-import { armEntry, disarm, entryEventDetails, paletteDomain } from './paletteState'
+import { armEntry, disarm, entryEventDetails, shownDomain } from './paletteState'
 
 //==============================================================================
 
@@ -48,12 +39,9 @@ defineProps<{
     layout: 'top' | 'left'
 }>()
 
-const DOMAIN_OPTIONS: { domain: PaletteDomain, label: string }[] = [
-    { domain: 'chemical', label: 'Chemical' },
-    { domain: 'all', label: 'All domains' }
-]
+const domainOptions = paletteDomains()
 
-const entries = vue.computed(() => paletteEntries(paletteDomain.value))
+const entries = vue.computed(() => paletteEntries(shownDomain.value))
 
 //==============================================================================
 
@@ -137,27 +125,18 @@ function dragStart(event: DragEvent, entry: PaletteEntry) {
     border-right: none;
 }
 .palette-filter {
-    display: flex;
     flex: none;
+    padding: 2px 4px;
+    font-size: 11px;
     border: 1px solid var(--editor-border-color);
     border-radius: 6px;
-    overflow: hidden;
-}
-.element-palette .palette-filter {
-    flex-direction: column;
-}
-.filter-option {
-    padding: 2px 6px;
-    font-size: 11px;
-    white-space: nowrap;
-    background: transparent;
+    background-color: var(--p-content-background);
     color: inherit;
-    border: none;
     cursor: pointer;
 }
-.filter-option.active {
-    background-color: #2f6fd6;
-    color: #fff;
+.palette-filter option {
+    background-color: var(--p-content-background);
+    color: var(--p-text-color);
 }
 .palette-tiles {
     display: flex;

@@ -6,18 +6,13 @@
         :style="position"
         @keydown="keyDown"
     )
-        .popover-filter(role="radiogroup" aria-label="Which domains' elements")
-            button.filter-option(
-                v-for="option in DOMAIN_OPTIONS"
-                :key="option.domain"
-                type="button"
-                role="radio"
-                tabindex="-1"
-                :aria-checked="paletteDomain === option.domain"
-                :class="{ active: paletteDomain === option.domain }"
-                :data-domain="option.domain"
-                @click="setDomain(option.domain)"
-            ) {{ option.label }}
+        select.popover-filter(
+            ref="filter"
+            v-model="shownDomain"
+            aria-label="Which domain's elements"
+            @change="search?.focus()"
+        )
+            option(v-for="option in domainOptions" :key="option.domain" :value="option.domain") {{ option.label }}
         input.popover-search(
             ref="search"
             type="search"
@@ -50,9 +45,9 @@
 
 import * as vue from 'vue'
 
-import { type PaletteDomain, type PaletteEntry, searchEntries } from '#root/plugins/bondgraph/palette'
+import { type PaletteEntry, paletteDomains, searchEntries } from '#root/plugins/bondgraph/palette'
 
-import { paletteDomain } from './paletteState'
+import { shownDomain } from './paletteState'
 
 //==============================================================================
 
@@ -66,17 +61,15 @@ const emit = defineEmits<{
     close: []
 }>()
 
-const DOMAIN_OPTIONS: { domain: PaletteDomain, label: string }[] = [
-    { domain: 'chemical', label: 'Chemical' },
-    { domain: 'all', label: 'All domains' }
-]
+const domainOptions = paletteDomains()
 
 const root = vue.ref<HTMLElement | null>(null)
+const filter = vue.ref<HTMLSelectElement | null>(null)
 const search = vue.ref<HTMLInputElement | null>(null)
 const query = vue.ref('')
 const index = vue.ref(0)
 
-const matches = vue.computed(() => searchEntries(query.value, paletteDomain.value))
+const matches = vue.computed(() => searchEntries(query.value, shownDomain.value))
 const current = vue.computed(() => matches.value[index.value])
 
 vue.watch(matches, () => {
@@ -91,16 +84,15 @@ const position = vue.computed(() => {
     return { left: `${left}px`, top: `${top}px` }
 })
 
-function setDomain(domain: PaletteDomain) {
-    paletteDomain.value = domain
-    search.value?.focus()
-}
-
 function pick(entry: PaletteEntry) {
     emit('pick', entry.id)
 }
 
 function keyDown(event: KeyboardEvent) {
+    // The domain dropdown keeps its own arrow keys and Enter
+    if (event.target === filter.value && event.key !== 'Escape') {
+        return
+    }
     const handled = ['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)
     if (event.key === 'ArrowDown') {
         index.value = Math.min(index.value + 1, matches.value.length - 1)
@@ -158,23 +150,17 @@ vue.onUnmounted(() => {
     font-size: 13px;
 }
 .popover-filter {
-    display: flex;
+    padding: 2px 4px;
+    font-size: 12px;
     border: 1px solid var(--editor-border-color);
     border-radius: 6px;
-    overflow: hidden;
-}
-.filter-option {
-    flex: 1;
-    padding: 2px 6px;
-    font-size: 12px;
-    background: transparent;
+    background-color: var(--p-content-background);
     color: inherit;
-    border: none;
     cursor: pointer;
 }
-.filter-option.active {
-    background-color: #2f6fd6;
-    color: #fff;
+.popover-filter option {
+    background-color: var(--p-content-background);
+    color: var(--p-text-color);
 }
 .popover-search {
     padding: 3px 6px;

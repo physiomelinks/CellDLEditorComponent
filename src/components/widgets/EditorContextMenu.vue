@@ -13,7 +13,7 @@ useThemeCssVariables('contextmenu')
 
 //==============================================================================
 
-import { CONTEXT_MENU } from '#editor/editor'
+import { CANVAS_PRESS_EVENT, CONTEXT_MENU } from '#editor/editor'
 
 export type ContextMenuProps = {
     state: Set<CONTEXT_MENU>,
@@ -44,8 +44,20 @@ function keyDownEvent(event: KeyboardEvent) {
         menu.value?.hide()
     }
 }
-vue.onMounted(() => document.addEventListener('keydown', keyDownEvent))
-vue.onUnmounted(() => document.removeEventListener('keydown', keyDownEvent))
+// A press on the canvas closes it; PrimeVue only closes it on a click outside the canvas it opened over
+function canvasPressEvent() {
+    if (menu.value?.visible) {
+        menu.value.hide()
+    }
+}
+vue.onMounted(() => {
+    document.addEventListener('keydown', keyDownEvent)
+    document.addEventListener(CANVAS_PRESS_EVENT, canvasPressEvent)
+})
+vue.onUnmounted(() => {
+    document.removeEventListener('keydown', keyDownEvent)
+    document.removeEventListener(CANVAS_PRESS_EVENT, canvasPressEvent)
+})
 
 function contextMenuEvent(id: string) {
     document.dispatchEvent(

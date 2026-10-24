@@ -2,6 +2,7 @@
     .bottom-margin(v-if="possibleValues !== undefined")
         FloatLabel(variant="on")
             Select(
+                ref="select"
                 v-model="discreteValue"
                 :options="possibleValues"
                 :disabled="readonly"
@@ -57,6 +58,8 @@ useThemeCssVariables('inputtext')
 useThemeCssVariables('select')
 
 import KeyFilter from 'primevue/keyfilter';
+
+import { CANVAS_PRESS_EVENT } from '#editor/editor'
 //  v-keyfilter="{ pattern: /^[+-]?((\d+(\.\d*)?)|(\.\d+))([eE][+-]?\d+)?$/, validateOnly: true }"
 
 import type * as locApi from '../../libopencor/locUIJsonApi'
@@ -66,6 +69,16 @@ type ValueType = number|string|locApi.IUiJsonDiscreteInputPossibleValue
 const inputValue = defineModel<ValueType>({ required: true })
 
 const emits = defineEmits(['change'])
+
+// A press on the canvas closes the dropdown, as a click elsewhere does, even when it starts a drag or a pan
+const select = vue.ref<{ overlayVisible?: boolean, hide?: () => void } | null>(null)
+function canvasPressEvent() {
+    if (select.value?.overlayVisible) {
+        select.value.hide?.()
+    }
+}
+vue.onMounted(() => document.addEventListener(CANVAS_PRESS_EVENT, canvasPressEvent))
+vue.onUnmounted(() => document.removeEventListener(CANVAS_PRESS_EVENT, canvasPressEvent))
 
 const props = defineProps<{
     name: string

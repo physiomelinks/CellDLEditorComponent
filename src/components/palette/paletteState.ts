@@ -25,12 +25,18 @@ import * as vue from 'vue'
 
 import type { TemplateEventDetails } from '#editor/components'
 import { EDITOR_TOOL_IDS } from '#editor/editor'
-import type { PaletteDomain, PaletteEntry } from '#root/plugins/bondgraph/palette'
+import { knownDomain, type PaletteDomain, type PaletteEntry } from '#root/plugins/bondgraph/palette'
 
 //==============================================================================
 
-/** The filter both show: chemistry's elements, or every domain's */
+/** The filter both show, as set: a domain's id, or `all` */
 export const paletteDomain = vue.ref<PaletteDomain>('chemical')
+
+/** The filter as shown: the set one if the templates have it, else `chemical` */
+export const shownDomain = vue.computed<PaletteDomain>({
+    get: () => knownDomain(paletteDomain.value),
+    set: (domain) => { paletteDomain.value = domain }
+})
 
 /** What a drag or an armed tile places: the entry, centred where it lands */
 export function entryEventDetails(entry: PaletteEntry): TemplateEventDetails {

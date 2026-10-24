@@ -22,6 +22,8 @@ limitations under the License.
 // template chosen, so a new element needs no dropdown step, and store their defaults (parameters 1, an initial value
 // 0), a species name not yet used (S1, S2, ...) and the diagram's most used location. "Reaction with sides" is a
 // macro: a chemical reaction between a reactants and a products 1-junction, bonded through its f and r ports.
+// Every other domain lists its own element templates, with junctions and other domain-free elements, and "All
+// domains" adds every library template, its domain's template then chosen in Properties.
 
 import type { CellDLConnectedObject, CellDLObject } from '#editor/celldlObjects'
 import { notifyChanges } from '#editor/editor'
@@ -40,8 +42,13 @@ import type { BGLibraryComponentTemplate } from './utils'
 const BGF = 'https://bg-rdf.org/ontologies/bondgraph-framework#'
 const PLUGIN_ID = 'bondgraph-components'
 
-/** The palette's filter: chemistry's elements, or every domain's */
-export type PaletteDomain = 'chemical' | 'all'
+/** The palette's filter: a physical domain's id (`chemical`, `electrical`, ...), or `all` for every domain's */
+export type PaletteDomain = 'all' | (string & {})
+
+export interface PaletteDomainOption {
+    domain: PaletteDomain
+    label: string
+}
 
 export interface PaletteEntry {
     /** Unique, e.g. `chemical/species` */
@@ -50,7 +57,7 @@ export interface PaletteEntry {
     label: string
     /** A distinct name, for the tile's tooltip */
     name: string
-    /** `chemical` entries show with either filter, `all` ones only with "All domains" */
+    /** The filter it shows with; `all` ones only show with "All domains" */
     domain: PaletteDomain
     kind: 'element' | 'macro'
     /** The library template drawn for the (main) element */
@@ -109,10 +116,67 @@ interface ResolvedEntry extends PaletteEntry {
 }
 
 let resolved: ResolvedEntry[] | null = null
+let domainOptions: PaletteDomainOption[] | null = null
 
 function libraryTemplates(): Map<string, BGLibraryComponentTemplate> {
     const library = bondgraphPlugin().componentLibrary
     return new Map((library.templates as BGLibraryComponentTemplate[]).map(t => [t.id, t]))
+}
+
+/** A domain IRI's filter id, e.g. `electrical` for `bgf:Electrical`. */
+function domainId(iri: string): string {
+    return iri.slice(iri.lastIndexOf('#') + 1).toLowerCase()
+}
+
+function namingFor(template: BGLibraryComponentTemplate): NameKind {
+    return REACTION_BASES.includes(template.type) ? 'R' : JUNCTION_BASES.includes(template.type) ? 'J' : 'S'
+}
+
+/** Distinct labels for `entries`, adding the template's symbol, then a count, to any shared one. */
+function distinctLabels(entries: { label: string, symbol: string }[]): string[] {
+    const counts = new Map<string, number>()
+    for (const e of entries) counts.set(e.label, (counts.get(e.label) ?? 0) + 1)
+    const seen = new Set<string>()
+    return entries.map(e => {
+        const base = (counts.get(e.label) ?? 0) > 1 ? `${e.label} (${e.symbol})` : e.label
+        let label = base
+        for (let n = 2; seen.has(label.toLowerCase()); n += 1) label = `${base} ${n}`
+        seen.add(label.toLowerCase())
+        return label
+    })
+}
+
+/** A domain's own entries: its element templates, and every element with no domain (junctions, ...). */
+function domainEntries(domain: string, templates: Map<string, BGLibraryComponentTemplate>): ResolvedEntry[] {
+    const plugin = bondgraphPlugin()
+    const found: { template: BGLibraryComponentTemplate, label: string, elementType?: string }[] = []
+    for (const template of templates.values()) {
+        const elementTemplates = plugin.baseElementTemplates(template.type)
+        if (elementTemplates.every(et => !et.domain)) {
+            found.push({ template, label: template.name })
+            continue
+        }
+        const types = new Set<string>()
+        for (const et of elementTemplates) {
+            if (et.domain && domainId(et.domain) === domain && !types.has(et.type)) {
+                types.add(et.type)
+                found.push({ template, label: et.name, elementType: et.type })
+            }
+        }
+    }
+    const labels = distinctLabels(found.map(f => ({ label: f.label, symbol: f.template.symbol })))
+    return found.map(({ template, elementType }, k) => ({
+        id: `${domain}/${template.id}${elementType ? `/${elementType.slice(elementType.lastIndexOf('#') + 1)}` : ''}`,
+        label: labels[k]!,
+        name: elementType ? labels[k]! : `${labels[k]}: shared by every domain`,
+        domain,
+        kind: 'element',
+        baseTemplateId: `${PLUGIN_ID}/${template.id}`,
+        elementType,
+        imageData: svgImageData(template.symbol, undefined, undefined, template.style),
+        naming: namingFor(template),
+        noSpeciesLocation: !!template.noSpeciesLocation
+    }))
 }
 
 function resolveEntries(): ResolvedEntry[] {
@@ -153,12 +217,36 @@ function resolveEntries(): ResolvedEntry[] {
             kind: 'element',
             baseTemplateId: `${PLUGIN_ID}/${template.id}`,
             imageData: svgImageData(template.symbol, undefined, undefined, template.style),
-            naming: REACTION_BASES.includes(template.type) ? 'R' : JUNCTION_BASES.includes(template.type) ? 'J' : 'S',
+            naming: namingFor(template),
             noSpeciesLocation: !!template.noSpeciesLocation
         })
     }
+    for (const { domain } of paletteDomains()) {
+        if (domain !== 'chemical' && domain !== 'all') entries.push(...domainEntries(domain, templates))
+    }
     resolved = entries
     return entries
+}
+
+/** The filter's options: Chemical, the templates' other domains, then All domains. */
+export function paletteDomains(): PaletteDomainOption[] {
+    if (domainOptions) return domainOptions
+    const others = bondgraphPlugin().physicalDomains().map(domainId).filter(d => d !== 'chemical').sort()
+    const label = (d: string) => d.charAt(0).toUpperCase() + d.slice(1)
+    const options: PaletteDomainOption[] = [
+        { domain: 'chemical', label: 'Chemical' },
+        ...others.map(domain => ({ domain, label: label(domain) })),
+        { domain: 'all', label: 'All domains' }
+    ]
+    // Only kept once the templates have loaded their domains
+    if (others.length) domainOptions = options
+    return options
+}
+
+/** `domain` if the filter has it (ignoring case), else `chemical`. */
+export function knownDomain(domain: string|undefined): PaletteDomain {
+    const id = (domain ?? '').toLowerCase()
+    return paletteDomains().some(o => o.domain === id) ? id : 'chemical'
 }
 
 function publicEntry(entry: ResolvedEntry): PaletteEntry {
@@ -166,9 +254,14 @@ function publicEntry(entry: ResolvedEntry): PaletteEntry {
     return rest
 }
 
-/** The palette's entries for a filter: the chemical ones, then (for `all`) every library template. */
+/**
+ * The palette's entries for a filter: a domain's own, or for `all` the chemical ones then every library template.
+ * An unknown domain shows the chemical ones.
+ */
 export function paletteEntries(domain: PaletteDomain = 'chemical'): PaletteEntry[] {
-    return resolveEntries().filter(e => domain === 'all' || e.domain === 'chemical').map(publicEntry)
+    const shown = knownDomain(domain)
+    return resolveEntries().filter(e => shown === 'all' ? (e.domain === 'chemical' || e.domain === 'all')
+                                                        : e.domain === shown).map(publicEntry)
 }
 
 /** The entry with id `entryId`. */
