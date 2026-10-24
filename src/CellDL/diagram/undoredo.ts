@@ -364,7 +364,7 @@ export class PathsUndoState extends UndoState {
 
 /**
  * An object's property statements: those with it as subject, and those of the
- * blank nodes they reach, such as its `bgf:parameterValue` and `bgf:VariableValue`
+ * blank nodes they reach, such as its `bgf:parameterValue` and `bgf:variableValue`
  * nodes.
  */
 function propertyStatements(celldlObject: CellDLObject): Statement[] {

@@ -171,7 +171,8 @@ export class PathMaker {
         return false
     }
 
-    static validStartObject(celldlObject: CellDLObject): PathNode | null {
+    /** A path's start at an object, or `null`, saying why not (by default as a tooltip). */
+    static validStartObject(celldlObject: CellDLObject, say: (msg: string) => void = alert.tooltip): PathNode | null {
         if (celldlObject.isUnconnectedPort) {
             const connection = celldlObject.connections[0]
             // An UnconnectedPort is only valid if it is the target of a connection
@@ -182,11 +183,11 @@ export class PathMaker {
             }
         }
         if (celldlObject.isConnectable && !celldlObject.isConduit) {
-            if (PathMaker.#checkMaxConnections(<CellDLConnectedObject>celldlObject)) {
+            if (PathMaker.#checkMaxConnections(<CellDLConnectedObject>celldlObject, false, say)) {
                 return new PathNode(<CellDLConnectedObject>celldlObject)
             }
         } else if (!celldlObject.isConnection) {
-            alert.tooltip('Component cannot start a path')
+            say('Component cannot start a path')
         }
         return null
     }

@@ -206,7 +206,7 @@ export class BondDrag {
             }
             const object = this.#pending.object
             this.#pending = null
-            if (!this.#start(object)) {
+            if (!this.#start(object, { x: event.clientX, y: event.clientY })) {
                 return true
             }
         }
@@ -286,14 +286,15 @@ export class BondDrag {
         return this.#bondable(this.#host.objectAt(event.target as SVGGraphicsElement))
     }
 
-    #start(object: CellDLObject): boolean {
+    /** Starts a bond at an object, or says at client point `at` why it can't. */
+    #start(object: CellDLObject, at: PointLike): boolean {
         const frame = this.#host.editorFrame
         const diagram = this.#host.celldlDiagram
         if (!frame || !diagram) {
             return false
         }
         this.hideHandle()
-        const startNode = PathMaker.validStartObject(object)
+        const startNode = PathMaker.validStartObject(object, (msg) => this.#host.flashError(msg, at))
         if (startNode === null) {
             return false
         }

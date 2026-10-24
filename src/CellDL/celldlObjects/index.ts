@@ -406,7 +406,6 @@ export class CellDLConnectedObject extends CellDLMoveableObject {
     static celldlTypeName = 'Connector'
 
     #connections: Map<string, CellDLConnection> = new Map()
-    #maxConnections: number
 
     constructor(
         uri: NamedNode,
@@ -415,7 +414,6 @@ export class CellDLConnectedObject extends CellDLMoveableObject {
         updateStore: boolean=true
     ) {
         super(uri, objectTemplate, celldlDiagram, updateStore)
-        this.#maxConnections = componentLibraryPlugin.getMaxConnections(this)
     }
 
     toString(): string {
@@ -430,8 +428,9 @@ export class CellDLConnectedObject extends CellDLMoveableObject {
         return true
     }
 
+    /** Asked each time, as an element's template, and so its ports, can change */
     get maxConnections(): number {
-        return this.#maxConnections
+        return componentLibraryPlugin.getMaxConnections(this)
     }
 
     get numConnections(): number {
