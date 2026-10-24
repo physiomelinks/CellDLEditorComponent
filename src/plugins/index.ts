@@ -88,8 +88,9 @@ export interface PluginInterface {
      *
      * @param uri The diagram's URI.
      * @param rdfStore The RDF store with metadata about the diagram.
+     * @param newDiagram Whether the diagram is new, rather than loaded from a file.
      */
-    openDiagram: (uri: string, rdfStore: MetadataStore) => void
+    openDiagram: (uri: string, rdfStore: MetadataStore, newDiagram?: boolean) => void
 
     /**
      * Add statements about the diagram's plugin components to its RDF store.
@@ -296,10 +297,10 @@ export class ComponentLibraryPlugin {
 
     //==========================================================================
 
-    openDiagram(uri: string, rdfStore: MetadataStore) {
+    openDiagram(uri: string, rdfStore: MetadataStore, newDiagram: boolean=false) {
         this.#currentDocumentUri = uri
         for (const plugin of this.#registeredPlugins.values()) {
-            plugin.openDiagram(uri, rdfStore)
+            plugin.openDiagram(uri, rdfStore, newDiagram)
         }
     }
 

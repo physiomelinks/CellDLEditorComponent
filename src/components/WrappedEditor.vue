@@ -103,11 +103,14 @@ import {
     type DiagramElement,
     type ElementEdit,
     type ElementError,
+    diagramUnitSystem,
     listElements,
-    setElements
+    setElements,
+    setUnitSystem
 } from '#root/plugins/bondgraph/elements'
 
-import { BondgraphPlugin } from '#root/plugins/bondgraph'
+import { BondgraphPlugin, PLUGIN_ID as BONDGRAPH_PLUGIN_ID } from '#root/plugins/bondgraph'
+import { isUnitSystemId, NEW_DIAGRAM_UNIT_SYSTEM, type UnitSystemId } from '#root/plugins/bondgraph/unitsystem'
 import { VALUES_CHROME_KEY, type ValuesChrome, type ValuesMode } from '#root/plugins/bondgraph/values'
 import BondgraphPopover from '#root/plugins/bondgraph/bondgraph.vue'
 import type { PaletteDomain } from '#root/plugins/bondgraph/palette'
@@ -206,7 +209,33 @@ export type EditorElementCommand = {
     }
 }
 
-export type CellDLEditorCommand = EditorEditCommand
+/**
+ * Read or set the diagram's unit system: `'si'` (mol, L, J, C) or `'cellular'`
+ * (fmol, pL, fJ, fC). Both reply with `editor-data`, its `data` the diagram's
+ * unit system after the command (`''` when the editor doesn't know it), and
+ * `error` when it couldn't be set. `kind` (default `'unit-system'`) is returned
+ * in the reply.
+ *
+ * * `unit-system` reads it. A diagram without one is SI.
+ * * `set-unit-system` sets it as one undoable step, reported as an edit. New
+ *   values are then stored in its units; with `convert`, stored values are
+ *   converted into them as the same quantities, else they keep their units.
+ */
+export type EditorDocumentCommand = {
+    command: 'document'
+    options: {
+        action: 'unit-system'
+        kind?: string
+    } | {
+        action: 'set-unit-system'
+        kind?: string
+        id: UnitSystemId
+        convert?: boolean
+    }
+}
+
+export type CellDLEditorCommand = EditorDocumentCommand
+                                | EditorEditCommand
                                 | EditorElementCommand
                                 | EditorExportCommand
                                 | EditorFileCommand
@@ -289,10 +318,17 @@ export interface CellDLEditorProps {
     editorCommand?: CellDLEditorCommand
     options?: SvgViewerOptions
     theme?: Theme
+    /**
+     * The unit system new diagrams are given. A diagram that is opened keeps
+     * its own, and is SI without one. Default `'cellular'`.
+     */
+    unitSystem?: UnitSystemId
 }
 export type EditorData = {
     data: string
     kind?: string
+    /** Why a command couldn't be done */
+    error?: string
 }
 
 /**
@@ -312,6 +348,8 @@ export type ElementsChange = {
     kind?: string
     revision: number
     elements: DiagramElement[]
+    /** The diagram's unit system, which its values' new units are in (`null` when the editor doesn't know it) */
+    unitSystem: UnitSystemId|null
 }
 
 /** The reply to an `element` command's `set` or `select` */
@@ -494,7 +532,11 @@ async function reportDiagramChange() {
             rdfRevision += 1
             emit('diagram-changed', { revision: rdfRevision, rdf })
             if (props.options?.elementList) {
-                emit('elements', { revision: rdfRevision, elements: listElements(diagram) })
+                emit('elements', {
+                    revision: rdfRevision,
+                    elements: listElements(diagram),
+                    unitSystem: diagramUnitSystem(diagram)
+                })
             }
         }
     } catch (err) {
@@ -882,6 +924,8 @@ vue.watch(
             }
         } else if (props.editorCommand?.command === 'element') {
             await elementCommand(props.editorCommand as EditorElementCommand)
+        } else if (props.editorCommand?.command === 'document') {
+            await documentCommand(props.editorCommand as EditorDocumentCommand)
         } else if (props.editorCommand?.command === 'set-state') {
             const command = props.editorCommand as EditorSetStateCommand
             const options = command.options
@@ -912,7 +956,12 @@ async function elementCommand(command: EditorElementCommand) {
     const options = command.options
     const kind = options.kind
     if (options.action === 'list') {
-        emit('elements', { kind, revision: rdfRevision, elements: listElements(celldlDiagram) })
+        emit('elements', {
+            kind,
+            revision: rdfRevision,
+            elements: listElements(celldlDiagram),
+            unitSystem: diagramUnitSystem(celldlDiagram)
+        })
     } else if (options.action === 'set') {
         const result = await setElements(celldlEditor, celldlDiagram, options.edits ?? [])
         emit('element-result', { kind, ...result })
@@ -925,6 +974,33 @@ async function elementCommand(command: EditorElementCommand) {
         })
     }
 }
+
+async function documentCommand(command: EditorDocumentCommand) {
+    const options = command.options
+    const kind = options.kind ?? 'unit-system'
+    if (options.action === 'unit-system') {
+        emit('editor-data', { kind, data: diagramUnitSystem(celldlDiagram) ?? '' })
+    } else if (options.action === 'set-unit-system') {
+        const result = await setUnitSystem(celldlEditor, celldlDiagram, options.id, options.convert ?? false)
+        emit('editor-data', result.error ? { kind, data: result.unitSystem ?? '', error: result.error }
+                                         : { kind, data: result.unitSystem ?? '' })
+    }
+}
+
+// The unit system new diagrams are given
+vue.watch(
+    () => props.unitSystem,
+    (id) => {
+        const plugin = componentLibraryPlugin.getPlugin(BONDGRAPH_PLUGIN_ID) as BondgraphPlugin|undefined
+        if (id !== undefined && !isUnitSystemId(id)) {
+            console.warn(`Unknown unit system '${id}': new diagrams are '${NEW_DIAGRAM_UNIT_SYSTEM}'`)
+        }
+        if (plugin) {
+            plugin.newDiagramUnitSystem = isUnitSystemId(id) ? id : NEW_DIAGRAM_UNIT_SYSTEM
+        }
+    },
+    { immediate: true }
+)
 
 //==============================================================================
 

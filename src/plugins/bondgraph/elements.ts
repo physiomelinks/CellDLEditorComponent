@@ -22,6 +22,8 @@ limitations under the License.
 // them in one place rather than in the Properties panel. Both go through the
 // Properties panel's own code, so they read and write the same RDF.
 
+import * as $rdf from '@celldl/rdf'
+
 import type { CellDLConnectedObject, CellDLObject } from '#editor/celldlObjects'
 import { loadPropertyGroups } from '#editor/components/properties'
 import type { CellDLDiagram } from '#editor/diagram'
@@ -42,6 +44,7 @@ import {
     type BondgraphPlugin,
     PLUGIN_ID
 } from './index'
+import { isUnitSystemId, type UnitSystemId } from './unitsystem'
 
 //==============================================================================
 
@@ -351,6 +354,60 @@ async function setElement(plugin: BondgraphPlugin, celldlObject: CellDLObject, e
     }
     return await componentLibraryPlugin.updateObjectProperties(celldlObject, PANEL_ID.PROPERTIES_PANEL, itemId,
                                                                { oldValue, newValue }, groups)
+}
+
+//==============================================================================
+
+/**
+ * The diagram's unit system: `'si'` when it has none, and `null` when the
+ * editor doesn't know the one it has.
+ */
+export function diagramUnitSystem(diagram: CellDLDiagram|null|undefined): UnitSystemId|null {
+    const plugin = bondgraphPlugin()
+    return (diagram && plugin) ? plugin.unitSystemId() : null
+}
+
+/** The reply to setting a diagram's unit system */
+export type UnitSystemResult = {
+    ok: boolean
+    /** The diagram's unit system after the change, as `diagramUnitSystem()` gives it */
+    unitSystem: UnitSystemId|null
+    error?: string
+}
+
+/**
+ * Sets the diagram's unit system, in one undoable step. New values are then
+ * stored in its units. With `convert`, stored values are converted into its
+ * units as the same quantities ("1 mol-1" is "1e-15 fmol-1"); otherwise they keep
+ * theirs, which bg2cellml converts.
+ */
+export async function setUnitSystem(editor: CellDLEditor, diagram: CellDLDiagram|null|undefined, id: string,
+                                    convert: boolean=false): Promise<UnitSystemResult> {
+    const plugin = bondgraphPlugin()
+    if (!diagram || !plugin) {
+        return { ok: false, unitSystem: null, error: 'No diagram is open' }
+    }
+    if (!isUnitSystemId(id)) {
+        return { ok: false, unitSystem: plugin.unitSystemId(), error: `Unknown unit system '${id}'` }
+    }
+    const elements = diagram.objects.filter(object => plugin.describeElement(object))
+    // The document's own statements are undone as an object's properties are
+    const documentObject = {
+        id: '',
+        uri: $rdf.namedNode(diagram.uri),
+        rdfStore: diagram.rdfStore,
+        pluginIds: [],
+        pluginData: () => ({})
+    } as unknown as CellDLObject
+    await editor.editProperties([documentObject, ...elements], async () => {
+        plugin.setUnitSystem(id)
+        if (convert) {
+            for (const element of elements) {
+                plugin.rescaleValues(element, id)
+            }
+        }
+    }, true)
+    return { ok: true, unitSystem: plugin.unitSystemId() }
 }
 
 //==============================================================================
