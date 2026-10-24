@@ -21,11 +21,12 @@
             )
                 img.palette-glyph(:src="entry.imageData" alt="" draggable="false")
                 span.palette-label {{ entry.label }}
-        //- Drawn boxes, which aren't any domain's, so shown whatever the filter
+        //- Drawn boxes, which aren't any domain's, so shown whatever the filter. Icons only, named by their
+        //- tooltips and aria-labels, so they take little width.
         .palette-group.spatial(role="group" aria-label="Spatial")
             span.palette-group-label Spatial
             .palette-tiles
-                .palette-tile(
+                .palette-tile.icon-only(
                     v-for="entry in SPATIAL_ENTRIES"
                     :key="entry.id"
                     :data-entry-id="entry.id"
@@ -42,7 +43,6 @@
                     @keydown.space.prevent="toggleSpatial(entry)"
                 )
                     img.palette-glyph(:src="entry.imageData" alt="" draggable="false")
-                    span.palette-label {{ entry.label }}
 </template>
 
 <script setup lang="ts">
@@ -248,6 +248,9 @@ function startDrag(event: DragEvent, entryId: string, details: object) {
     border-radius: 6px;
     cursor: grab;
     text-align: center;
+}
+.palette-tile.icon-only {
+    min-width: 0;
 }
 .palette-tile:hover,
 .palette-tile:focus-visible {
