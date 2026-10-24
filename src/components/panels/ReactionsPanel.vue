@@ -9,19 +9,21 @@
                 | A new species gets a new store.
             p.note(v-if="needValues.length") New: {{ needValues.join(", ") }}, with parameters of 1 and initial values of 0.
             p(v-if="steps.length === 0") This diagram has no reactions yet.
-            .step.reactions-step(v-for="step in steps" :key="step.id" :class="step.kind")
-                .heading
-                    span.name {{ step.name }}
-                    span.kind {{ step.kind === 'reaction' ? 'reaction ⇌' : step.kind === 'transport' ? 'transport ⇄' : 'flow ⇄' }}
-                textarea.equation(
-                    v-model="step.text"
-                    :rows="Math.max(1, Math.ceil(step.text.length / 24))"
-                    :aria-label="`Equation of ${step.name}`"
-                    spellcheck="false"
-                    @keydown.enter.prevent="apply(step)"
-                    @keydown.escape="refresh"
-                )
-                .error(v-if="errors[step.id]") {{ errors[step.id] }}
+            section.region-group(v-for="group in groups" :key="group.key")
+                h4.region-heading {{ group.title }}
+                .step.reactions-step(v-for="step in group.steps" :key="step.id" :class="step.kind")
+                    .heading
+                        span.name {{ step.name }}
+                        span.kind {{ step.kind === 'reaction' ? 'reaction ⇌' : step.kind === 'transport' ? 'transport ⇄' : 'flow ⇄' }}
+                    textarea.equation(
+                        v-model="step.text"
+                        :rows="Math.max(1, Math.ceil(step.text.length / 24))"
+                        :aria-label="`Equation of ${step.name}`"
+                        spellcheck="false"
+                        @keydown.enter.prevent="apply(step)"
+                        @keydown.escape="refresh"
+                    )
+                    .error(v-if="errors[step.id]") {{ errors[step.id] }}
             .new-step
                 .heading
                     span.name New reaction
@@ -54,7 +56,7 @@ const props = defineProps<{
     toolId: string
 }>()
 
-type StepRow = { id: string, name: string, kind: StepKind, text: string }
+type StepRow = { id: string, name: string, kind: StepKind, text: string, regions: string[] }
 
 const steps = vue.ref<StepRow[]>([])
 const errors = vue.ref<Record<string, string>>({})
@@ -65,9 +67,31 @@ const needValues = vue.ref<string[]>([])   // new elements, whose values start a
 function refresh() {
     needValues.value.push(...takeAddedElements())
     steps.value = componentLibraryPlugin.reactionEquations().map(eq => ({
-        id: eq.id, name: eq.name, kind: eq.kind, text: equationText(eq)
+        id: eq.id, name: eq.name, kind: eq.kind, text: equationText(eq), regions: eq.regions
     }))
 }
+
+function listed(regions: string[]): string {
+    return regions.length < 2 ? regions.join('') : `${regions.slice(0, -1).join(', ')} and ${regions.at(-1)}`
+}
+
+// steps by region: those within one region first, then those between regions, then those with none
+const groups = vue.computed(() => {
+    const byKey = new Map<string, { key: string, regions: string[], title: string, steps: StepRow[] }>()
+    for (const step of steps.value) {
+        const key = step.regions.join('|')
+        let group = byKey.get(key)
+        if (!group) {
+            const title = step.regions.length === 0 ? 'No compartment'
+                        : step.regions.length === 1 ? `In ${step.regions[0]}` : `Between ${listed(step.regions)}`
+            group = { key, regions: step.regions, title, steps: [] }
+            byKey.set(key, group)
+        }
+        group.steps.push(step)
+    }
+    const rank = (g: { regions: string[] }) => g.regions.length === 0 ? 99 : g.regions.length
+    return [...byKey.values()].sort((a, b) => rank(a) - rank(b) || a.key.localeCompare(b.key))
+})
 
 async function apply(step: StepRow) {
     errors.value = {}
@@ -119,6 +143,16 @@ vue.onUnmounted(() => {
 </script>
 
 <style scoped>
+.region-group {
+    margin-bottom: 8px;
+}
+.region-heading {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--p-text-muted-color);
+    margin: 10px 0 6px 0;
+}
 .hint {
     font-size: 0.8rem;
     color: var(--p-text-muted-color);

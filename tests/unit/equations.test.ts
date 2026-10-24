@@ -21,6 +21,7 @@ describe('reaction equations from bonds', () => {
         ]))
         expect(eq.kind).toBe('reaction')
         expect(eq.name).toBe('ATP synthase')
+        expect(eq.regions).toEqual(['m'])
         expect(equationText(eq)).toBe('2 ADP[m] + Pi[m] ⇌ ATP[m]')
         expect(equationLatex(eq)).toBe('2\\,\\mathrm{ADP}[\\mathrm{m}] + \\mathrm{Pi}[\\mathrm{m}] \\rightleftharpoons \\mathrm{ATP}[\\mathrm{m}]')
     })
@@ -36,6 +37,8 @@ describe('reaction equations from bonds', () => {
         ]))
         expect(eq.kind).toBe('transport')
         expect(equationText(eq)).toBe('Pyr[c] ⇄ Pyr[m]')
+        // a step between regions is in each, sorted
+        expect(eq.regions).toEqual(['c', 'm'])
     })
 
     test('a resistance is a flow down a potential difference, with a two-sided arrow', () => {
