@@ -1,6 +1,6 @@
 {
     "name": "@celldl/editor",
-    "version": "0.20261007.0",
+    "version": "0.20261007.0-phlynx.11",
     "author": {
         "name": "David Brooks",
         "email": "d.brooks@auckland.ac.nz"
@@ -38,6 +38,10 @@
             "types": "./dist/index.d.ts",
             "import": "./dist/CellDLEditor.es.js"
         },
+        "./bgrdf": {
+            "types": "./dist/bgrdf.d.ts",
+            "import": "./dist/bgrdf.es.js"
+        },
         "./style.css": "./dist/CellDLEditor.css"
     },
     "scripts": {
@@ -63,6 +67,8 @@
         "@ctrl/tinycolor": "^4.2.0",
         "@lucide/vue": "^1.39.0",
         "@mathjax/src": "^4.1.3",
+        "@physiomelinks/cellml-units": "^0.5.0",
+        "@primeuix/themes": "^2.0.3",
         "@vueuse/core": "14.3.0",
         "buffer": "^6.0.3",
         "flatbush": "^4.5.0",
@@ -71,7 +77,6 @@
         "jsonschema": "^1.5.0",
         "mini-svg-data-uri": "^1.4.4",
         "primeicons": "^7.0.0",
-        "primevue": "4.2.5",
         "rbush": "^4.0.1",
         "svg-intersections": "github:dbrnz/svg-intersections#fix-numbers",
         "svg-path-commander": "^2.1.11",
@@ -83,8 +88,9 @@
     },
     "devDependencies": {
         "@biomejs/biome": "^2.3.11",
-        "@primeuix/themes": "^2.0.2",
-        "@primevue/auto-import-resolver": "4.2.5",
+        "@happy-dom/global-registrator": "20",
+        "@physiomelinks/bg2cellml": "^0.2.0",
+        "@primevue/auto-import-resolver": "4.5.5",
         "@tailwindcss/postcss": "^4.1.18",
         "@tailwindcss/vite": "^4.1.18",
         "@types/bun": "^1.4.3",
@@ -95,6 +101,8 @@
         "@vitejs/plugin-vue": "^6.0.8",
         "@vue/tsconfig": "^0.8.1",
         "autoprefixer": "^10.5.4",
+        "libcellml.js": "^0.7.2",
+        "primevue": "4.5.5",
         "pug": "^3.0.3",
         "pug-plain-loader": "^1.1.0",
         "tailwindcss": "^4.3.3",
@@ -111,5 +119,8 @@
         "vite": "^8.2.0",
         "vite-plugin-dts": "^5.0.3",
         "vue-tsc": "^3.3.8"
+    },
+    "peerDependencies": {
+        "primevue": "^4.5.5"
     }
 }

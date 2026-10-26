@@ -100,6 +100,21 @@ export class LinearPath extends PathElement {
         this.setDirty()
     }
 
+    straighten(): boolean {
+        if (!this.validPath || this.pathPoints.length <= 2) {
+            return false
+        }
+        // Each end where the line between the two centroids crosses its element's boundary
+        const firstCentroid = this.firstElement.centroid
+        const lastCentroid = this.lastElement.centroid
+        const start = this.firstElement.boundaryIntersections(lastCentroid)[0] ?? firstCentroid
+        const end = this.lastElement.boundaryIntersections(firstCentroid)[0] ?? lastCentroid
+        this.clearControlHandles()
+        this.setPathPoints([['M', start.x, start.y], ['L', end.x, end.y]] as NormalArray)
+        this.redraw(true)
+        return true
+    }
+
     protected movePathPoint(position: PointLike) {
         const firstElement = this.pathPoints.at(0)?.component?.celldlSvgElement
         const lastElement = this.pathPoints.at(-1)?.component?.celldlSvgElement

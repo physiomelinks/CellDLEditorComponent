@@ -21,12 +21,21 @@ limitations under the License.
 import type { CellDLConnection, CellDLObject } from "#editor/celldlObjects"
 import { type CellDLEditor, notifyChanges } from "#editor/editor"
 import { undoRedo } from '#editor/diagram/undoredo'
+import type { ElementMoveOptions } from '#editor/SVGElements'
 import { Point, type PointLike } from "#root/utils/points"
+
+//==============================================================================
+
+export type MoveGroup = {
+    objects: CellDLObject[]
+    connections: CellDLConnection[]
+}
 
 //==============================================================================
 
 export class SelectionSet {
     #editor: CellDLEditor
+    #moveGroup: MoveGroup = { objects: [], connections: [] }
     #movedObject: CellDLObject|null = null
     #movedObjectOffset: Point = new Point()
     #selectedConnections: CellDLConnection[] = []
@@ -133,6 +142,7 @@ export class SelectionSet {
         } else {
             this.#editor.setPropertiesPanelObject(undefined)
         }
+        this.#editor.selectionChanged()
     }
 
     //==========================================================================
@@ -149,13 +159,24 @@ export class SelectionSet {
 
     //==========================================================================
 
-    startMove(svgPoint: PointLike, movedObject: CellDLObject) {
+    /**
+     * The selected objects and the connections between them, as moved together.
+     */
+    get moveGroup(): MoveGroup {
+        return {
+            objects: this.objects,
+            connections: [...this.#selectedConnections]
+        }
+    }
+
+    startMove(svgPoint: PointLike, movedObject: CellDLObject, group: MoveGroup=this.moveGroup) {
+        this.#moveGroup = group
         const excludeConnectionIds: Set<string> = new Set()
-        for (const connection of this.#selectedConnections) {
+        for (const connection of group.connections) {
             excludeConnectionIds.add(connection.id)
             connection.startMove(svgPoint, { moveEntireConnection: true })
         }
-        for (const object of this.#selectedObjects.values()) {
+        for (const object of group.objects) {
             if (object.isMoveable) {
                 object.startMove(svgPoint, { excludeConnectionIds: excludeConnectionIds })
             }
@@ -164,18 +185,19 @@ export class SelectionSet {
         this.#movedObjectOffset = Point.fromPoint(svgPoint).subtract(this.#movedObject?.celldlSvgElement?.centroid as Point)
     }
 
-    move(svgPoint: PointLike) {
+    /** Moves the selection with its moved object, which `options` can say not to snap to the grid */
+    move(svgPoint: PointLike, options: ElementMoveOptions={}) {
         // First move this.#movedObject without moving and redrawing paths, and get its change in centroid.
         // Use this delta to adjust svgpoint before moving other components (without grid alignment nor
         // moving/redrawing paths) and then connections (without grid aligning or limiting control points)
-        this.#movedObject?.move(svgPoint)
+        this.#movedObject?.move(svgPoint, options)
         const newPosn = this.#movedObjectOffset.add(this.#movedObject?.celldlSvgElement?.centroid as Point)
-        for (const object of this.#selectedObjects.values()) {
+        for (const object of this.#moveGroup.objects) {
             if (object.isMoveable && object.id !== this.#movedObject?.id) {
                 object.move(newPosn, { noAlign: true })
             }
         }
-        for (const connection of this.#selectedConnections) {
+        for (const connection of this.#moveGroup.connections) {
             connection.move(newPosn, { moveEntireConnection: true, noAlign: true } )
             connection.redraw()
         }
@@ -183,22 +205,24 @@ export class SelectionSet {
     }
 
     endMove() {
-        for (const object of this.#selectedObjects.values()) {
+        for (const object of this.#moveGroup.objects) {
             if (object.isMoveable) {
                 object.endMove()
                 object.finaliseMove()
                 object.celldlDiagram.objectMoved(object)
             }
         }
-        for (const connection of this.#selectedConnections) {
+        for (const connection of this.#moveGroup.connections) {
             connection.endMove()
         }
         this.#movedObject = null
+        this.#moveGroup = { objects: [], connections: [] }
     }
 
-    reposition(movedObject: CellDLObject, startPosn: PointLike, endPosn: PointLike) {
-        this.startMove(startPosn, movedObject)
-        this.move(endPosn)
+    reposition(movedObject: CellDLObject, startPosn: PointLike, endPosn: PointLike, group?: MoveGroup,
+               options: ElementMoveOptions={}) {
+        this.startMove(startPosn, movedObject, group)
+        this.move(endPosn, options)
         this.endMove()
     }
 }

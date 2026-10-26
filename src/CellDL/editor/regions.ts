@@ -34,6 +34,7 @@ import { type LayoutOptions, presetOptions, reorganiseLayout } from '#root/plugi
 import { SVG_URI } from '#root/utils/svgUtils'
 
 import { CellDLEditor, notifyChanges } from '.'
+import { drawBondCounts as drawDiagramBondCounts } from './bondcounts'
 import { EDITOR_BACKGROUND_ID } from './editorframe'
 
 //==============================================================================
@@ -190,45 +191,10 @@ export function drawRegions(show: boolean = showing): RegionSummary {
     return summary
 }
 
-export const BOND_COUNTS_ID = 'bond-counts'
-
-/**
- * Write each bond's bgf:bondCount (when not 1) beside the middle of its path, in the document's `bond-counts`
- * group (saved with it, so a figure shows them too). Returns the number written.
- */
+/** Write the bond counts of the editor's diagram (./bondcounts.ts); returns the number written. */
 export function drawBondCounts(): number {
     const diagram = CellDLEditor.instance?.celldlDiagram
-    const svg = diagram?.svgDiagram
-    const layout = plugin()?.regionLayout()
-    if (!diagram || !svg || !layout) return 0
-    let group = svg.querySelector<SVGGElement>(`#${BOND_COUNTS_ID}`)
-    const counted = layout.bonds.filter(b => b.count > 1 && b.id)
-    if (!group && counted.length === 0) return 0
-    if (!group) {
-        group = document.createElementNS(SVG_URI, 'g') as SVGGElement
-        group.id = BOND_COUNTS_ID
-        svg.append(group)
-    }
-    group.setAttribute('pointer-events', 'none')
-    group.replaceChildren()
-    for (const bond of counted) {
-        const connection = diagram.objectById(bond.id!.split('#').pop()!)
-        const element = connection?.celldlSvgElement?.svgElement
-        const path = (element instanceof SVGPathElement ? element : element?.querySelector('path')) as SVGPathElement|null
-        if (!path) continue
-        const middle = path.getPointAtLength(path.getTotalLength() / 2)
-        const text = document.createElementNS(SVG_URI, 'text')
-        text.setAttribute('class', 'bond-count')
-        text.setAttribute('x', (middle.x + 4).toFixed(1))
-        text.setAttribute('y', (middle.y - 4).toFixed(1))
-        text.setAttribute('font-size', '10')
-        text.setAttribute('font-weight', 'bold')
-        text.setAttribute('font-family', 'sans-serif')
-        text.setAttribute('fill', '#333')
-        text.textContent = String(bond.count)
-        group.append(text)
-    }
-    return group.childElementCount
+    return diagram ? drawDiagramBondCounts(diagram) : 0
 }
 
 let scheduled: ReturnType<typeof setTimeout>|undefined

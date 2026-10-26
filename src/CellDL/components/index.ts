@@ -114,6 +114,8 @@ export type TemplateEventDetails = {
     id: string,
     centre: PointLike
     offset: PointLike
+    /** A palette entry (../../plugins/bondgraph/palette.ts), placed centred with its defaults */
+    entryId?: string
 }
 
 //==============================================================================

@@ -65,7 +65,7 @@ import {
 
 import { setInternalIds } from '#editor/SVGElements'
 import type { BoundedElement } from '#editor/SVGElements/boundedelement'
-import { createCompartmentSvgElement } from '#editor/SVGElements/utils/compartment'
+import { type CompartmentStyling, compartmentBox, createCompartmentSvgElement } from '#editor/SVGElements/utils/compartment'
 import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 
 import { type CellDLEditor, notifyChanges } from '#editor/editor'
@@ -115,6 +115,8 @@ export const ID_PART_SEPARATOR = '-'
 
 type AddObjectOptions = {
     atBack?: boolean
+    /** With `atBack`, the element to go in front of, rather than the layer's first */
+    before?: Element|null
     hasId?: boolean
 }
 //==============================================================================
@@ -172,7 +174,7 @@ export class CellDLDiagram {
         this.#setLastIdentifier()
         this.#setupDefines()
         this.#setStylesheet()
-        componentLibraryPlugin.openDiagram(this.#documentNode.uri, this.#kb)
+        componentLibraryPlugin.openDiagram(this.#documentNode.uri, this.#kb, this.#filePath === '')
     }
 
     finishSetup() {
@@ -269,10 +271,10 @@ export class CellDLDiagram {
         }
     }
 
-    #saveDiagramProperties() {
+    #saveDiagramProperties(touchModified: boolean = true) {
         if (!('created' in this.#diagramProperties)) {
             this.#diagramProperties.created = new Date(Date.now()).toISOString()
-        } else {
+        } else if (touchModified) {
             this.#diagramProperties.modified = new Date(Date.now()).toISOString()
         }
         for (const [key, property] of Object.entries(this.#diagramMetadata)) {
@@ -346,6 +348,11 @@ export class CellDLDiagram {
         if (defn) {
             this.#defsElement?.removeChild(defn)
         }
+    }
+
+    /** The diagram's objects, in the order they were added. */
+    get objects(): CellDLObject[] {
+        return [...this.#objects.values()]
     }
 
     objectById(id: string): CellDLObject | null {
@@ -578,6 +585,19 @@ export class CellDLDiagram {
         return ''
     }
 
+    /**
+     * The diagram's metadata as Turtle, as `serialise()` embeds it in `<metadata>`,
+     * but without changing selection or the `modified` timestamp.
+     */
+    async rdf(): Promise<string> {
+        if (!this.#svgDiagram) {
+            return ''
+        }
+        componentLibraryPlugin.addPluginMetadataToStore(this.rdfStore)
+        this.#saveDiagramProperties(false)
+        return await this.#serialiseMetadata($rdf.TurtleContentType)
+    }
+
     async #serialiseMetadata(metadataFormat: $rdf.ContentType): Promise<string> {
         let metadata: string = ''
         try {
@@ -661,10 +681,14 @@ export class CellDLDiagram {
         return connection
     }
 
-    makeCompartment(bounds: Bounds): CellDLCompartment {
+    /**
+     * Adds a compartment drawn round `bounds`, as one undo step. Compartments are behind the other elements, the
+     * larger ones behind the smaller, so one drawn inside another shows in front of it.
+     */
+    makeCompartment(bounds: Bounds, style: Partial<CompartmentStyling>={}): CellDLCompartment {
         const cornerPoints = bounds.asPoints()
         const svgElement = createCompartmentSvgElement(this.#nextIdentifier(),
-                                                cornerPoints[0], cornerPoints[1])
+                                                cornerPoints[0], cornerPoints[1], style)
         const compartmentObject = this.#addNewObject(
             svgElement, {
                 CellDLClass: CellDLCompartment,
@@ -672,6 +696,7 @@ export class CellDLDiagram {
             },
             {
                 atBack: true,
+                before: this.#compartmentPlace(bounds.width * bounds.height),
                 hasId: true
             }
         ) as CellDLCompartment
@@ -680,6 +705,34 @@ export class CellDLDiagram {
         }
         notifyChanges()
         return compartmentObject
+    }
+
+    /** Where a compartment of `area` goes in the layer: before the first smaller compartment, or other element */
+    #compartmentPlace(area: number): Element|null {
+        for (const child of this.#currentLayer?.children ?? []) {
+            if (!child.classList.contains(CELLDL_STYLE_CLASS.Compartment)) {
+                return child
+            }
+            const box = compartmentBox(child as SVGGElement)
+            if (box.width * box.height < area) {
+                return child
+            }
+        }
+        return null
+    }
+
+    /** Puts a compartment back in order after its size changes, by where `makeCompartment()` would put it */
+    reorderCompartment(compartment: CellDLCompartment) {
+        const svgElement = compartment.svgElement
+        const layer = this.#currentLayer
+        if (!svgElement || !layer || svgElement.parentNode !== layer) {
+            return
+        }
+        const box = compartmentBox(svgElement as SVGGElement)
+        // Find its place among the others
+        svgElement.remove()
+        const before = this.#compartmentPlace(box.width * box.height)
+        layer.insertBefore(svgElement, before)
     }
 
     groupComponents(bounds: Bounds, objects: CellDLObject[]): CellDLComponent {
@@ -936,7 +989,7 @@ export class CellDLDiagram {
         svgElement.classList.add(CellDLClass.celldlStyleClass)
         if (this.#currentLayer) {
             if (options?.atBack) {
-                this.#currentLayer.insertBefore(svgElement, this.#currentLayer.firstChild)
+                this.#currentLayer.insertBefore(svgElement, options.before ?? this.#currentLayer.firstChild)
             } else {
                 this.#currentLayer.appendChild(svgElement)
             }
@@ -1058,7 +1111,10 @@ export class CellDLDiagram {
 
     undoInsert(undoState: UndoState) {
         for (const storedObject of undoState.storedObjects.values()) {
-            this.#removeObject(storedObject.celldlObject)
+            // Removing a component also removes its connections, which are stored too
+            if (this.#objects.has(storedObject.celldlObject.id)) {
+                this.#removeObject(storedObject.celldlObject)
+            }
         }
     }
 

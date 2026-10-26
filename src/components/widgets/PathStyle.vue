@@ -6,6 +6,7 @@
                 type="color"
                 :value="stroke.colour"
                 @input="colourChange"
+                @change="colourCommit"
             )
         .spacer
         FloatLabel(variant="on")
@@ -15,7 +16,10 @@
                 :min="minWidth"
                 :max="maxWidth"
                 :step="widthStep"
-                @change="emitChange"
+                @change="slide"
+                @slideend="slideCommit"
+                @click="slideCommit"
+                @keyup="slideCommit"
             )
             label Width (px)
         .spacer
@@ -24,7 +28,7 @@
             Checkbox#gradientCheckbox(
                 v-model="stroke.dashed"
                 binary
-                @change="emitChange"
+                @change="emitChange()"
             )
         Divider
 </template>
@@ -86,26 +90,51 @@ const widthStep = vue.ref<number>(0.5)
 
 //==============================================================================
 
+// While the picker is dragged
 function colourChange(e: Event) {
+    const target = e.target as HTMLInputElement
+    stroke.value.colour = target.value
+    emitChange(true)
+}
+
+// Once the colour is picked
+function colourCommit(e: Event) {
     const target = e.target as HTMLInputElement
     stroke.value.colour = target.value
     emitChange()
 }
 
-function emitChange() {
+// The slider's changes are `live` while it is dragged or stepped; a drag's end,
+// a click or a key's release commits them, but only a slide's: focus stays on
+// the slider, so the release of e.g. the undo key mustn't record a step.
+let sliding = false
+
+function slide() {
+    sliding = true
+    emitChange(true)
+}
+
+function slideCommit() {
+    if (sliding) {
+        sliding = false
+        emitChange()
+    }
+}
+
+function emitChange(live: boolean = false) {
     emit('change', [
         stroke.value.colour,
         String(stroke.value.width),
         stroke.value.dashed ? '1' : '0',
         String(stroke.value.dashScale)
-    ].join(STYLE_STRING_FIELD_SEPARATOR))
+    ].join(STYLE_STRING_FIELD_SEPARATOR), live)
 }
 //==============================================================================
 </script>
 
 <style>
 /* Otherwise the tick mark is not obvious */
-.p-checkbox-checked .p-checkbox-icon {
+.celldl-editor .p-checkbox-checked .p-checkbox-icon {
     color: red !important;
 }
 </style>

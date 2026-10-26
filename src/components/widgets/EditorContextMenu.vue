@@ -13,7 +13,7 @@ useThemeCssVariables('contextmenu')
 
 //==============================================================================
 
-import { CONTEXT_MENU } from '#editor/editor'
+import { CANVAS_PRESS_EVENT, CONTEXT_MENU } from '#editor/editor'
 
 export type ContextMenuProps = {
     state: Set<CONTEXT_MENU>,
@@ -38,6 +38,27 @@ vue.watch(
     }
 )
 
+// Escape closes the menu even when it doesn't have focus
+function keyDownEvent(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+        menu.value?.hide()
+    }
+}
+// A press on the canvas closes it; PrimeVue only closes it on a click outside the canvas it opened over
+function canvasPressEvent() {
+    if (menu.value?.visible) {
+        menu.value.hide()
+    }
+}
+vue.onMounted(() => {
+    document.addEventListener('keydown', keyDownEvent)
+    document.addEventListener(CANVAS_PRESS_EVENT, canvasPressEvent)
+})
+vue.onUnmounted(() => {
+    document.removeEventListener('keydown', keyDownEvent)
+    document.removeEventListener(CANVAS_PRESS_EVENT, canvasPressEvent)
+})
+
 function contextMenuEvent(id: string) {
     document.dispatchEvent(
         new CustomEvent('context-menu-click', {
@@ -50,7 +71,12 @@ function contextMenuEvent(id: string) {
 //==============================================================================
 
 const items = vue.computed(() => {
+  // Add element is only offered on empty canvas, so it isn't listed when an element was right clicked
+  const canAdd = !!props.contextMenuProps?.state.has(CONTEXT_MENU.ADD_ELEMENT)
   return [
+    ...(canAdd
+        ? [{ command: () => contextMenuEvent(CONTEXT_MENU.ADD_ELEMENT), label: 'Add element…' }, { separator: true }]
+        : []),
     {
         command: () => contextMenuEvent(CONTEXT_MENU.DELETE),
         disabled: !props.contextMenuProps?.state.has(CONTEXT_MENU.DELETE),

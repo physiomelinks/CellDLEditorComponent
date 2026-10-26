@@ -36,9 +36,11 @@
 import * as vue from 'vue'
 import * as LucideIcons from '@lucide/vue'
 
+import { CANVAS_PRESS_EVENT } from '#editor/editor'
 import type { PropertyGroup } from '#root/utils/editor-types'
 
 import { clampPanelWidth, MIN_PANEL_WIDTH, panelWidth, savePanelWidth } from './panelWidth'
+import { commitFocusedField } from './selectionPanels'
 
 const props = defineProps<{
     toolId: string
@@ -138,6 +140,28 @@ vue.onMounted(() => {
     }
 })
 
+// Escape, or a press on the canvas, closes a tool's popover, leaving its tool armed
+function closePopover() {
+    if (props.type === 'popover') {
+        panelVisible.value = false
+    }
+}
+// A press on the canvas commits a panel's half-typed value, while what it was typed for is still selected
+function canvasPressEvent() {
+    closePopover()
+    if (props.type === 'panel') {
+        commitFocusedField(panelRef.value)
+    }
+}
+vue.onMounted(() => {
+    document.addEventListener('close-tool-popover', closePopover)
+    document.addEventListener(CANVAS_PRESS_EVENT, canvasPressEvent)
+})
+vue.onUnmounted(() => {
+    document.removeEventListener('close-tool-popover', closePopover)
+    document.removeEventListener(CANVAS_PRESS_EVENT, canvasPressEvent)
+})
+
 // Make sure popover is closed when button is deactivated
 vue.watch(
     () => props.active,
@@ -173,7 +197,8 @@ async function toolButtonClick(e: MouseEvent) {
                 }
             }
         } else {
-            if (!target.classList.contains('active')) {
+            // An active tool's button reopens its closed popover
+            if (!target.classList.contains('active') || (panelElement && !panelVisible.value)) {
                 target.classList.add('active')
                 if (panelElement) {
                     if (!panelVisible.value) {

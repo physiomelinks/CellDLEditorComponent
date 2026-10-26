@@ -45,6 +45,8 @@ export type ItemDetails = locApi.IUiJsonInput & {
     units?: string
     optional?: boolean
     numeric?: boolean
+    /** `false` when the shown value is a default the object doesn't store */
+    stored?: boolean
 }
 
 export interface PropertyGroup {
@@ -123,6 +125,15 @@ export type EditorToolButton = {
     props?: vue.Ref<PropertyGroup[]>
 }
 
+/** A toolbar button that runs a command, such as Undo, rather than arming a tool */
+export type EditorToolAction = {
+    actionId: string
+    prompt: string
+    icon: string
+    disabled?: boolean
+    run: () => void
+}
+
 //==============================================================================
 
 export type PopoverEventData = {
@@ -145,6 +156,53 @@ export type ViewState = {
     gridSpacing?: number
     snapToGrid?: number
     alignmentGuides?: boolean
+    /**
+     * Zoom the view in or out by a step, to fit the diagram, or to a scale
+     * (screen pixels per SVG unit), centred on `centre`, or else on the diagram
+     */
+    zoom?: 'in' | 'out' | 'fit' | number
+    /** With `zoom: 'fit'`, the most it zooms in, e.g. `1` to never enlarge a small diagram */
+    maxScale?: number
+    /** With a numeric `zoom`, the point (in SVG coordinates) to centre the view on */
+    centre?: { x: number, y: number }
+    /** Asks for a `view-state` reply, carrying this kind, once the view has been set */
+    kind?: string
+}
+
+/** The view, as `view-state` reports it */
+export type ViewInfo = {
+    /** Screen pixels per SVG unit */
+    scale: number
+    /** The point (in SVG coordinates) at the centre of the view */
+    centre: { x: number, y: number }
+    /** The scale `zoom: 'fit'` would zoom to, or null for a blank diagram */
+    fitScale: number | null
+    /** The diagram's components' bounds, in SVG coordinates, or null for a blank diagram */
+    bounds: { left: number, top: number, right: number, bottom: number } | null
+}
+
+//==============================================================================
+
+// Component annotations and events, the same as `@celldl/viewer`'s
+
+export type AnnotationValue = string | number | boolean | object
+export type Annotation = Record<string, AnnotationValue>
+
+// Annotations keyed by the id of a diagram's component
+export type Annotations = Record<string, Annotation>
+
+export type SvgViewerOptions = {
+    tooltip?: string // The annotation field to show as a component's tooltip
+    /** Emit `elements` with each `diagram-changed`, for a host that lists the diagram's elements */
+    elementList?: boolean
+}
+
+export type ViewerEvent = {
+    type: 'select' | 'unselect' | 'active' | 'unactive'
+    component?: {
+        id: string
+        annotation?: Annotation
+    }
 }
 
 //==============================================================================

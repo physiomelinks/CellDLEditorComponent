@@ -13,13 +13,19 @@ const _dirname = path.dirname(url.fileURLToPath(import.meta.url))
 export default vite.defineConfig({
     build: {
         lib: {
-            entry: './src/index.ts',
-            fileName: (format: string) => `CellDLEditor.${format}.js`,
+            // `bgrdf` has only the BG-RDF Turtle, so a worker can import it without the editor
+            entry: {
+                index: './src/index.ts',
+                bgrdf: './src/bgrdf.ts'
+            },
+            fileName: (format: string, entryName: string) =>
+                `${entryName === 'index' ? 'CellDLEditor' : entryName}.${format}.js`,
             formats: ['es'],
             name: 'CellDLEditor'
         },
         rollupOptions: {
-            external: ['vue'],
+            // The host app provides Vue and PrimeVue, so that both share one copy
+            external: ['vue', /^primevue(\/|$)/, /^@primevue\//, /^@primeuix\//],
             output: {
                 dir: 'dist',
                 exports: 'named',
@@ -52,7 +58,8 @@ export default vite.defineConfig({
     },
     plugins: [
         dts({
-            exclude: ['./app/**'],
+            // The app and the unit tests aren't part of the library
+            exclude: ['./app/**', './tests/unit/**'],
             insertTypesEntry: true
         }),
         tailwindcssPlugin(),

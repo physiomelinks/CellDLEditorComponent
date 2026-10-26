@@ -161,16 +161,18 @@ export class PathMaker {
         return this.#edges.length === 0 && this.#currentSvgPath === null
     }
 
-    static #checkMaxConnections(celldlObject: CellDLConnectedObject): boolean {
+    static #checkMaxConnections(celldlObject: CellDLConnectedObject, quiet: boolean = false,
+                                say: (msg: string) => void = alert.tooltip): boolean {
         if (celldlObject.numConnections < celldlObject.maxConnections) {
             return true
-        } else if (celldlObject.maxConnections >= 0) {
-            alert.tooltip('Component has maximum number of connections')
+        } else if (celldlObject.maxConnections >= 0 && !quiet) {
+            say('Component has maximum number of connections')
         }
         return false
     }
 
-    static validStartObject(celldlObject: CellDLObject): PathNode | null {
+    /** A path's start at an object, or `null`, saying why not (by default as a tooltip). */
+    static validStartObject(celldlObject: CellDLObject, say: (msg: string) => void = alert.tooltip): PathNode | null {
         if (celldlObject.isUnconnectedPort) {
             const connection = celldlObject.connections[0]
             // An UnconnectedPort is only valid if it is the target of a connection
@@ -181,11 +183,11 @@ export class PathMaker {
             }
         }
         if (celldlObject.isConnectable && !celldlObject.isConduit) {
-            if (PathMaker.#checkMaxConnections(<CellDLConnectedObject>celldlObject)) {
+            if (PathMaker.#checkMaxConnections(<CellDLConnectedObject>celldlObject, false, say)) {
                 return new PathNode(<CellDLConnectedObject>celldlObject)
             }
         } else if (!celldlObject.isConnection) {
-            alert.tooltip('Component cannot start a path')
+            say('Component cannot start a path')
         }
         return null
     }
@@ -199,7 +201,31 @@ export class PathMaker {
         this.#removeSvgPath()
     }
 
-    validPathNode(celldlObject: CellDLObject): PathNode | null {
+    /**
+     * The path node for an object that the path can go to next, if it can.
+     *
+     * @param celldlObject The object.
+     * @param quiet Don't say why it can't, and don't need the path to have been drawn
+     *              yet, e.g. when finding every object a new bond could end at.
+     */
+    validPathNode(celldlObject: CellDLObject, quiet: boolean = false): PathNode | null {
+        return this.#validPathNode(celldlObject, quiet, alert.tooltip)
+    }
+
+    /** Why the path can't go to an object next, without saying so, or `null` if it can or there's no reason. */
+    refusal(celldlObject: CellDLObject): string | null {
+        let reason: string | null = null
+        this.#validPathNode(celldlObject, false, (msg) => { reason = msg })
+        return reason
+    }
+
+    #validPathNode(celldlObject: CellDLObject, quiet: boolean, say: (msg: string) => void): PathNode | null {
+        const refuse = (msg: string) => {
+            if (!quiet) {
+                say(msg)
+            }
+            return null
+        }
         if (celldlObject.isUnconnectedPort) {
             const connection = celldlObject.connections[0]
             // An UnconnectedPort is only valid if it is the source of a connection
@@ -211,27 +237,24 @@ export class PathMaker {
         }
         if (!celldlObject.isConnectable) {
             if (!celldlObject.isConnection) {
-                alert.tooltip('Component does not allow connections')
+                return refuse('Component does not allow connections')
             }
             return null
-        } else if (this.#currentSvgPath === null) {
+        } else if (this.#currentSvgPath === null && !quiet) {
             return null
         } else if (celldlObject.id === this.#startObject.id) {
             if (this.#nodes.length < 2) {
-                alert.tooltip('Path cannot directly loop to start component')
-                return null
+                return refuse('Path cannot directly loop to start component')
             }
         } else if (this.#objectIds.includes(celldlObject.id)) {
-            alert.tooltip('Component is already on the path')
-            return null
+            return refuse('Component is already on the path')
         }
         // Check with plugins that (source --> object) would be valid.
         const connectionStatus = componentLibraryPlugin.checkConnectionValid(this.#startObject, celldlObject)
         if (connectionStatus?.alert) {
-            alert.tooltip(connectionStatus.alert)
-            return null
+            return refuse(connectionStatus.alert)
         }
-        if (!PathMaker.#checkMaxConnections(<CellDLConnectedObject>celldlObject)) {
+        if (!PathMaker.#checkMaxConnections(<CellDLConnectedObject>celldlObject, quiet, say)) {
             return null
         }
         const pathNode = new PathNode(<CellDLConnectedObject>celldlObject)

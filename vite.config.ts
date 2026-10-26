@@ -25,9 +25,12 @@ export default vite.defineConfig({
         target: 'esnext'
     },
     optimizeDeps: {
+        // libcellml.js and oxigraph find their `.wasm` relative to their own URL
         exclude: [
             '*.wasm',
-            '*.whl'
+            '*.whl',
+            'libcellml.js',
+            'oxigraph'
         ]
     },
     plugins: [

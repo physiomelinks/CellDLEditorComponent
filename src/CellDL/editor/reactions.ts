@@ -23,23 +23,24 @@ limitations under the License.
 // a removed species deletes its bond (and its chemostat copy, if no other step uses it), and an added species is
 // bonded to its store; a species the diagram has no store for gets a new one, a chemostat a new copy beside the
 // step, and a new equation a new reaction. New elements are placed beside the step, substrates to its left and
-// products to its right.
+// products to its right, with the palette's defaults (./placing.ts): parameters 1, an initial value 0, the diagram's
+// most used location when the equation gives none, and an unused name (R1, R2, ...) for an unnamed reaction.
 
-import { CELLDL, MetadataPropertiesMap } from '@celldl/metadata'
-import * as $rdf from '@celldl/rdf'
+import type * as $rdf from '@celldl/rdf'
 
-import { type CellDLConnectedObject, CellDLConnection, type CellDLObject } from '#editor/celldlObjects'
+import type { CellDLConnectedObject, CellDLConnection, CellDLObject } from '#editor/celldlObjects'
+import { undoRedo } from '#editor/diagram/undoredo'
 
-import { componentLibraryPlugin } from '#root/plugins'
-import type { BondgraphPlugin } from '#root/plugins/bondgraph'
 import {
-    type EquationEdit, findSpeciesNode, parseEquation, planEquationEdit, type Side, type SpeciesNode
+    type EquationEdit, findSpeciesNode, parseEquation, planEquationEdit, type Side, type SpeciesNode, type StepEquation
 } from '#root/plugins/bondgraph/equations'
 import { Point, type PointLike } from '#root/utils/points'
-import { CONNECTION_COLOUR, CONNECTION_WIDTH } from '#root/utils/styling'
-import { svgPathElement } from '#root/utils/svgUtils'
 
-import { CellDLEditor, notifyChanges } from '.'
+import { notifyChanges } from '.'
+import {
+    addBond, addElement as placeElement, asOneStep, bondgraphPlugin, centroidOf, defaultLocation, editorParts, nextName,
+    usedNames
+} from './placing'
 
 //==============================================================================
 
@@ -53,28 +54,9 @@ const CLEARANCE = 40        // from other components
 
 //==============================================================================
 
-function bondgraphPlugin(): BondgraphPlugin {
-    const plugin = componentLibraryPlugin.getPlugin('bondgraph-components')
-    if (!plugin) throw new Error('The bond graph plugin is not loaded')
-    return plugin as unknown as BondgraphPlugin
-}
-
-function editorParts() {
-    const editor = CellDLEditor.instance
-    const diagram = editor?.celldlDiagram
-    const frame = editor?.editorFrame
-    if (!editor || !diagram || !frame) throw new Error('No diagram is open')
-    return { editor, diagram, frame }
-}
-
 function objectByUri(uri: string): CellDLObject|null {
     const { diagram } = editorParts()
     return diagram.objectById(uri.split('#').pop() ?? uri)
-}
-
-function centroidOf(object: CellDLObject): Point {
-    // biome-ignore lint/style/noNonNullAssertion: a diagram's component has an SVG element
-    return object.celldlSvgElement!.centroid
 }
 
 function componentCentroids(): Point[] {
@@ -105,57 +87,26 @@ function placeBeside(centre: PointLike, side: Side|'step', taken: Point[]): Poin
 
 async function addElement(elementType: string, centre: PointLike, species?: string, location?: string,
                           value?: $rdf.Literal): Promise<CellDLConnectedObject> {
-    const { diagram, frame } = editorParts()
-    const plugin = bondgraphPlugin()
-    const templateId = plugin.libraryTemplateId(elementType)
-    const template = templateId ? componentLibraryPlugin.getObjectTemplateById(templateId) : undefined
-    if (!template) throw new Error(`No library template draws a ${$rdf.getFragment(elementType)}`)
-    const group = frame.addSvgElementFromTemplate(template, centre)
-    const object = diagram.addConnectedObject(group, template)
-    if (!object) throw new Error(`Cannot add a ${$rdf.getFragment(elementType)}`)
-    await plugin.setElement(object, elementType, species, location, value)
-    // centre it where asked: a template is placed by its top left corner
-    const at = centroidOf(object)
-    object.initialiseMove(group)
-    object.reposition(at, centre)
-    object.finaliseMove()
+    const where = location ?? defaultLocation(usedNames().locations)
+    const object = await placeElement(elementType, centre, species, where, value)
     if (!value) {
-        added.push(`${elementType === NEW_REACTION_TYPE ? 'reaction' : 'store'} ${species ?? object.id}`
-                   + (location ? `[${location}]` : ''))
+        added.push(`${elementType === NEW_REACTION_TYPE ? 'reaction' : 'store'} ${species ?? object.id}[${where}]`)
     }
     return object
 }
 
-// The elements added since the last call of takeAddedElements(): their parameters are for the user to set
-const added: string[] = []
-
-/** The new elements an edit made (e.g. `store Xnew[c]`), which still need their parameters' values. */
-export function takeAddedElements(): string[] {
-    return added.splice(0)
+// An object removed so that undo puts it back
+function removeObject(object: CellDLObject) {
+    const { diagram } = editorParts()
+    diagram.removeObject(object, undoRedo.setDeleteUndoState(object))
 }
 
-function addBond(source: CellDLConnectedObject, target: CellDLConnectedObject, count: number): CellDLConnection {
-    const { diagram } = editorParts()
-    const from = centroidOf(source)
-    const to = centroidOf(target)
-    const start = source.celldlSvgElement?.boundaryIntersections(to)[0] ?? from
-    const end = target.celldlSvgElement?.boundaryIntersections(from)[0] ?? to
-    const path = svgPathElement([start, end], {
-        class: 'bondgraph linear arrow',
-        stroke: CONNECTION_COLOUR,
-        'stroke-width': String(CONNECTION_WIDTH)
-    })
-    const connection = diagram.addNewConnection(path, {
-        CellDLClass: CellDLConnection,
-        metadataProperties: MetadataPropertiesMap.fromProperties([
-            [$rdf.RDF.uri('type'), CELLDL.uri('Connection')],
-            [CELLDL.uri('hasSource'), source.uri],
-            [CELLDL.uri('hasTarget'), target.uri],
-            [CELLDL.uri('hasIntermediate'), []]
-        ])
-    })
-    bondgraphPlugin().setBondCount(connection, count)
-    return connection
+// The elements added since the last call of takeAddedElements(), whose values start at the defaults
+const added: string[] = []
+
+/** The new elements an edit made (e.g. `store Xnew[c]`), whose values are the defaults until the user sets them. */
+export function takeAddedElements(): string[] {
+    return added.splice(0)
 }
 
 /** A potential source's type and value, to copy it beside another step. */
@@ -167,27 +118,34 @@ function sourceCopy(node: SpeciesNode): { type: string, value?: $rdf.Literal } {
     return { type: type ?? `${BGF}ChemicalPotential`, value }
 }
 
-async function applyEdit(step: CellDLConnectedObject, edit: EquationEdit, taken: Point[]) {
+async function applyEdit(step: CellDLConnectedObject, current: StepEquation, edit: EquationEdit, taken: Point[]) {
     const plugin = bondgraphPlugin()
     if (edit.op === 'count') {
         const bond = objectByUri(edit.bond)
-        if (bond?.isConnection) plugin.setBondCount(bond as CellDLConnection, edit.count)
+        if (bond?.isConnection) {
+            const undoState = undoRedo.setPropertiesUndoState([bond])
+            plugin.setBondCount(bond as CellDLConnection, edit.count)
+            undoRedo.endPropertiesEdit(undoState)
+        }
     } else if (edit.op === 'remove') {
-        const { diagram } = editorParts()
         const bond = objectByUri(edit.bond)
-        if (bond) diagram.removeObject(bond)
+        if (bond) removeObject(bond)
         // a chemostat copy no other step uses goes too
         const node = edit.node ? objectByUri(edit.node) : null
         const isSource = plugin.speciesNodes().some(n => n.id === edit.node && n.isSource)
         if (node && isSource && (node as CellDLConnectedObject).connections.length === 0) {
-            diagram.removeObject(node)
+            removeObject(node)
         }
     } else {
         const found = findSpeciesNode(plugin.speciesNodes(), edit.species, edit.location)
         const location = edit.location ?? found?.location
+        // a step drawn with side junctions is bonded through them, and a store drawn with its species' 0-junction
+        // through that, which takes any number of bonds
+        const sideJunction = current.sides?.[edit.side]
+        const joinTo = (sideJunction ? objectByUri(sideJunction) : null) as CellDLConnectedObject|null
         let node: CellDLConnectedObject|null = null
         if (found && !found.isSource) {
-            node = objectByUri(found.id) as CellDLConnectedObject|null
+            node = objectByUri(plugin.speciesJunction(found.id) ?? found.id) as CellDLConnectedObject|null
         }
         if (!node) {
             const place = placeBeside(centroidOf(step), edit.side, taken)
@@ -198,8 +156,9 @@ async function applyEdit(step: CellDLConnectedObject, edit: EquationEdit, taken:
                 node = await addElement(NEW_STORE_TYPE, place, edit.species, location ?? stepLocation(step))
             }
         }
-        if (edit.side === 'substrate') addBond(node, step, edit.count)
-        else addBond(step, node, edit.count)
+        const target = joinTo ?? step
+        if (edit.side === 'substrate') addBond(node, target, edit.count)
+        else addBond(target, node, edit.count)
     }
 }
 
@@ -212,10 +171,14 @@ function stepLocation(step: CellDLObject): string|undefined {
 //==============================================================================
 
 /**
- * Make the step `stepUri` follow the equation `text`; returns the number of bond changes. Throws an Error with a
- * message for the user when the equation cannot be read or placed.
+ * Make the step `stepUri` follow the equation `text`, as one undoable step; returns the number of bond changes.
+ * Throws an Error with a message for the user when the equation cannot be read or placed.
  */
-export async function applyEquation(stepUri: string, text: string): Promise<number> {
+export function applyEquation(stepUri: string, text: string): Promise<number> {
+    return asOneStep(() => followEquation(stepUri, text))
+}
+
+async function followEquation(stepUri: string, text: string): Promise<number> {
     const current = bondgraphPlugin().reactionEquations().find(eq => eq.id === stepUri)
     const step = objectByUri(stepUri) as CellDLConnectedObject|null
     if (!current || !step) throw new Error('That step is no longer in the diagram')
@@ -226,7 +189,7 @@ export async function applyEquation(stepUri: string, text: string): Promise<numb
     }
     const taken = componentCentroids()
     for (const edit of edits) {
-        await applyEdit(step, edit, taken)
+        await applyEdit(step, current, edit, taken)
     }
     if (edits.length) notifyChanges()     // a changed bondCount alone touches only the RDF
     return edits.length
@@ -234,20 +197,24 @@ export async function applyEquation(stepUri: string, text: string): Promise<numb
 
 /**
  * Add a reaction following the equation `text`, named `name` (its species label), below the diagram's other
- * components; returns its URI.
+ * components, as one undoable step; returns its URI.
  */
 export async function addReaction(text: string, name: string, location?: string): Promise<string> {
     const parsed = parseEquation(text)
     for (const p of [...parsed.substrates, ...parsed.products]) {
         findSpeciesNode(bondgraphPlugin().speciesNodes(), p.species, p.location)
     }
-    const taken = componentCentroids()
-    const below = taken.length ? Math.max(...taken.map(p => p.y)) + 2 * BESIDE : 100
-    const middle = taken.length ? taken.reduce((x, p) => x + p.x, 0) / taken.length : 200
-    const step = await addElement(NEW_REACTION_TYPE, placeBeside(new Point(middle, below), 'step', taken),
-                                  name || 'Re', location ?? parsed.substrates[0]?.location)
-    await applyEquation(step.uri.value, text)
-    return step.uri.value
+    return asOneStep(async () => {
+        const taken = componentCentroids()
+        const below = taken.length ? Math.max(...taken.map(p => p.y)) + 2 * BESIDE : 100
+        const middle = taken.length ? taken.reduce((x, p) => x + p.x, 0) / taken.length : 200
+        const step = await addElement(NEW_REACTION_TYPE, placeBeside(new Point(middle, below), 'step', taken),
+                                      name || nextName('R', usedNames().species),
+                                      location ?? parsed.substrates[0]?.location)
+        await followEquation(step.uri.value, text)
+        notifyChanges()
+        return step.uri.value
+    })
 }
 
 //==============================================================================

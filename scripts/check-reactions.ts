@@ -14,6 +14,7 @@
 import { spawn } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { basename, join, resolve } from 'node:path'
 
 const [document, out] = process.argv.slice(2)
@@ -60,7 +61,7 @@ async function pageSocket(): Promise<WebSocket> {
                 return socket
             }
         } catch { /* not listening yet */ }
-        await Bun.sleep(200)
+        await sleep(200)
     }
     throw new Error(`${chrome} did not start`)
 }
@@ -173,7 +174,7 @@ const scenario = (src: string) => `(async () => {
     const regions = await import('${src}/CellDL/editor/regions.ts')
     const drawn = regions.drawRegions()
     const locations = [...new Set(regions.diagramLayout().nodes.flatMap(n => n.labels))].sort()
-    const shaded = [...document.querySelectorAll('#celldl-region-layer path')].map(p => p.dataset.region).sort()
+    const shaded = [...document.querySelectorAll('#celldl-region-layer path, #celldl-region-layer rect')].map(p => p.dataset.region).sort()
     check('a shaded region per location', JSON.stringify(shaded) === JSON.stringify(locations) && locations.length > 0,
           shaded)
     const keys = new Set(steps().map(e => e.regions.join('|')))
@@ -413,7 +414,7 @@ try {
 } finally {
     browser.kill()
     vite.kill()
-    await Bun.sleep(500)
+    await sleep(500)
     rmSync(profile, { recursive: true, force: true })
 }
 process.exit(failed ? 1 : 0)

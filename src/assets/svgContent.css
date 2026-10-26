@@ -6,6 +6,7 @@
 :root {
     --editor-canvas-background: #eee;
     --editor-statusbar-background: #ececec;
+    --editor-bond-count-colour: #333;
 }
 
 :root {
@@ -19,6 +20,7 @@
 .celldl-dark-mode {
     --editor-canvas-background: var(--p-surface-800);
     --editor-statusbar-background: var(--p-surface-700);
+    --editor-bond-count-colour: var(--p-surface-200);
 }
 
 #svg-container svg {
@@ -31,6 +33,10 @@
     --active-selected: #0ff;
     --connection-selected: #f00;
     --connection-highlighted: #0f8;
+}
+/* A bond's count follows the editor's theme; its own `fill` (#333) is what a saved diagram shows */
+#svg-container .bond-count {
+    fill: var(--editor-bond-count-colour);
 }
 #svg-container .celldl-background {
     pointer-events: none;
@@ -116,6 +122,16 @@
 }
 
 /* Compartments */
+/* A compartment's or region's default background follows the editor's theme; its own `fill` is what a saved
+   diagram shows, and a fill chosen in the Style panel is kept */
+.celldl-dark-mode #svg-container .celldl-Compartment > rect:is([fill="#ddd"], [fill="#eee"]) {
+    fill: var(--p-surface-700);
+}
+#svg-container .compartment-handle {
+    fill: #fff;
+    stroke: #2f6fd6;
+    stroke-width: 1.5;
+}
 
 #svg-container #compartment-select-rect {
     fill: none;
@@ -189,6 +205,11 @@
     color: var(--editor-tooltip-error);
 }
 
+/* a host's annotation tooltip, above a plugin's hover */
+.tooltip-annotation {
+    margin-bottom: 6px;
+}
+
 /* an element's constitutive law in its hover (plugins/bondgraph hoverHtml) */
 .bg-law {
     display: flex;
@@ -216,7 +237,7 @@
     flex-direction: column;
     gap: 2px;
 }
-/* inline, so a line MathJax breaks in pieces (and the baselines it sets) flow as text does */
 .bg-law-line svg {
-    display: inline;
+    max-width: 100%;
+    height: auto;
 }

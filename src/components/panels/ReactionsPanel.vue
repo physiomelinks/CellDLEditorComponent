@@ -15,7 +15,7 @@
                     | {{ reorganising ? `Reorganising… ${progress}%` : 'Reorganise by region' }}
                 button.undo(v-if="canUndo && !reorganising" type="button" @click="undoLayout") Undo reorganise
                 p.status(v-if="layoutStatus") {{ layoutStatus }}
-            p.note(v-if="needValues.length") New: {{ needValues.join(", ") }}. Set their parameters in Properties.
+            p.note(v-if="needValues.length") New: {{ needValues.join(", ") }}, with parameters of 1 and initial values of 0.
             p(v-if="steps.length === 0") This diagram has no reactions yet.
             section.region-group(v-for="group in groups" :key="group.key")
                 h4.region-heading
@@ -76,7 +76,7 @@ const steps = vue.ref<StepRow[]>([])
 const errors = vue.ref<Record<string, string>>({})
 const newName = vue.ref('')
 const newText = vue.ref('')
-const needValues = vue.ref<string[]>([])   // new elements, whose parameters the user sets in Properties
+const needValues = vue.ref<string[]>([])   // new elements, whose values start at the defaults
 const locations = vue.ref<string[]>([])    // the diagram's regions, sorted, as drawn behind it
 
 function refresh() {

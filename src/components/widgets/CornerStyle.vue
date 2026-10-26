@@ -7,7 +7,10 @@
                 :min="minRadius"
                 :max="maxRadius"
                 :step="radiusStep"
-                @change="emitChange"
+                @change="slide"
+                @slideend="slideCommit"
+                @click="slideCommit"
+                @keyup="slideCommit"
             )
             label Corner radius (px)
         Divider
@@ -46,8 +49,25 @@ const minRadius = vue.ref<number>(0)
 const maxRadius = vue.ref<number>(80)
 const radiusStep = vue.ref<number>(1)
 
-function emitChange() {
-    emit('change', String(radius.value))
+// The slider's changes are `live` while it is dragged or stepped; a drag's end,
+// a click or a key's release commits them, but only a slide's: focus stays on
+// the slider, so the release of e.g. the undo key mustn't record a step.
+let sliding = false
+
+function slide() {
+    sliding = true
+    emitChange(true)
+}
+
+function slideCommit() {
+    if (sliding) {
+        sliding = false
+        emitChange()
+    }
+}
+
+function emitChange(live: boolean = false) {
+    emit('change', String(radius.value), live)
 }
 
 //==============================================================================

@@ -28,7 +28,7 @@ showtip.value = true //CSS.supports("x: attr(x type(*))")
 </script>
 
 <style>
-.p-card.no-gap > .p-card-body {
+.celldl-editor .p-card.no-gap > .p-card-body {
     gap: 0px !important;
 }
 </style>

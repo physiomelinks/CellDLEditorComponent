@@ -76,6 +76,7 @@ import {
 
 import './bgrdf'    // Run set up code
 import { BGF_ONTOLOGY_URI, bgRdfStatements } from './bgrdf'
+import { type BondEnd, type BondEndKind, type BondPorts, bondRule } from './bondrules'
 
 import {
     BONDGRAPH_COMPONENT_DEFINITIONS,
@@ -98,10 +99,37 @@ import type {
     BGElementStyle
 } from './utils'
 import { DomainGraph } from './domainGraph'
+import {
+    effectiveUnits,
+    IMPLICIT_UNIT_SYSTEM,
+    NEW_DIAGRAM_UNIT_SYSTEM,
+    rescaledValue,
+    UNIT_SYSTEM_IRIS,
+    UNIT_SYSTEM_PREDICATE,
+    type UnitSystemId,
+    unitSystemForIri
+} from './unitsystem'
 
 //==============================================================================
 
 export const PLUGIN_ID = 'bondgraph-components'
+
+// Bond ends' kinds, by base component type, for the direction rules
+const BOND_END_KINDS: Map<string, BondEndKind> = new Map([
+    ['QuantityStore', 'storage'],
+    ['FlowStore', 'storage'],
+    ['Resistance', 'dissipator'],
+    ['Reaction', 'reaction'],
+    ['PotentialSource', 'source'],
+    ['FlowSource', 'source'],
+    ['TransformNode', 'transform'],
+    ['ZeroNode', 'zero'],
+    ['OneNode', 'one'],
+    ['ZeroStorageNode', 'composite'],
+    ['OneStorageNode', 'composite'],
+    ['OneResistanceNode', 'composite'],
+    ['OneReactionNode', 'composite']
+].map(([name, kind]) => [`${BGF_URI}${name}`, kind as BondEndKind]))
 
 //==============================================================================
 //==============================================================================
@@ -192,6 +220,8 @@ type ElementTemplate = ElementTypeName & {
     defaultStyle: BGElementStyle            // the base component's, with the template's bgf:hasStyle in place
     lawLabel?: string                       // the template's bgf:lawLabel: names its constitutive relation
     baseComponent: BGBaseComponent
+    /** The template's declared ports (`bgf:hasPort`), by direction */
+    ports?: BondPorts
 }
 
 //==============================================================================
@@ -209,7 +239,24 @@ interface PluginData {
 
 //==============================================================================
 
-enum BG_PROPERTY_GROUP_ID {
+/** What a bond graph component is, as `describeElement()` gives it */
+export interface BGElementDescription {
+    /** The base component's type */
+    kind: string
+    kindName: string
+    junctionType?: string
+    isBondElement: boolean
+    /** The element template's type, if one is chosen */
+    template?: string
+    templateName?: string
+    symbol: string
+    /** The units of the template's value, if it has one */
+    valueUnits?: string
+}
+
+//==============================================================================
+
+export enum BG_PROPERTY_GROUP_ID {
     ElementProperties = 'bg-element-properties',
     ElementInitialValue = 'bg-element-initial-value',
     ElementParameters = 'bg-element-parameters',
@@ -218,11 +265,11 @@ enum BG_PROPERTY_GROUP_ID {
 
 const BG_PROPERTY_GROUP_IDS = Object.entries(BG_PROPERTY_GROUP_ID).map(([_, value]) => value as string)
 
-const BG_ELEMENT_TYPE_ITEM  = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-type`
-const BG_ELEMENT_SPECIES_ITEM  = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-species`
-const BG_ELEMENT_LOCATION_ITEM  = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-location`
+export const BG_ELEMENT_TYPE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-type`
+export const BG_ELEMENT_SPECIES_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-species`
+export const BG_ELEMENT_LOCATION_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-location`
 
-const BG_ELEMENT_VALUE_ITEM  = `${BG_PROPERTY_GROUP_ID.ElementInitialValue}/bg-element-value`
+export const BG_ELEMENT_VALUE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementInitialValue}/bg-element-value`
 
 //==============================================================================
 
@@ -302,7 +349,39 @@ const BG_STYLING_TEMPLATE: PropertyGroup = {
 //==============================================================================
 
 const DEFAULT_TRANSFORM_RATIO = 1
+
+/** The value a parameter or variable gets when its element's template is chosen */
+const DEFAULT_PARAMETER_VALUE = 1
+
+/**
+ * Defaults, by template (and its subclasses), for parameters that 1 would make singular: an elastic vessel's
+ * `u = E(q - q_hat)/(q_bar - q)^2` needs its maximum volume above its unstressed one.
+ */
+const TEMPLATE_PARAMETER_DEFAULTS: Map<string, Record<string, number>> = new Map([
+    [`${BGF_URI}ElasticVessel`, { q_bar: 3 }]
+])
+
+/** The predicate of an element's variable values, as BG-RDF and bg2cellml have it */
+const VARIABLE_VALUE = 'bgf:variableValue'
+
+/**
+ * A readable name for a template that BG-RDF gives no label, from its type: `ChemicalPotential` → "Chemical potential",
+ * and `NKETransporter` → "NKE transporter", keeping an acronym's capitals.
+ */
+function nameFromType(type: string): string {
+    const words = $rdf.getFragment(type)
+                       .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+                       .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+                       .split(' ')
+                       .map((word, i) => (i > 0 && !/^[A-Z0-9]+$/.test(word)) ? word.toLowerCase() : word)
+                       .join(' ')
+    return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
 const TRANSFORM_NODE_PROMPT = 'Ratio'
+
+/** The base classes of the elements that a compartment gives a location (`isLocatedElement()`) */
+const LOCATED_CLASSES = ['QuantityStore', 'FlowStore', 'PotentialSource', 'FlowSource']
 
 //==============================================================================
 //==============================================================================
@@ -326,6 +405,8 @@ export class BondgraphPlugin implements PluginInterface {
     #physicalDomains: Map<string, PhysicalDomain> = new Map()
     #rdfStore: $rdf.RdfStore = new $rdf.RdfStore()
     #transformNodeType = BGF.uri('TransformNode').value
+    #locatedTypes: Set<string>|undefined
+    #newDiagramUnitSystem: UnitSystemId = NEW_DIAGRAM_UNIT_SYSTEM
 
     constructor() {
         for (const group of elementPropertiesTemplate()) {
@@ -336,6 +417,7 @@ export class BondgraphPlugin implements PluginInterface {
         this.#loadDomains()
         this.#loadBaseComponents()
         this.#assignTemplates()
+        this.#loadTemplatePorts()
         this.#loadTemplateParameters()
     }
 
@@ -405,12 +487,22 @@ export class BondgraphPlugin implements PluginInterface {
 
     //==========================================================================
 
-    openDiagram(uri: string, rdfStore: MetadataStore) {
+    openDiagram(uri: string, rdfStore: MetadataStore, newDiagram: boolean=false) {
         // We are creating a BondgraphModel
         rdfStore.add($rdf.namedNode(uri), $rdf.RDF.uri('type'), BGF.uri('BondgraphModel'))
+        if (newDiagram) {
+            rdfStore.add($rdf.namedNode(uri), $rdf.namedNode(UNIT_SYSTEM_PREDICATE),
+                         $rdf.namedNode(UNIT_SYSTEM_IRIS[this.#newDiagramUnitSystem]))
+        }
 
         this.#currentDocumentUri = uri
         this.#documentStore = rdfStore
+
+        // Variable values saved under the editor's old predicate
+        rdfStore.update(`${SPARQL_PREFIXES}
+            DELETE { ?element bgf:VariableValue ?value }
+            INSERT { ?element ${VARIABLE_VALUE} ?value }
+            WHERE { ?element bgf:VariableValue ?value }`)
 
         // Add a copy of the BG-RDF framework as a **named graph**, to use when
         // finding BondElements and JunctionStructures
@@ -419,6 +511,100 @@ export class BondgraphPlugin implements PluginInterface {
             rdfStore.add(statement.subject, statement.predicate, statement.object, bgfGraph)
         }
         this.#domainGraph = new DomainGraph(rdfStore, uri)
+    }
+
+    //======================================
+
+    /** The unit system new diagrams are given. */
+    get newDiagramUnitSystem(): UnitSystemId {
+        return this.#newDiagramUnitSystem
+    }
+    set newDiagramUnitSystem(id: UnitSystemId) {
+        this.#newDiagramUnitSystem = id
+    }
+
+    /**
+     * The open diagram's unit system: its `pml:unitSystem`, SI when it has none, and `null` when the editor doesn't
+     * know it (or it has more than one).
+     */
+    unitSystemId(): UnitSystemId|null {
+        const store = this.#documentStore
+        if (!store) {
+            return IMPLICIT_UNIT_SYSTEM
+        }
+        const objects = store.statementsMatching($rdf.namedNode(this.#currentDocumentUri),
+                                                 $rdf.namedNode(UNIT_SYSTEM_PREDICATE), null)
+        if (objects.length === 0) {
+            return IMPLICIT_UNIT_SYSTEM
+        }
+        return (objects.length === 1 && $rdf.isNamedNode(objects[0]!.object)) ? unitSystemForIri(objects[0]!.object.value)
+                                                                              : null
+    }
+
+    /** The unit system values are stored in: the diagram's, or SI when the editor doesn't know it. */
+    get unitSystem(): UnitSystemId {
+        return this.unitSystemId() ?? IMPLICIT_UNIT_SYSTEM
+    }
+
+    /** Sets the open diagram's unit system, replacing any it has. */
+    setUnitSystem(id: UnitSystemId) {
+        const store = this.#documentStore
+        if (store) {
+            const documentNode = $rdf.namedNode(this.#currentDocumentUri)
+            const predicate = $rdf.namedNode(UNIT_SYSTEM_PREDICATE)
+            store.removeStatementsMatching(documentNode, predicate, null)
+            store.add(documentNode, predicate, $rdf.namedNode(UNIT_SYSTEM_IRIS[id]))
+        }
+    }
+
+    /**
+     * Converts an element's stored values into a unit system's units, as the same quantities: "1 mol-1" is
+     * "1e-15 fmol-1" in Cellular. A transform node's ratio, and a value that can't be converted, are kept.
+     */
+    rescaleValues(celldlObject: CellDLObject, id: UnitSystemId) {
+        const pluginData = <PluginData>celldlObject.pluginData(this.id)
+        if (!pluginData.managed || pluginData.baseComponent?.type === this.#transformNodeType) {
+            return
+        }
+        const store = celldlObject.rdfStore
+        const hasValue = BGF.uri('hasValue')
+        const subjects: $rdf.SubjectType[] = [celldlObject.uri]
+        for (const predicate of [BGF.uri('parameterValue'), BGF.uri('variableValue')]) {
+            for (const statement of store.statementsMatching(celldlObject.uri, predicate, null)) {
+                if ($rdf.isBlankNode(statement.object)) {
+                    subjects.push(statement.object as $rdf.SubjectType)
+                }
+            }
+        }
+        for (const subject of subjects) {
+            for (const statement of store.statementsMatching(subject, hasValue, null)) {
+                const value = rescaledValue(statement.object.value, id)
+                if (value !== undefined && $rdf.isLiteral(statement.object)) {
+                    store.removeStatements([statement])
+                    store.add(subject, hasValue,
+                              $rdf.literal(value, $rdf.namedNode((statement.object as $rdf.Literal).datatype.value)))
+                }
+            }
+        }
+    }
+
+    // A template's units in the diagram's unit system
+    #units(code: string): string {
+        return effectiveUnits(code, this.unitSystem)
+    }
+
+    // A stored value's units ("1 mmol" has "mmol"), if it has any: the element's own, or its parameter's or variable's
+    #storedUnits(objectUri: string, variable?: { predicate: string, varName: string }): string|undefined {
+        const pattern = variable === undefined ? `${objectUri} bgf:hasValue ?value`
+                      : `${objectUri} ${variable.predicate} [ bgf:varName "${variable.varName}" ; bgf:hasValue ?value ]`
+        for (const r of this.#documentStore?.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT ?value WHERE { ${pattern} }`) ?? []) {
+            const units = (r as Map<string, $rdf.Term>).get('value')?.value.trim().split(/\s+/)[1]
+            if (units) {
+                return units
+            }
+        }
     }
 
     //======================================
@@ -589,6 +775,8 @@ export class BondgraphPlugin implements PluginInterface {
             if (transforms.has(type) && r.get('value')) {
                 info.transformRatio = parseFloat(r.get('value')!.value)
             }
+            if (type === BGF.uri('OneNode').value) info.junction = 'one'
+            else if (type === BGF.uri('ZeroNode').value) info.junction = 'zero'
             nodes.set(node, info)
             if ((reactions.has(type) || resistances.has(type)) && !steps.some(([n]) => n === node)) {
                 steps.push([node, resistances.has(type)])
@@ -597,6 +785,8 @@ export class BondgraphPlugin implements PluginInterface {
                 species.push({ id: node, species: info.species, location: info.location, isSource: sources.has(type) })
             }
         }
+        // in the order they were drawn
+        bonds.sort((a, b) => (a.id ?? '') < (b.id ?? '') ? -1 : (a.id ?? '') > (b.id ?? '') ? 1 : 0)
         return { bonds, nodes, steps, species }
     }
 
@@ -607,6 +797,15 @@ export class BondgraphPlugin implements PluginInterface {
     reactionEquations(): StepEquation[] {
         const { bonds, nodes, steps } = this.#diagramGraph()
         return steps.map(([node, isResistance]) => stepEquation(node, isResistance, bonds, nodes))
+    }
+
+    /** The 0-junction a store or source is bonded to, if any (a species' junction in a diagram drawn with them). */
+    speciesJunction(node: string): string|undefined {
+        const { bonds, nodes } = this.#diagramGraph()
+        for (const b of bonds) {
+            const other = b.source === node ? b.target : b.target === node ? b.source : undefined
+            if (other !== undefined && nodes.get(other)?.junction === 'zero') return other
+        }
     }
 
     /** The diagram's species stores and sources. */
@@ -754,10 +953,49 @@ export class BondgraphPlugin implements PluginInterface {
         return { regions, bonds: bonds.map(b => ({ a: b.source, b: b.target, id: b.id, count: b.count })) }
     }
 
+    /**
+     * Whether an element takes its location from the compartment it is in: a store or a source (a chemostat), but
+     * not a step (a reaction or transporter, which may join locations), a transformer or a junction.
+     */
+    isLocatedElement(celldlObject: CellDLObject): boolean {
+        const description = this.describeElement(celldlObject)
+        if (!description) {
+            return false
+        }
+        // The framework's classes don't change, so are found once
+        const located = this.#locatedTypes
+                     ?? new Set(LOCATED_CLASSES.flatMap(base => [...this.#subclassesOf(BGF.uri(base).value)]))
+        this.#locatedTypes = located
+        return [description.template, description.kind].some(type => !!type && located.has(type))
+    }
+
+    /** An element's own location (its `bgf:hasLocation`), if it has one. */
+    elementLocation(celldlObject: CellDLObject): string|undefined {
+        let location: string|undefined
+        celldlObject.rdfStore.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT ?location WHERE { ${celldlObject.uri.toString()} bgf:hasLocation ?location }`
+        ).forEach((r: Map<string, $rdf.Term>) => {
+            location = r.get('location')?.value
+        })
+        return location
+    }
+
     /** The element type of a component (its template's, else its base component's). */
     elementType(celldlObject: CellDLObject): string|undefined {
         const pluginData = <PluginData>celldlObject.pluginData(this.id)
         return pluginData.elementTemplate?.type ?? pluginData.baseComponent?.type
+    }
+
+    /** The physical domains' IRIs, as the templates define them. */
+    physicalDomains(): string[] {
+        return [...this.#physicalDomains.keys()]
+    }
+
+    /** The element templates of base component `baseType`, with their domains (`''` for none). */
+    baseElementTemplates(baseType: string): { type: string, name: string, domain: string }[] {
+        return (this.#baseComponentToElementTemplates.get(baseType) ?? [])
+                    .map(et => ({ type: et.type, name: et.name, domain: et.domain }))
     }
 
     /** The id of the component library template to draw a new element of `elementType` from. */
@@ -800,6 +1038,37 @@ export class BondgraphPlugin implements PluginInterface {
                 INSERT DATA { ${objectUri} bgf:hasValue ${value.toString()} }`)
         }
         await this.#updateSvgElement(celldlObject, pluginData.species, pluginData.location)
+    }
+
+    /**
+     * Store the defaults the Properties panel shows for a new element's template, as choosing the template there
+     * does: the template's default (usually 1) for each parameter and variable, and 0 for an initial value. Values
+     * already stored are kept.
+     */
+    storeDefaultParameters(celldlObject: CellDLObject) {
+        const elementTemplate = (<PluginData>celldlObject.pluginData(this.id)).elementTemplate
+        if (!elementTemplate) {
+            return
+        }
+        for (const [groupId, variables] of [[BG_PROPERTY_GROUP_ID.ElementParameters, elementTemplate.parameters],
+                                            [BG_PROPERTY_GROUP_ID.ElementVariables, elementTemplate.variables]] as const) {
+            const group: PropertyGroup = { groupId, items: [] }
+            this.#setVariableItems(variables, group)
+            this.#loadVariableItems(celldlObject, group)
+            this.#storeDefaultParameters(celldlObject, group, elementTemplate)
+        }
+        const value = elementTemplate.value
+        if (value && elementTemplate.baseComponent.type !== this.#transformNodeType) {
+            const objectUri = celldlObject.uri.toString()
+            const stored = celldlObject.rdfStore.query(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+                SELECT ?value WHERE { ${objectUri} bgf:hasValue ?value }`)
+            if (stored.length === 0) {
+                celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
+                    PREFIX : <${this.#currentDocumentUri}#>
+                    INSERT DATA { ${objectUri} bgf:hasValue "0 ${this.#units(value.units)}"^^cdt:ucum }`)
+            }
+        }
     }
 
     /** Set a bond's bgf:bondCount (1 is left implicit). */
@@ -866,7 +1135,7 @@ export class BondgraphPlugin implements PluginInterface {
         // an equation typeset as the law is, its text kept in data-text; the text itself if MathJax rejects it
         const typeset = (latex: string, text: string) => {
             let svg: string
-            try { svg = latexAsSvgString(latex) } catch { svg = escape(text) }
+            try { svg = latexAsSvgString(latex, true) } catch { svg = escape(text) }
             return `<div class="bg-law-line" data-text="${escape(text)}">${svg}</div>`
         }
         const annotated = annotationText(this.annotations().get(id))
@@ -883,8 +1152,10 @@ export class BondgraphPlugin implements PluginInterface {
             const e = byId.get(node)
             const domain = e?.domain ? this.#physicalDomains.get(e.domain) : undefined
             const symbol = port === 'flow' ? (domain?.flow.name ?? 'v') : (domain?.potential.name ?? 'u')
-            return names.get(`${node}|${symbol}`) ?? symbol
+            return names.get(`${node}|${symbol}`) ?? ''
         }
+        // what the bonds make a symbol, left out when it is bonded to something unnamed, such as a junction
+        const knownTerms = (terms?: SignedTerm[]) => terms?.every(t => t.name !== '') ? terms : undefined
         const domain = element.domain ? this.#physicalDomains.get(element.domain) : undefined
         const u = domain?.potential.name ?? 'u', v = domain?.flow.name ?? 'v'
         const connected = new Map<string, SignedTerm[]>()
@@ -911,7 +1182,7 @@ export class BondgraphPlugin implements PluginInterface {
                                                       : []))
         }
         const where = element.variables.map(symbol => ({
-            symbol, name: names.get(`${id}|${symbol}`) ?? symbol, is: connected.get(symbol)
+            symbol, name: names.get(`${id}|${symbol}`) ?? symbol, is: knownTerms(connected.get(symbol))
         }))
         const whereLatexLines = whereLatex(where)
         const step = this.reactionEquations().find(eq => eq.id === id)
@@ -1016,6 +1287,23 @@ export class BondgraphPlugin implements PluginInterface {
         if (sourceDomain && targetDomain && sourceDomain !== targetDomain) {
             return { alert: `Cannot connect ${$rdf.getFragment(sourceDomain)} and ${$rdf.getFragment(targetDomain)} physical domains` }
         }
+        // Which way the bond points
+        const bonds = [...new Set([...sourceObject.connections, ...targetObject.connections])]
+            .filter(bond => bond.source && bond.target)
+            .map(bond => ({ source: this.bondEnd(bond.source!), target: this.bondEnd(bond.target!) }))
+        const status = bondRule(this.bondEnd(sourceObject), this.bondEnd(targetObject), { bonds })
+        if ('alert' in status) {
+            return status
+        }
+    }
+
+    /** What an object is as a bond's end, for the direction rules. */
+    bondEnd(celldlObject: CellDLObject): BondEnd {
+        const pluginData = <PluginData>celldlObject.pluginData(this.id)
+        const baseType = pluginData.managed ? pluginData.baseComponent?.type : undefined
+        const kind: BondEndKind = (baseType && BOND_END_KINDS.get(baseType)) || 'other'
+        const ports = pluginData.elementTemplate?.ports
+        return (kind === 'reaction' && ports) ? { id: celldlObject.id, kind, ports } : { id: celldlObject.id, kind }
     }
 
     connectionDeleted(connection: CellDLConnection) {
@@ -1030,8 +1318,13 @@ export class BondgraphPlugin implements PluginInterface {
         `)
     }
 
+    /** An element's bond limit: its template's declared ports, if it has them, else its base component's. */
     getMaxConnections(celldlObject: CellDLObject): number {
         const pluginData = (<PluginData>celldlObject.pluginData(this.id))
+        const ports = pluginData.elementTemplate?.ports
+        if (ports && ports.inward + ports.outward > 0) {
+            return ports.inward + ports.outward
+        }
         return pluginData.baseComponent?.numPorts || Infinity
     }
 
@@ -1121,7 +1414,7 @@ export class BondgraphPlugin implements PluginInterface {
     #deleteVariableItems(celldlObject: CellDLObject, group: PropertyGroup) {
         const predicate = (group.groupId === BG_PROPERTY_GROUP_ID.ElementParameters)
                         ? 'bgf:parameterValue'
-                        : 'bgf:VariableValue'
+                        : VARIABLE_VALUE
         const objectUri = celldlObject.uri.toString()
         celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
             PREFIX : <${this.#currentDocumentUri}#>
@@ -1135,7 +1428,7 @@ export class BondgraphPlugin implements PluginInterface {
     #loadVariableItems(celldlObject: CellDLObject, group: PropertyGroup) {
         const predicate = (group.groupId === BG_PROPERTY_GROUP_ID.ElementParameters)
                         ? 'bgf:parameterValue'
-                        : 'bgf:VariableValue'
+                        : VARIABLE_VALUE
         const objectUri = celldlObject.uri.toString()
 
         const values: Map<string, string> = new Map()
@@ -1160,8 +1453,34 @@ export class BondgraphPlugin implements PluginInterface {
                 const valueUnits = values.get(varName)!.split(' ')
                 item.value = valueUnits[0]
                 item.units = valueUnits[1]
+                item.stored = true
+            } else {
+                item.stored = false
             }
         })
+    }
+
+    /** A template's default for a parameter or variable: its `TEMPLATE_PARAMETER_DEFAULTS` value, else 1. */
+    #defaultValue(elementTemplate: ElementTemplate, varName: string): number {
+        for (const [type, defaults] of TEMPLATE_PARAMETER_DEFAULTS) {
+            if (varName in defaults && this.#subclassesOf(type).has(elementTemplate.type)) {
+                return defaults[varName]!
+            }
+        }
+        return DEFAULT_PARAMETER_VALUE
+    }
+
+    /** Stores its template's default for each parameter or variable shown with an unstored default. */
+    #storeDefaultParameters(celldlObject: CellDLObject, group: PropertyGroup, elementTemplate: ElementTemplate) {
+        for (const item of group.items) {
+            if (item.stored === false) {
+                const value = String(this.#defaultValue(elementTemplate, item.itemId.split('/')[1]!))
+                this.#updateVariableProperties({ oldValue: '', newValue: value }, group.groupId,
+                                               item.itemId, celldlObject, elementTemplate)
+                item.value = value
+                item.stored = true
+            }
+        }
     }
 
     //==========================================================================
@@ -1181,7 +1500,7 @@ export class BondgraphPlugin implements PluginInterface {
             let item = group.items[0]
             if (item) {
                 if (variable) {
-                    item.name = `${itemDefn.name} (${variable.units})`
+                    item.name = `${itemDefn.name} (${this.#units(variable.units)})`
                     item.optional = false
                 } else {
                     item.optional = false
@@ -1189,7 +1508,7 @@ export class BondgraphPlugin implements PluginInterface {
                 }
             } else if (variable) {
                 item = Object.assign({}, itemDefn, {
-                    name: `${itemDefn.name} (${variable.units})`,
+                    name: `${itemDefn.name} (${this.#units(variable.units)})`,
                     optional: false,
                     value: itemDefn.defaultValue
                 })
@@ -1205,7 +1524,7 @@ export class BondgraphPlugin implements PluginInterface {
                         PREFIX : <${this.#currentDocumentUri}#>
 
                         INSERT DATA {
-                           ${objectUri} bgf:hasValue "${newValue} ${variable!.units}"^^cdt:ucum .
+                           ${objectUri} bgf:hasValue "${newValue} ${this.#units(variable!.units)}"^^cdt:ucum .
                         }
                     `)
                 }
@@ -1220,13 +1539,13 @@ export class BondgraphPlugin implements PluginInterface {
         if (group.items.length === 0) {
             const property = (group.groupId === BG_PROPERTY_GROUP_ID.ElementParameters)
                             ? BGF.uri('parameterValue').value
-                            : BGF.uri('valueVariableValue').value
+                            : BGF.uri('variableValue').value
             for (const variable of variables.values()) {
                 group.items.push({
                     itemId: `${group.groupId}/${variable.name}`,
                     property: property,
                     name: variable.name,
-                    units: variable.units,
+                    units: this.#units(variable.units),
                     minimumValue: 0,
                     defaultValue: 0,
                     value: 0,
@@ -1257,16 +1576,19 @@ export class BondgraphPlugin implements PluginInterface {
     //==========================================================================
 
     async updateObjectProperties(celldlObject: CellDLObject, panelId: PANEL_ID, itemId: string, value: ValueChange,
-                                 componentProperties: PropertyGroup[]) {
+                                 componentProperties: PropertyGroup[]): Promise<string> {
         if (panelId === PANEL_ID.PROPERTIES_PANEL) {
             const itemGroupId = itemId.split('/')[0]
             if (!itemGroupId) {
-                return
+                return ''
             }
             const groupTemplate = this.#elementPropertiesTemplate.get(itemGroupId) as IndexedPropertyGroup
 
             // Store the item's new value
-            await this.#updateElementProperties(value, itemId, celldlObject, groupTemplate)
+            const errorMsg = await this.#updateElementProperties(value, itemId, celldlObject, groupTemplate)
+            if (errorMsg) {
+                return errorMsg
+            }
 
             // Has the CellDLObject's type changed?
             if (itemId === BG_ELEMENT_TYPE_ITEM && value.newValue !== value.oldValue) {
@@ -1299,6 +1621,8 @@ export class BondgraphPlugin implements PluginInterface {
                         if (elementTemplate?.parameters) {
                             this.#setVariableItems(elementTemplate.parameters, componentGroup)
                             this.#loadVariableItems(celldlObject, componentGroup)
+                            // A new template's parameters start at a stored value, not an unstored 0
+                            this.#storeDefaultParameters(celldlObject, componentGroup, elementTemplate)
                         }
                     } else if (componentGroup.groupId === BG_PROPERTY_GROUP_ID.ElementVariables) {
                         // Remove any existing variable values
@@ -1308,14 +1632,24 @@ export class BondgraphPlugin implements PluginInterface {
                         if (elementTemplate?.variables) {
                             this.#setVariableItems(elementTemplate.variables, componentGroup)
                             this.#loadVariableItems(celldlObject, componentGroup)
+                            this.#storeDefaultParameters(celldlObject, componentGroup, elementTemplate)
                         }
                     }
                 }
             }
         }
+        return ''
     }
 
     //==================================
+
+    componentStyling(celldlObject: CellDLObject): Styling {
+        const pluginData = (<PluginData>celldlObject.pluginData(this.id))
+        if (!celldlObject.isConnection && pluginData.fillString !== undefined) {
+            return { fillStyle: pluginData.fillString }
+        }
+        return {}
+    }
 
     async updatedComponentStyling(celldlObject: CellDLObject, styling: Styling) {
         const pluginData = (<PluginData>celldlObject.pluginData(this.id))
@@ -1333,9 +1667,11 @@ export class BondgraphPlugin implements PluginInterface {
 
     //==================================
 
+    /** Stores an item's new value, returning why it could not be stored, or `''`. */
     async #updateElementProperties(value: ValueChange, itemId: string,
-                                   celldlObject: CellDLObject, groupTemplate: IndexedPropertyGroup) {
+                                   celldlObject: CellDLObject, groupTemplate: IndexedPropertyGroup): Promise<string> {
         const pluginData = (<PluginData>celldlObject.pluginData(this.id))
+        let errorMsg = ''
 
         // check all groups belonging to the PROPERTIES_PANEL
         if (groupTemplate.groupId === BG_PROPERTY_GROUP_ID.ElementProperties) {
@@ -1345,7 +1681,7 @@ export class BondgraphPlugin implements PluginInterface {
                     if (itemId === BG_ELEMENT_TYPE_ITEM) {
                         await this.#updateElementType(item, value, celldlObject)
                     } else if (itemId === BG_ELEMENT_SPECIES_ITEM) {
-                        const errorMsg = await this.#updateSvgElement(celldlObject, value.newValue, pluginData.location)
+                        errorMsg = await this.#updateSvgElement(celldlObject, value.newValue, pluginData.location)
                         if (errorMsg === '') {
                             updateItemProperty(item.property, value, celldlObject)
                             pluginData.species = value.newValue
@@ -1354,7 +1690,7 @@ export class BondgraphPlugin implements PluginInterface {
                         }
                     } else if (itemId === BG_ELEMENT_LOCATION_ITEM) {
                         //pluginData.location = value.newValue
-                        const errorMsg = await this.#updateSvgElement(celldlObject, pluginData.species, value.newValue)
+                        errorMsg = await this.#updateSvgElement(celldlObject, pluginData.species, value.newValue)
                         if (errorMsg === '') {
                             updateItemProperty(item.property, value, celldlObject)
                             pluginData.location = value.newValue
@@ -1374,12 +1710,15 @@ export class BondgraphPlugin implements PluginInterface {
                 || groupTemplate.groupId === BG_PROPERTY_GROUP_ID.ElementVariables) {
             this.#updateVariableProperties(value, groupTemplate.groupId, itemId, celldlObject, pluginData.elementTemplate)
         }
+        return errorMsg
     }
 
     //==================================
 
     #updateElementValue(value: ValueChange, celldlObject: CellDLObject) {
         const objectUri = celldlObject.uri.toString()
+        // An edit keeps the value's units
+        const storedUnits = this.#storedUnits(objectUri)
 
         celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
             PREFIX : <${this.#currentDocumentUri}#>
@@ -1394,11 +1733,12 @@ export class BondgraphPlugin implements PluginInterface {
         const elementTemplate = (<PluginData>celldlObject.pluginData(this.id)).elementTemplate
         const variable = elementTemplate!.value
         if (newValue) {
+            const units = storedUnits ?? this.#units(variable!.units)
             celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
                 PREFIX : <${this.#currentDocumentUri}#>
 
                 INSERT DATA {
-                   ${objectUri} bgf:hasValue "${newValue} ${variable!.units}"^^cdt:ucum .
+                   ${objectUri} bgf:hasValue "${newValue} ${units}"^^cdt:ucum .
                 }
             `)
         }
@@ -1415,7 +1755,9 @@ export class BondgraphPlugin implements PluginInterface {
         const objectUri = celldlObject.uri.toString()
         const predicate = (groupId === BG_PROPERTY_GROUP_ID.ElementParameters)
                         ? 'bgf:parameterValue'
-                        : 'bgf:VariableValue'
+                        : VARIABLE_VALUE
+        // An edit keeps the value's units
+        const storedUnits = this.#storedUnits(objectUri, { predicate, varName })
         celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
             PREFIX : <${this.#currentDocumentUri}#>
 
@@ -1436,7 +1778,7 @@ export class BondgraphPlugin implements PluginInterface {
             INSERT DATA {
                 ${objectUri} ${predicate} _:pv .
                 _:pv bgf:varName "${varName}" ;
-                     bgf:hasValue "${value.newValue} ${variable.units}"^^cdt:ucum .
+                     bgf:hasValue "${value.newValue} ${storedUnits ?? this.#units(variable.units)}"^^cdt:ucum .
             }
         `)
 // Check units...
@@ -1469,6 +1811,82 @@ export class BondgraphPlugin implements PluginInterface {
             celldlSvgElement.redraw()
         }
         return ''
+    }
+
+    //==========================================================================
+
+    /**
+     * What a bond graph component is, for listing it outside the Properties panel.
+     *
+     * @param celldlObject A CellDL object.
+     * @returns `undefined` when the object is not a bond graph component.
+     */
+    describeElement(celldlObject: CellDLObject): BGElementDescription|undefined {
+        if (celldlObject.isConnection) {
+            return
+        }
+        const pluginData = <PluginData>celldlObject.pluginData(this.id)
+        const baseComponent = pluginData.baseComponent
+        if (!pluginData.managed || !baseComponent?.type) {
+            return
+        }
+        const elementTemplate = pluginData.elementTemplate
+        return {
+            kind: baseComponent.type,
+            kindName: baseComponent.name || $rdf.namespaceMap.getCurie(baseComponent.type),
+            junctionType: baseComponent.junctionType,
+            isBondElement: baseComponent.isBondElement,
+            template: elementTemplate?.type,
+            templateName: elementTemplate?.name,
+            symbol: pluginData.symbol ?? elementTemplate?.symbol ?? baseComponent.symbol,
+            valueUnits: elementTemplate?.value ? this.#units(elementTemplate.value.units) : undefined
+        }
+    }
+
+    /** The physical domain of an element template, given its type. */
+    templateDomain(type: string): string|undefined {
+        return this.#elementTemplates.get(type)?.domain || undefined
+    }
+
+    /**
+     * Brings a component's plugin data, domain, SVG and name up to date with its
+     * RDF, after the RDF has been changed directly (e.g. by undo).
+     *
+     * @param celldlObject A CellDL object.
+     */
+    async refreshObject(celldlObject: CellDLObject) {
+        if (celldlObject.isConnection) {
+            return
+        }
+        const pluginData = <PluginData>celldlObject.pluginData(this.id)
+        if (!pluginData.managed) {
+            return
+        }
+        const oldTemplate = pluginData.elementTemplate?.type
+        const fillString = pluginData.fillString
+        for (const key of Object.keys(pluginData)) {
+            delete (pluginData as unknown as Record<string, unknown>)[key]
+        }
+        Object.assign(pluginData, this.getPluginData(celldlObject))
+        if (fillString !== undefined) {
+            pluginData.fillString = fillString
+        }
+        celldlObject.rdfStore.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT ?species ?location WHERE {
+                OPTIONAL { ${celldlObject.uri.toString()} bgf:hasSpecies ?species }
+                OPTIONAL { ${celldlObject.uri.toString()} bgf:hasLocation ?location }
+            }`
+        ).forEach((r: Map<string, $rdf.Term>) => {
+            pluginData.species = r.get('species')?.value
+            pluginData.location = r.get('location')?.value
+        })
+        const elementTemplate = pluginData.elementTemplate
+        if (elementTemplate?.type !== oldTemplate) {
+            this.#domainGraph.setDomain(celldlObject.uri.value, elementTemplate?.domain)
+        }
+        celldlObject.setName(this.#getName(elementTemplate?.type ?? pluginData.baseComponent.type))
+        await this.#updateSvgElement(celldlObject, pluginData.species, pluginData.location)
     }
 
     //==========================================================================
@@ -1768,7 +2186,7 @@ export class BondgraphPlugin implements PluginInterface {
                 const elementTemplate: ElementTemplate = {
                     type: element.value,
                     domain: domainId,
-                    name: label ? label.value : $rdf.namespaceMap.getCurie(element.value),
+                    name: label ? label.value : nameFromType(element.value),
                     parameters: new Map(),
                     variables: new Map(),
                     defaultStyle: templateStyle(component.style, styleOverrides(r)),
@@ -1802,6 +2220,29 @@ export class BondgraphPlugin implements PluginInterface {
                 this.#baseComponentToElementTemplates.get(component.type)!.push(elementTemplate)
             })
         }
+    }
+
+    // Only reads BG-RDF's declared ports, e.g. a chemical reaction's f (inward) and r (outward)
+    #loadTemplatePorts() {
+        this.#query(`
+            SELECT ?element ?portId ?direction WHERE {
+                ?element a bgf:ElementTemplate ;
+                    bgf:hasPort ?port .
+                ?port bgf:portId ?portId ;
+                    bgf:direction ?direction .
+            }`
+        ).forEach((r: Map<string, $rdf.Term>) => {
+            const template = this.#elementTemplates.get(r.get('element')!.value)
+            if (template) {
+                template.ports ??= { inward: 0, outward: 0 }
+                const direction = r.get('direction')!.value
+                if (direction === BGF.uri('InwardPort').value) {
+                    template.ports.inward += 1
+                } else if (direction === BGF.uri('OutwardPort').value) {
+                    template.ports.outward += 1
+                }
+            }
+        })
     }
 
     #saveParametersAndStates(r: Map<string, $rdf.Term>) {

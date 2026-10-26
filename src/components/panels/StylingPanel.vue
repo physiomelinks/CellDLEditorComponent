@@ -79,33 +79,36 @@ vue.watch(
 
 //==============================================================================
 
-function updateCornerStyle(cornerStyle: string) {
+// A widget's change is `live` while it is still being made (e.g. a colour picker
+// or slider dragged); its final change commits it, as one undo step
+
+function updateCornerStyle(cornerStyle: string, live: boolean = false) {
     void vue.nextTick().then(() => {
-        emit('style-event', props.toolId, { cornerStyle })
+        emit('style-event', props.toolId, { cornerStyle }, live)
     })
 }
 
-function updateFillStyle(fillStyle: string) {
+function updateFillStyle(fillStyle: string, live: boolean = false) {
     void vue.nextTick().then(() => {
-        emit('style-event', props.toolId, { fillStyle })
+        emit('style-event', props.toolId, { fillStyle }, live)
     })
 }
 
-function updateGapStyle(gapStyle: string) {
+function updateGapStyle(gapStyle: string, live: boolean = false) {
     void vue.nextTick().then(() => {
-        emit('style-event', props.toolId, { gapStyle })
+        emit('style-event', props.toolId, { gapStyle }, live)
     })
 }
 
-function updatePathStyle(pathStyle: string) {
+function updatePathStyle(pathStyle: string, live: boolean = false) {
     void vue.nextTick().then(() => {
-        emit('style-event', props.toolId, { pathStyle })
+        emit('style-event', props.toolId, { pathStyle }, live)
     })
 }
 
-function updateTextStyle(textStyle: string) {
+function updateTextStyle(textStyle: string, live: boolean = false) {
     void vue.nextTick().then(() => {
-        emit('style-event', props.toolId, { textStyle })
+        emit('style-event', props.toolId, { textStyle }, live)
     })
 }
 

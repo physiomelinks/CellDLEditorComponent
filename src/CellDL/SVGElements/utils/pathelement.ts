@@ -143,6 +143,11 @@ export class PathElement {
         return this.#lastElement
     }
 
+    /** Whether the path has points between its two ends */
+    get hasControlPoints(): boolean {
+        return this.#pathPoints.length > 2
+    }
+
     get moveIndex() {
         return this.#moveIndex
     }
@@ -358,6 +363,15 @@ export class PathElement {
     protected resizedElementBoundingBox(_index: number, _element: BoundedElement, _cornerDeltas: [Point, Point]) {}
 
     setPathPoints(_pathArray: NormalArray) {}
+
+    /**
+     * Removes the path's control points, so it runs straight between its two ends.
+     *
+     * @returns Whether the path had control points to remove.
+     */
+    straighten(): boolean {
+        return false
+    }
 
     protected simplifyPathPoints(): PathPoint[] | null {
         return null

@@ -406,15 +406,14 @@ export class CellDLConnectedObject extends CellDLMoveableObject {
     static celldlTypeName = 'Connector'
 
     #connections: Map<string, CellDLConnection> = new Map()
-    #maxConnections: number
 
     constructor(
         uri: NamedNode,
         objectTemplate: ObjectTemplate,
-        celldlDiagram: CellDLDiagram
+        celldlDiagram: CellDLDiagram,
+        updateStore: boolean=true
     ) {
-        super(uri, objectTemplate, celldlDiagram)
-        this.#maxConnections = componentLibraryPlugin.getMaxConnections(this)
+        super(uri, objectTemplate, celldlDiagram, updateStore)
     }
 
     toString(): string {
@@ -429,8 +428,9 @@ export class CellDLConnectedObject extends CellDLMoveableObject {
         return true
     }
 
+    /** Asked each time, as an element's template, and so its ports, can change */
     get maxConnections(): number {
-        return this.#maxConnections
+        return componentLibraryPlugin.getMaxConnections(this)
     }
 
     get numConnections(): number {
@@ -484,9 +484,10 @@ export class CellDLComponent extends CellDLConnectedObject {
     constructor(
         uri: NamedNode,
         objectTemplate: ObjectTemplate,
-        celldlDiagram: CellDLDiagram
+        celldlDiagram: CellDLDiagram,
+        updateStore: boolean=true
     ) {
-        super(uri, objectTemplate, celldlDiagram)
+        super(uri, objectTemplate, celldlDiagram, updateStore)
         this.#interfacePorts = objectTemplate.metadataProperties
             .getPropertyAsArray(CELLDL.uri('hasInterface'))
             .map((node) => <CellDLInterface>celldlDiagram.getConnector(node))
@@ -539,53 +540,31 @@ export class CellDLCompartment extends CellDLConnectedObject {
     static readonly celldlStyleClass = CELLDL_STYLE_CLASS.Compartment
     static celldlTypeName = 'Compartment'
 
-
-    constructor(
-        uri: NamedNode,
-        objectTemplate: ObjectTemplate,
-        celldlDiagram: CellDLDiagram
-    ) {
-        super(uri, objectTemplate, celldlDiagram)
-    }
-    #associatedComponents: CellDLMoveableObject[] = []
     #compartmentElement: CompartmentElement|undefined
 
     get isAlignable() {
         return false
     }
 
+    /** A compartment is drawn round elements, not bonded to them */
+    get isConnectable() {
+        return false
+    }
+
+    get compartmentElement() {
+        return this.#compartmentElement
+    }
+
+    // What is inside a compartment moves with it as a group (../editor/compartments.ts), so that the move is undone
+    // as one step and the bonds between them move too
     assignSvgElement(svgElement: SVGGraphicsElement, align: boolean) {
         this.#compartmentElement = new CompartmentElement(this, svgElement, this.isAlignable, align)
-        if (this.celldlSvgElement) {
-            for (const object of this.celldlDiagram.objectsContainedIn(this.celldlSvgElement.bounds)) {
-                const celldlObject = object.object
-                if (celldlObject.isMoveable) {
-                    this.#associatedComponents.push(celldlObject as CellDLMoveableObject)
-                }
-            }
-        }
     }
 
-    startMove(svgPoint: PointLike, options: ElementMoveOptions={}) {
-        super.startMove(svgPoint, options)
-        for (const component of this.#associatedComponents) {
-            component.startMove(svgPoint, { noAlign: true, snapGrid: false })
-        }
-    }
-
-    move(svgPoint: PointLike, options: ElementMoveOptions={}) {
-        super.move(svgPoint, options)
-        // A move of the compartment moves associated components.
-        for (const component of this.#associatedComponents) {
-            component.move(svgPoint, { noAlign: true, snapGrid: false })
-        }
-    }
-
-    endMove() {
-        super.endMove()
-        for (const component of this.#associatedComponents) {
-            component.endMove()
-        }
+    /** Its label is the location it gives what is inside it (../editor/locations.ts), and is drawn on it */
+    setLabel(label: string|undefined) {
+        super.setLabel(label)
+        this.#compartmentElement?.updateElement()
     }
 }
 
@@ -601,9 +580,10 @@ export class CellDLConnection extends CellDLObject {
     constructor(
         uri: NamedNode,
         objectTemplate: ObjectTemplate,
-        celldlDiagram: CellDLDiagram
+        celldlDiagram: CellDLDiagram,
+        updateStore: boolean=true
     ) {
-        super(uri, objectTemplate, celldlDiagram)
+        super(uri, objectTemplate, celldlDiagram, updateStore)
         const metadata = objectTemplate.metadataProperties
         const source = celldlDiagram.getConnector(metadata.getProperty(CELLDL.uri('hasSource')))
         const target = celldlDiagram.getConnector(metadata.getProperty(CELLDL.uri('hasTarget')))

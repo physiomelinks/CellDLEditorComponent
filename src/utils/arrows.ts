@@ -18,6 +18,8 @@ limitations under the License.
 
 ******************************************************************************/
 
+//==============================================================================
+
 // PhLynx's arrowhead (its CouplingEdge, a copy of Vue Flow's closed arrow): one head at a connection's target end,
 // its tip where the path ends, sized in stroke widths. As a <marker> for documents the editor draws, and as a plain
 // shape for exported figures (PhLynx's SVG export draws heads as shapes too: some editors mishandle <marker>).
@@ -45,4 +47,62 @@ export function arrowShape(x1: number, y1: number, x2: number, y2: number, strok
     return `<polyline points="${ARROW_POINTS}" fill="${colour}" stroke="${colour}" stroke-width="${r(1 / scale)}" `
          + `stroke-linecap="round" stroke-linejoin="round" `
          + `transform="translate(${r(x2)},${r(y2)}) rotate(${r(angle)}) scale(${r(scale)})"/>`
+}
+
+//==============================================================================
+
+// The bond-graph half arrow (harpoon) that shows a bond's power direction: one barb, at the bond's end, on the left
+// of the bond as you look along it, so a bond drawn left to right ends in ⇀ (barb up) and one drawn downwards has
+// its barb to the right of the line. That is how bond graphs are usually drawn, though the side is a drawing choice
+// that carries no meaning (some texts put the barb on the side the flow is written), so it is fixed here, not set.
+// Drawn in stroke widths at one stroke wide, so it is as heavy as the bond at any thickness and zoom, and coloured
+// with the bond (`context-stroke`) in either theme. Its tip is on the end of the bond, as the other heads' are, and
+// `orient="auto"` turns it with the bond's last segment, straight or routed.
+
+export const HARPOON_PATH = 'M-0.5,0 L-4.5,-3'      // tip to barb, in stroke widths; -y is the bond's left
+export const HARPOON_VIEWBOX = [-5.5, -4, 6, 5] as const
+
+/** The half arrow as an SVG marker with `id`, stroked in the connection's colour */
+export function harpoonMarker(id: string, className = '', colour = 'context-stroke'): string {
+    return `<marker id="${id}"${className ? ` class="${className}"` : ''} viewBox="${HARPOON_VIEWBOX.join(' ')}" refX="0" refY="0" `
+         + `markerWidth="${HARPOON_VIEWBOX[2]}" markerHeight="${HARPOON_VIEWBOX[3]}" markerUnits="strokeWidth" orient="auto">`
+         + `<path d="${HARPOON_PATH}" fill="none" stroke="${colour}" stroke-width="1" `
+         + `stroke-linecap="round" stroke-linejoin="round"/></marker>`
+}
+
+//==============================================================================
+
+// How bonds' arrowheads are shown, whatever marker a document saved: `'bond'`, the bond-graph half arrow above, or
+// `'classic'`, PhLynx's closed arrow. The choice is the viewer's, so it is applied with display-only markers and
+// style rules outside the document's SVG, and a saved document keeps its own marker.
+
+export type ArrowStyle = 'bond' | 'classic'
+
+export const ARROW_STYLES: readonly ArrowStyle[] = ['bond', 'classic']
+export const DEFAULT_ARROW_STYLE: ArrowStyle = 'bond'
+
+/** The class, on the editor's root element, that selects arrow style `style` */
+export const arrowStyleClass = (style: ArrowStyle) => `celldl-arrow-${style}`
+
+/** The id of the display-only marker for arrow style `style` */
+export const displayArrowId = (style: ArrowStyle) => `celldl-display-arrow-${style}`
+
+/** `style` if it is an arrow style, else the default */
+export function arrowStyleOrDefault(style: string | undefined | null): ArrowStyle {
+    return ARROW_STYLES.includes(style as ArrowStyle) ? style as ArrowStyle : DEFAULT_ARROW_STYLE
+}
+
+/**
+ * The display-only markers and the rules that draw bonds with them, as the content of an `<svg>` in the page beside
+ * (not inside) the diagram. The rules are more specific than a document's own `.celldl-Connection.bondgraph.arrow`.
+ */
+export function displayArrowDefinitions(): string {
+    const markers = [
+        harpoonMarker(displayArrowId('bond'), 'bondgraph'),
+        arrowMarker(displayArrowId('classic'), 'bondgraph')
+    ]
+    const rules = ARROW_STYLES.map((style) =>
+        `.celldl-editor.${arrowStyleClass(style)} .celldl-Connection.bondgraph.arrow{marker-end:url(#${displayArrowId(style)})}`
+    )
+    return `<defs>${markers.join('')}</defs><style>${rules.join('')}</style>`
 }

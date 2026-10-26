@@ -14,6 +14,7 @@
                 type="color"
                 :value="fill.startColour"
                 @input="colourChange"
+                @change="colourCommit"
             )
         Button#swapButton(
             icon="pi pi-sort-alt"
@@ -29,6 +30,7 @@
                 type="color"
                 :value="fill.stopColour"
                 @input="colourChange"
+                @change="colourCommit"
             )
         Divider(:class="{ hidden: !fill.gradientFill }")
         .flexPrompt(:class="{ hidden: !fill.gradientFill }")
@@ -42,6 +44,7 @@
                 type="color"
                 :value="fill.middleColour"
                 @input="colourChange"
+                @change="colourCommit"
             )
         Divider(:class="{ hidden: !fill.gradientFill }")
         .flexPrompt(:class="{ hidden: !fill.gradientFill }")
@@ -54,7 +57,7 @@
                         inputId="horizontal"
                         name="dirn"
                         value="H"
-                        @change="emitChange"
+                        @change="emitChange()"
                     )
                 .flex.items-right.gap-2
                     label.dirn V
@@ -63,7 +66,7 @@
                         inputId="vertical"
                         name="dirn"
                         value="V"
-                        @change="emitChange"
+                        @change="emitChange()"
                     )
         Divider
         // middle colour??
@@ -127,7 +130,7 @@ vue.watch(
 
 //==============================================================================
 
-function colourChange(e: Event) {
+function setColour(e: Event) {
     const target = e.target as HTMLInputElement
     if (target.id === 'startColour') {
         fill.value.startColour = target.value
@@ -136,6 +139,17 @@ function colourChange(e: Event) {
     } else if (target.id === 'middleColour') {
         fill.value.middleColour = target.value
     }
+}
+
+// While the picker is dragged
+function colourChange(e: Event) {
+    setColour(e)
+    emitChange(true)
+}
+
+// Once the colour is picked
+function colourCommit(e: Event) {
+    setColour(e)
     emitChange()
 }
 
@@ -162,7 +176,7 @@ function swapColours(_e: Event) {
     emitChange()
 }
 
-function emitChange() {
+function emitChange(live: boolean = false) {
     if (fill.value.gradientFill) {
         const fillString = [
             fill.value.gradientDirn,
@@ -172,9 +186,9 @@ function emitChange() {
             fillString.push(fill.value.middleColour)
         }
         fillString.push(fill.value.stopColour)
-        emit('change', fillString.join(STYLE_STRING_FIELD_SEPARATOR))
+        emit('change', fillString.join(STYLE_STRING_FIELD_SEPARATOR), live)
     } else {
-        emit('change', fill.value.startColour)
+        emit('change', fill.value.startColour, live)
     }
 }
 
@@ -183,7 +197,7 @@ function emitChange() {
 
 <style>
 /* Otherwise the tick mark is not obvious */
-.p-checkbox-checked .p-checkbox-icon {
+.celldl-editor .p-checkbox-checked .p-checkbox-icon {
     color: red !important;
 }
 </style>

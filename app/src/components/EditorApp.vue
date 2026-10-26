@@ -17,6 +17,7 @@
             .flex.items-baseline
                 MainMenu(
                 :id="mainMenuId"
+                    :arrowStyle="arrowStyle"
                     :haveFile="haveFile"
                     :fileModified="fileModified"
                     :editorStatus="editorStatus"
@@ -53,7 +54,14 @@
                     span {{ slotProps.message.message }}
             CellDLEditor.grow(
                 :editorCommand="editorCommand"
+                :options="editorOptions"
+                :chrome="appChrome"
+                :annotations="devAnnotations"
+                :arrowStyle="arrowStyle"
                 :theme="editorTheme"
+                @diagramChanged="onDiagramChanged"
+                @elements="onElements"
+                @elementResult="onElementResult"
                 @editorData="onEditorData"
                 @error="onError"
             )
@@ -116,16 +124,33 @@ import '../assets/app.css'
 
 import AboutDialog from './dialogs/AboutDialog.vue'
 
-import { OPEN_URL_DELAY, SHORT_DELAY } from '../utils/constants'
+import { OPEN_LINK_DELAY, SHORT_DELAY } from '../utils/constants'
+import { celldl2cellml } from '../utils/cellml'
 import { isCompatibleBrowser } from '../utils/common'
+import { decodeCellDLLink, loadFromLink } from '../utils/openLink'
+import { safeCellDL } from '../utils/safeCellDL'
 import * as version from '../utils/version'
 import * as vueCommon from '../utils/vueCommon'
 
 import CellDLEditor from '../../../src'
 
-import type { CellDLEditorCommand, EditorData, FileStatus, Theme, ViewState } from '../../../src'
+import type {
+    Annotations,
+    ArrowStyle,
+    CellDLEditorCommand,
+    EditorChrome,
+    DiagramChange,
+    EditorData,
+    ElementResult,
+    ElementsChange,
+    FileStatus,
+    SvgViewerOptions,
+    Theme,
+    ViewState
+} from '../../../src'
 import { editorInitialised, EditorStatus } from '../../../src'
 import { DEFAULT_VIEW_STATE } from '../../../src'
+import { ARROW_STYLES, DEFAULT_ARROW_STYLE } from '../../../src'
 
 //==============================================================================
 
@@ -148,12 +173,16 @@ const loadingMessage = vue.ref<string>('Loading CellDL editor');
         loadingMessage.value = ''
         console.log('Editor ready...')
 
-        // Open the CellDL file at `?open=<url>`, if given (e.g. a link to a diagram), once the editor
-        // component has mounted
-        const openUrl = new URLSearchParams(window.location.search).get('open')
-        if (openUrl) {
-            setTimeout(() => { openUrlFile(openUrl) }, OPEN_URL_DELAY)
-        }
+        // Open the document in a `?open=celldl#<base64>` link, or the CellDL file at `?open=<url>` (a link with no
+        // hash), once the editor component has mounted
+        setTimeout(() => {
+            const open = new URLSearchParams(window.location.search).get('open')
+            if (window.location.hash) {
+                openLinkedDocument()
+            } else if (open) {
+                openUrlFile(open)
+            }
+        }, OPEN_LINK_DELAY)
 
         // Now start checking for a newer version of the editor
         version.startCheck()
@@ -278,18 +307,8 @@ async function openUrlFile(url: string) {
         onError(`Cannot open ${url}: ${response.status} ${response.statusText}`)
         return
     }
-    const name = decodeURIComponent(url.split('/').pop() || url)
-    editorCommand.value = {
-        command: 'file',
-        options: {
-            action: 'open',
-            data: await response.text(),
-            name: name
-        }
-    }
-    fileStatus.value.haveData = true
-    diagramModified(false)
-    windowTitle.value = name
+    // A file from a URL may come from anywhere, so nothing in it may run
+    openDocument(safeCellDL(await response.text()), decodeURIComponent(url.split('/').pop() || url))
 }
 
 //==============================================================================
@@ -342,11 +361,68 @@ vueusecore.useEventListener(document, 'file-edited', (_: Event) => {
 
 //==============================================================================
 
+function onDiagramChanged(change: DiagramChange) {
+    console.debug(`diagram-changed: revision ${change.revision}, ${change.rdf.length} bytes of RDF`)
+}
+
+//==============================================================================
+
+// In development, let a test (e.g. Playwright) drive the `element` command:
+// `window.celldlDev.command(cmd)` sends a command, and `elements` and
+// `results` collect what the editor emits
+
+const editorOptions: SvgViewerOptions = { elementList: import.meta.env.DEV }
+
+// and set the editor's `chrome` and `annotations` (with `options.tooltip`)
+// from `?chrome=<json>` and `?annotations=<json>`, as a host would
+
+function devParameter<T>(name: string): T|undefined {
+    if (!import.meta.env.DEV) {
+        return undefined
+    }
+    const value = new URLSearchParams(window.location.search).get(name)
+    try {
+        return value ? JSON.parse(value) as T : undefined
+    } catch {
+        console.error(`?${name} is not JSON`)
+        return undefined
+    }
+}
+
+const devChrome = devParameter<EditorChrome>('chrome')
+// The app shows every right-hand panel, unless `?chrome=` chooses
+const appChrome: EditorChrome = devChrome ?? {
+    panels: ['properties', 'metadata', 'style', 'reactions', 'variables', 'annotations']
+}
+const devAnnotations = devParameter<Annotations>('annotations')
+if (devAnnotations) {
+    editorOptions.tooltip = 'tooltip'
+}
+
+const devElements: ElementsChange[] = []
+const devResults: ElementResult[] = []
+
+function onElements(change: ElementsChange) {
+    devElements.push(change)
+}
+
+function onElementResult(result: ElementResult) {
+    devResults.push(result)
+}
+
+if (import.meta.env.DEV) {
+    (window as unknown as { celldlDev: object }).celldlDev = {
+        command: (command: CellDLEditorCommand) => { editorCommand.value = command },
+        elements: devElements,
+        results: devResults
+    }
+}
+
+//==============================================================================
+
 async function onEditorData(data: EditorData) {
     if (data.kind === 'export') {
-        if (pythonOk) {
-            await saveCellML(data.data)
-        }
+        await saveCellML(data.data)
     } else if (data.kind === 'save-as' || !currentFileHandle) {
         await saveFile(data.data)
     } else if (currentFileHandle) {
@@ -455,20 +531,34 @@ async function openFile() {
         currentFileHandle = fileHandles[0]
         if (currentFileHandle) {
             const file = await currentFileHandle.getFile()
-            const contents = await file.text()
-            editorCommand.value = {
-                command: 'file',
-                options: {
-                    action: 'open',
-                    data: contents,
-                    name: currentFileHandle.name
-                }
-            }
-            fileStatus.value.haveData = true
-            diagramModified(false)
-            windowTitle.value = currentFileHandle.name
+            openDocument(await file.text(), currentFileHandle.name)
         }
     }
+}
+
+function openDocument(contents: string, name: string) {
+    editorCommand.value = {
+        command: 'file',
+        options: {
+            action: 'open',
+            data: contents,
+            name: name
+        }
+    }
+    fileStatus.value.haveData = true
+    diagramModified(false)
+    windowTitle.value = name
+}
+
+// Opens the CellDL document in `?open=celldl#<base64>` (named by an optional `&name=`, else "Linked diagram")
+async function openLinkedDocument() {
+    const name = new URLSearchParams(window.location.search).get('name') || 'Linked diagram'
+    await loadFromLink({
+        celldl: (data: string) => {
+            // A link's document may come from anywhere, so nothing in it may run
+            openDocument(safeCellDL(decodeCellDLLink(data)), name)
+        }
+    }, onError)
 }
 
 //==============================================================================
@@ -565,9 +655,8 @@ async function saveCellML(celldl: string) {
         suggestedName: fileName
     }
     const fileHandle = await window.showSaveFilePicker(options).catch(() => {})
-/*
     if (fileHandle) {
-        const cellmlObject = celldl2cellml(`https://celldl.org/cellml/${fileHandle.name}`, celldl)
+        const cellmlObject = await celldl2cellml(`https://celldl.org/cellml/${encodeURIComponent(fileHandle.name)}`, celldl)
         if (cellmlObject.cellml) {
             const writableStream = await fileHandle.createWritable()
             await writableStream.write(cellmlObject.cellml)
@@ -578,14 +667,13 @@ async function saveCellML(celldl: string) {
                 summary: 'CellML created',
                 detail: `Saved as ${fileHandle.name}`
             })
-        } else if (cellmlObject.issues) {
+        } else if (cellmlObject.issues?.length) {
             issues.value = cellmlObject.issues
             issuesVisible.value = true
         } else {
-            window.alert('Unexpected exception generating CellML...')
+            window.alert(cellmlObject.exception ?? 'Unexpected exception generating CellML...')
         }
     }
-*/
 }
 
 //==============================================================================
@@ -619,8 +707,39 @@ function onEditAction(action: string) {
 
 const viewState = vue.ref<ViewState>({ ...DEFAULT_VIEW_STATE })
 
-function onViewAction(action: string, value: number|boolean) {
-    if (action === 'show-grid') {
+//==============================================================================
+
+// Bonds' arrowheads, the viewer's choice: from `?arrowStyle=` (for tests) or as last chosen
+
+const ARROW_STYLE_KEY = 'celldl-editor-arrow-style'
+
+function initialArrowStyle(): ArrowStyle {
+    let style: string|null = new URLSearchParams(window.location.search).get('arrowStyle')
+    if (!style) {
+        try {
+            style = window.localStorage.getItem(ARROW_STYLE_KEY)
+        } catch {
+            style = null
+        }
+    }
+    return ARROW_STYLES.includes(style as ArrowStyle) ? style as ArrowStyle : DEFAULT_ARROW_STYLE
+}
+
+const arrowStyle = vue.ref<ArrowStyle>(initialArrowStyle())
+
+function setArrowStyle(style: ArrowStyle) {
+    arrowStyle.value = style
+    try {
+        window.localStorage.setItem(ARROW_STYLE_KEY, style)
+    } catch {
+        // Not remembered
+    }
+}
+
+function onViewAction(action: string, value: number|boolean|string) {
+    if (action === 'arrow-style') {
+        setArrowStyle(value as ArrowStyle)
+    } else if (action === 'show-grid') {
         viewState.value = { ...viewState.value, showGrid: !!value }
         editorCommand.value = {
             command: 'view',

@@ -23,17 +23,31 @@ import { CellDLEditor } from '#editor/editor'
 //==============================================================================
 
 export namespace alert {
+    let holding = 0
+
     export function clear() {
-        CellDLEditor.instance?.showMessage('')
+        if (holding === 0) {
+            CellDLEditor.instance?.showAlert('', '')
+        }
+    }
+
+    /** Runs `fn` without clearing the message shown, e.g. when reading properties for the host. */
+    export function keepShown<T>(fn: () => T): T {
+        holding += 1
+        try {
+            return fn()
+        } finally {
+            holding -= 1
+        }
     }
 
     export function error(msg: string) {
         console.error(msg)
-        CellDLEditor.instance?.showMessage(msg, 'error')
+        CellDLEditor.instance?.showAlert(msg, 'error')
     }
 
     export function info(msg: string) {
-        CellDLEditor.instance?.showMessage(msg, 'info')
+        CellDLEditor.instance?.showAlert(msg, 'info')
     }
 
     export function tooltip(msg: string) {
@@ -42,7 +56,7 @@ export namespace alert {
 
     export function warn(msg: string) {
         console.warn(msg)
-        CellDLEditor.instance?.showMessage(msg, 'warn')
+        CellDLEditor.instance?.showAlert(msg, 'warn')
     }
 
     export function elementError(msg: string, svgElement?: SVGGraphicsElement) {
