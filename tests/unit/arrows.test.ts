@@ -20,6 +20,7 @@ import {
     harpoonMarker
 } from '#root/utils/arrows'
 import { BondgraphPlugin } from '#root/plugins/bondgraph'
+import { celldlDocument } from '#root/utils/celldlDocument'
 
 const parse = (xml: string) => new DOMParser().parseFromString(xml, 'image/svg+xml').documentElement!
 
@@ -106,5 +107,23 @@ describe('arrows', () => {
         const definitions = new BondgraphPlugin().svgDefinitions()
         expect(definitions).toContain('id="connection-end-arrow-bondgraph"')
         expect(definitions).not.toContain('celldl-display-arrow')
+    })
+
+    test('a generated document\'s bonds end at the target\'s edge with that marker', () => {
+        const spec = {
+            label: 'A -> r', turtle: '',
+            elements: [
+                { id: 'q_A', type: 'bgf:ChemicalStorageNode', symbol: 'q', species: 'A', location: 'c', x: 0, y: 0 },
+                { id: 'Re_r', type: 'bgf:ChemicalReactionNode', symbol: 'Re', species: 'r', location: 'c', x: 100, y: 0 },
+            ],
+            connections: [{ id: 'q_A.Re_r', source: 'q_A', target: 'Re_r', count: 1 }]
+        }
+        const images = new Map([['q_A', { href: 'a', width: 40, height: 20 }], ['Re_r', { href: 'r', width: 60, height: 20 }]])
+        const svg = parse(celldlDocument(spec, images))
+        const marker = svg.getElementsByTagName('marker')[0]!
+        expect(marker.getAttribute('id')).toBe('connection-end-arrow-bondgraph')
+        expect(marker.getElementsByTagName('polyline')[0]!.getAttribute('points')).toBe(ARROW_POINTS)
+        const bond = svg.getElementsByTagName('path')[0]!
+        expect(bond.getAttribute('d')).toBe('M20 0L70 0')            // from q_A's right edge to Re_r's left edge
     })
 })

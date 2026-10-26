@@ -55,7 +55,7 @@
             CellDLEditor.grow(
                 :editorCommand="editorCommand"
                 :options="editorOptions"
-                :chrome="devChrome"
+                :chrome="appChrome"
                 :annotations="devAnnotations"
                 :arrowStyle="arrowStyle"
                 :theme="editorTheme"
@@ -173,8 +173,16 @@ const loadingMessage = vue.ref<string>('Loading CellDL editor');
         loadingMessage.value = ''
         console.log('Editor ready...')
 
-        // Open the document in a `?open=celldl#<base64>` link, once the editor component has mounted
-        setTimeout(() => { openLinkedDocument() }, OPEN_LINK_DELAY)
+        // Open the document in a `?open=celldl#<base64>` link, or the CellDL file at `?open=<url>` (a link with no
+        // hash), once the editor component has mounted
+        setTimeout(() => {
+            const open = new URLSearchParams(window.location.search).get('open')
+            if (window.location.hash) {
+                openLinkedDocument()
+            } else if (open) {
+                openUrlFile(open)
+            }
+        }, OPEN_LINK_DELAY)
 
         // Now start checking for a newer version of the editor
         version.startCheck()
@@ -293,6 +301,16 @@ vue.onMounted(() => {
     }, SHORT_DELAY)
 })
 
+async function openUrlFile(url: string) {
+    const response = await fetch(url)
+    if (!response.ok) {
+        onError(`Cannot open ${url}: ${response.status} ${response.statusText}`)
+        return
+    }
+    // A file from a URL may come from anywhere, so nothing in it may run
+    openDocument(safeCellDL(await response.text()), decodeURIComponent(url.split('/').pop() || url))
+}
+
 //==============================================================================
 //==============================================================================
 
@@ -372,6 +390,10 @@ function devParameter<T>(name: string): T|undefined {
 }
 
 const devChrome = devParameter<EditorChrome>('chrome')
+// The app shows every right-hand panel, unless `?chrome=` chooses
+const appChrome: EditorChrome = devChrome ?? {
+    panels: ['properties', 'metadata', 'style', 'reactions', 'variables', 'annotations']
+}
 const devAnnotations = devParameter<Annotations>('annotations')
 if (devAnnotations) {
     editorOptions.tooltip = 'tooltip'
