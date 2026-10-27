@@ -4,12 +4,14 @@
 // bonds, what a new one does to its target, values typed with units, and the RDF bg2cellml reads.
 
 import { afterEach, describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
-import { openFixture } from './support/editor'
+import { editor, openFixture } from './support/editor'
 
 import type { CellDLConnectedObject, CellDLConnection, CellDLObject } from '#editor/celldlObjects'
 import { loadPropertyGroups } from '#editor/components/properties'
-import type { CellDLDiagram } from '#editor/diagram'
+import { CellDLDiagram } from '#editor/diagram'
 import { addBond, bondgraphPlugin } from '#editor/editor/placing'
 import { mathmlLatex, type MathNode } from '#root/plugins/bondgraph/lawtext'
 import { paletteDomains, paletteEntries, placeEntry } from '#root/plugins/bondgraph/palette'
@@ -218,6 +220,27 @@ describe('signal bonds', () => {
         expect(resistor.maxConnections).toBe(resistor.numConnections)
         drawSignalBonds.value = true
         expect(resistor.maxConnections).toBe(resistor.numConnections + 1)
+    })
+
+    test('an element with all its power bonds still takes a signal bond from a block', async () => {
+        await emptyDiagram()
+        const source = await place('chemical/flux-source', 0)
+        const store = await place('chemical/store', 150)
+        const port = await place('signal/SignalBlock/SignalInputPort', 0)
+        addBond(source, store)
+        addBond(port, source)
+        expect(source.numConnections).toBe(2)
+    })
+
+    test('an opened document\'s full element keeps its signal bonds', async () => {
+        // vessel_inertance's flow source Sf_intake has its one power bond and a signal bond setting its value
+        const text = readFileSync(join(import.meta.dir, '../examples/signals/vessel_inertance.celldl.svg'), 'utf8')
+        const diagram = new CellDLDiagram('vessel_inertance.celldl.svg', text, editor)
+        await editor.editDiagram(diagram)
+        const id = diagram.rdfStore.query(`SELECT ?e WHERE { ?e <${BGF}hasSymbol> "Sf_intake" }`)[0]!.get('e')!.value
+        const source = diagram.objectById(id.split('#').pop()!) as CellDLConnectedObject
+        expect(source.numConnections).toBe(2)
+        expect(source.connections.filter(c => bondgraphPlugin().isSignalBond(c)).length).toBe(1)
     })
 
     test('a connection\'s Properties offer its kind and what it does to its target', async () => {

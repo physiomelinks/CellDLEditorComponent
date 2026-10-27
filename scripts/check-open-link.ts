@@ -5,7 +5,7 @@
 // For each document, opens URL?open=celldl&name=<name>#<base64 of the document> in headless Chrome (driven over the
 // DevTools protocol; CHROME, default google-chrome; a new profile per run), waits for the diagram, and checks that
 // every component of the document (by id) is in the opened diagram, and that its signal bonds (bgf:SignalBond) are
-// there and drawn as signal bonds (class `signal`). Writes OUTDIR/<name>.png, a screenshot of the opened diagram,
+// there and drawn as signal bonds (class `signal`), and that the editor reports no error opening it. Writes OUTDIR/<name>.png, a screenshot of the opened diagram,
 // and prints each document's link length. Exits 1 if a check fails.
 
 import { spawn } from 'node:child_process'
@@ -86,7 +86,10 @@ const opened = `(async () => {
     const signals = connections.filter(c => c.classList.contains('signal')).map(c => c.id)
     const dashed = connections.filter(c => c.classList.contains('signal'))
         .every(c => { const p = c.tagName === 'path' ? c : c.querySelector('path'); return getComputedStyle(p).strokeDasharray !== 'none' })
-    return { components, signals, power: connections.length - signals.length, dashed, url: location.href }
+    // what the editor says about the document, e.g. a connection it could not add
+    const errors = [...document.querySelectorAll('.p-toast-message, .status-bar, footer, [class*="status"]')]
+        .map(e => e.textContent ?? '').filter(t => /cannot|error|limit/i.test(t))
+    return { components, signals, power: connections.length - signals.length, dashed, errors, url: location.href }
 })()`
 
 let failed = false
@@ -105,18 +108,20 @@ try {
         await sleep(1500)
         const result = await send(socket, 'Runtime.evaluate', { expression: opened, awaitPromise: true,
                                                                 returnByValue: true, timeout: 60000 })
-        const found = result.result.value as { components: string[], signals: string[], power: number, dashed: boolean, url: string }
+        const found = result.result.value as { components: string[], signals: string[], power: number, dashed: boolean,
+                                               errors: string[], url: string }
         const want = expected(celldl)
         const missing = want.components.filter(id => !found.components.includes(id))
         const missingSignals = want.signals.filter(id => !found.signals.includes(id))
         const ok = want.components.length > 0 && missing.length === 0 && missingSignals.length === 0
-                && found.signals.length === want.signals.length && found.dashed
+                && found.signals.length === want.signals.length && found.dashed && found.errors.length === 0
         failed ||= !ok
         console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}: ${found.components.length}/${want.components.length} components, `
                     + `${found.signals.length}/${want.signals.length} signal bonds (dashed: ${found.dashed}), `
                     + `${found.power} power bonds; link ${link.length} characters`
                     + (missing.length ? `; missing ${missing.join(', ')}` : '')
-                    + (missingSignals.length ? `; missing signal bonds ${missingSignals.join(', ')}` : ''))
+                    + (missingSignals.length ? `; missing signal bonds ${missingSignals.join(', ')}` : '')
+                    + (found.errors.length ? `; the editor says: ${[...new Set(found.errors)].join(' | ')}` : ''))
         const shot = await send(socket, 'Page.captureScreenshot', { format: 'png' })
         writeFileSync(join(outDir, `${name}.png`), Buffer.from(shot.data, 'base64'))
     }
