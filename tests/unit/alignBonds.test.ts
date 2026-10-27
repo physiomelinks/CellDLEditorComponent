@@ -5,10 +5,11 @@
 import { describe, expect, test } from 'bun:test'
 import type { NormalArray } from 'svg-path-commander'
 
-import { editor, openFixture, settle } from './support/editor'
+import { editor, fixture, openFixture, settle } from './support/editor'
+import { measureSvgRects } from './support/svgRects'
 
 import type { CellDLConnection, CellDLObject } from '#editor/celldlObjects'
-import type { CellDLDiagram } from '#editor/diagram'
+import { CellDLDiagram } from '#editor/diagram'
 import { undoRedoState } from '#editor/diagram/undoredo'
 import { bondsWithin } from '#editor/editor/arrange'
 import { addBond } from '#editor/editor/placing'
@@ -198,5 +199,154 @@ describe('aligning composite elements', () => {
         editor.undo()
         await settle()
         expect([into, out].map(paths)).toEqual(before)
+    })
+})
+
+//==============================================================================
+
+const ends = (bond: CellDLConnection) => {
+    const pathArray = svgConnection(bond).pathElements[0]!.pathArray
+    const [start, end] = [pathArray.at(0)!, pathArray.at(-1)!]
+    return { start: { x: start.at(-2) as number, y: start.at(-1) as number }, end: { x: end.at(-2) as number, y: end.at(-1) as number } }
+}
+const slope = (bond: CellDLConnection) => { const { start, end } = ends(bond); return end.y - start.y }
+
+/** Moves an object down by a few pixels, off the grid */
+function nudge(diagram: CellDLDiagram, id: string, dy: number) {
+    const object = diagram.objectById(id)!
+    const start = centroid(object)
+    object.reposition(start, { x: start.x, y: start.y + dy }, { noAlign: true })
+    object.finaliseMove()
+    diagram.objectMoved(object)
+}
+
+/** The enzyme fixture with its elements' images sized, as a browser measures them */
+async function openSizedEnzyme(): Promise<CellDLDiagram> {
+    const sized = fixture('enzyme.celldl').replaceAll('<image href=', '<image x="-22" y="-15" width="44" height="30" href=')
+    const diagram = new CellDLDiagram('enzyme.celldl', sized, editor)
+    await editor.editDiagram(diagram)
+    return diagram
+}
+
+describe('aligning centres', () => {
+    measureSvgRects()
+
+    test('puts a row of different elements\' centres on one line, and their straight bonds exactly level', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        // As in the report: a species, a reaction with sides, and a species, slightly out of line
+        const [s1] = await placeEntry('chemical/species', { x: 100, y: 600 })
+        const side = await placeEntry('chemical/reaction-sides', { x: 300, y: 605 })
+        const [s2] = await placeEntry('chemical/species', { x: 520, y: 597 })
+        const components = side.filter(object => !object.isConnection)
+        const byX = [...components].sort((a, b) => centroid(a).x - centroid(b).x)
+        const [reactants, products] = [byX[0]!, byX.at(-1)!]
+        const into = addBond(s1 as never, reactants as never) as CellDLConnection
+        const out = addBond(products as never, s2 as never) as CellDLConnection
+        const row = [s1!, ...components, s2!]
+        const bonds = [into, out, ...side.filter(object => object.isConnection) as CellDLConnection[]]
+        expect(bonds.some(bond => Math.abs(slope(bond)) > 1)).toBe(true)
+
+        select(diagram, ...row.map(object => object.id))
+        expect(editor.arrangeSelection('middle')).toBe(true)
+        const y = centroid(s1!).y
+        expect(row.map(object => centroid(object).y)).toEqual(row.map(() => y))
+        for (const bond of bonds) {
+            expect(pointCount(bond)).toBe(2)
+            expect(slope(bond)).toBe(0)
+        }
+        // Again changes nothing, and records nothing
+        select(diagram, ...row.map(object => object.id))
+        expect(editor.arrangeSelection('middle')).toBe(false)
+    })
+
+    test('redraws a straight bond to an element left out between centres', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        offset(diagram, R1, 40)
+        const bond = bondBetween(diagram, R1, VR1R)          // straight, with only r1 being aligned
+        expect(pointCount(bond)).toBe(2)
+        select(diagram, US, VR1F, R1)
+        expect(editor.arrangeSelection('middle')).toBe(true)
+        const [r, v] = [centroid(diagram.objectById(R1)!), centroid(diagram.objectById(VR1R)!)]
+        const { start, end } = ends(bond)
+        // Both ends lie on the line between the two centroids
+        const across = (p: { x: number, y: number }) => (p.x - r.x) * (v.y - r.y) - (p.y - r.y) * (v.x - r.x)
+        expect(Math.abs(across(start)) / Math.hypot(v.x - r.x, v.y - r.y)).toBeLessThan(1e-3)
+        expect(Math.abs(across(end)) / Math.hypot(v.x - r.x, v.y - r.y)).toBeLessThan(1e-3)
+    })
+
+    test('squares up a nearly level bond between aligned elements, as part of the same undo step', async () => {
+        const diagram = await openSizedEnzyme()
+        nudge(diagram, VR1F, 4)                               // within the tolerance of level
+        const bond = bondBetween(diagram, US, VR1F)
+        bend(bond, { x: centroid(diagram.objectById(US)!).x + 30, y: centroid(diagram.objectById(US)!).y + 30 })
+        const before = paths(bond)
+        const positions = [US, VR1F, R1].map(id => centroid(diagram.objectById(id)!))
+        select(diagram, US, VR1F, R1)
+        expect(editor.arrangeSelection('distribute-h')).toBe(true)
+        // Distributing doesn't move anything across, so the centres stay 4px apart
+        expect(centroid(diagram.objectById(VR1F)!).y - centroid(diagram.objectById(US)!).y).toBeCloseTo(4, 6)
+        expect(pointCount(bond)).toBe(2)
+        expect(slope(bond)).toBe(0)
+        expect(slope(bondBetween(diagram, VR1F, R1))).toBe(0)
+        editor.undo()
+        await settle()
+        expect([US, VR1F, R1].map(id => centroid(diagram.objectById(id)!))).toEqual(positions)
+        expect(paths(bond)).toEqual(before)
+    })
+
+    test('leaves a bond further from level than the tolerance sloping', async () => {
+        const diagram = await openSizedEnzyme()
+        nudge(diagram, VR1F, 10)
+        const bond = bondBetween(diagram, US, VR1F)
+        select(diagram, US, VR1F, R1)
+        editor.arrangeSelection('distribute-h')
+        expect(Math.abs(slope(bond))).toBeGreaterThan(1)
+    })
+})
+
+describe('the Straighten action', () => {
+    test('removes the bends of a selected bond as one undo step, and is offered only when there are bends', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        const bond = bondBetween(diagram, VR1F, R1)
+        select(diagram, bond.id)
+        expect(editor.canStraighten()).toBe(false)
+        expect(editor.straightenSelection()).toBe(false)
+        expect(undoRedoState.canUndo).toBe(false)
+
+        const c = centroid(diagram.objectById(R1)!)
+        bend(bond, { x: c.x - 30, y: c.y + 40 }, { x: c.x - 10, y: c.y + 50 })
+        const before = paths(bond)
+        const positions = [VR1F, R1].map(id => centroid(diagram.objectById(id)!))
+        select(diagram, bond.id)
+        expect(editor.canStraighten()).toBe(true)
+        expect(editor.straightenSelection()).toBe(true)
+        expect(pointCount(bond)).toBe(2)
+        expect([VR1F, R1].map(id => centroid(diagram.objectById(id)!))).toEqual(positions)
+        expect(editor.canStraighten()).toBe(false)
+        const straight = paths(bond)
+        editor.undo()
+        await settle()
+        expect(paths(bond)).toEqual(before)
+        expect(undoRedoState.canRedo).toBe(true)
+        editor.redo()
+        await settle()
+        expect(paths(bond)).toEqual(straight)
+    })
+
+    test('straightens the bonds between selected elements, not those leaving them', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        const [inside, leaving] = [bondBetween(diagram, US, VR1F), bondBetween(diagram, R1, VR1R)]
+        const c = centroid(diagram.objectById(VR1F)!)
+        bend(inside, { x: c.x - 30, y: c.y + 40 })
+        bend(leaving, { x: c.x + 120, y: c.y - 40 })
+        const leavingBefore = paths(leaving)
+        select(diagram, US, VR1F, R1)
+        expect(editor.canStraighten()).toBe(true)
+        expect(editor.straightenSelection()).toBe(true)
+        expect(pointCount(inside)).toBe(2)
+        expect(paths(leaving)).toEqual(leavingBefore)
+        editor.undo()
+        await settle()
+        expect(pointCount(inside)).toBe(3)
     })
 })

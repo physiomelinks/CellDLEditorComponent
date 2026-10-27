@@ -15,7 +15,7 @@ function attribute(element: Element, name: string): number {
 
 function measure(element: Element): Box|null {
     const tag = element.tagName.toLowerCase()
-    if (tag === 'rect') {
+    if (tag === 'rect' || tag === 'image') {
         return { x: attribute(element, 'x'), y: attribute(element, 'y'),
                  width: attribute(element, 'width'), height: attribute(element, 'height') }
     } else if (tag === 'g') {

@@ -365,11 +365,11 @@ export class PathElement {
     setPathPoints(_pathArray: NormalArray) {}
 
     /**
-     * Removes the path's control points, so it runs straight between its two ends.
+     * Runs the path straight between its two ends, squared up when within `square` pixels of horizontal or vertical.
      *
-     * @returns Whether the path had control points to remove.
+     * @returns Whether the path changed.
      */
-    straighten(): boolean {
+    straighten(_square: number = 0): boolean {
         return false
     }
 

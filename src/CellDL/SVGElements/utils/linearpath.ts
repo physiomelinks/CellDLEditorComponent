@@ -100,19 +100,74 @@ export class LinearPath extends PathElement {
         this.setDirty()
     }
 
-    straighten(): boolean {
-        if (!this.validPath || this.pathPoints.length <= 2) {
+    /**
+     * Runs the path straight between its two ends, without control points.
+     *
+     * Each end is where the line between the elements' centroids crosses its
+     * boundary. With a `square` tolerance, a line within that many pixels of
+     * horizontal or vertical runs exactly so, midway between the centroids,
+     * when both elements reach that far.
+     *
+     * @returns Whether the path changed.
+     */
+    straighten(square: number = 0): boolean {
+        if (!this.validPath || this.pathPoints.length < 2) {
             return false
         }
-        // Each end where the line between the two centroids crosses its element's boundary
-        const firstCentroid = this.firstElement.centroid
-        const lastCentroid = this.lastElement.centroid
-        const start = this.firstElement.boundaryIntersections(lastCentroid)[0] ?? firstCentroid
-        const end = this.lastElement.boundaryIntersections(firstCentroid)[0] ?? lastCentroid
+        const ends = this.#straightEnds(square)
+        if (!ends) {
+            return false
+        }
+        const [start, end] = ends
+        const [first, last] = [this.pathPoints.at(0)!, this.pathPoints.at(-1)!]
+        const same = (a: PointLike, b: PointLike) => Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6
+        if (this.pathPoints.length === 2 && same(first, start) && same(last, end)) {
+            return false
+        }
         this.clearControlHandles()
         this.setPathPoints([['M', start.x, start.y], ['L', end.x, end.y]] as NormalArray)
         this.redraw(true)
         return true
+    }
+
+    #straightEnds(square: number): [PointLike, PointLike] | null {
+        const firstCentroid = this.firstElement.centroid
+        const lastCentroid = this.lastElement.centroid
+        const start = this.firstElement.boundaryIntersections(lastCentroid)[0] ?? firstCentroid
+        const end = this.lastElement.boundaryIntersections(firstCentroid)[0] ?? lastCentroid
+        if (square <= 0) {
+            return [start, end]
+        }
+        const dx = lastCentroid.x - firstCentroid.x
+        const dy = lastCentroid.y - firstCentroid.y
+        const horizontal = Math.abs(dy) <= square && Math.abs(dx) > Math.abs(dy)
+        const vertical = Math.abs(dx) <= square && Math.abs(dy) > Math.abs(dx)
+        if (!horizontal && !vertical) {
+            return [start, end]
+        }
+        // The line's position across its direction, which both elements must reach
+        const across: 'x'|'y' = horizontal ? 'y' : 'x'
+        const line = (firstCentroid[across] + lastCentroid[across]) / 2
+        for (const element of [this.firstElement, this.lastElement]) {
+            const offsets = element.corners.map(corner => corner[across])
+            const centre = element.centroid[across]
+            if (line < centre + Math.min(...offsets) || line > centre + Math.max(...offsets)) {
+                return [start, end]
+            }
+        }
+        // Ends on the faces the axis-parallel rays from each centroid cross, moved along them to the line
+        const along: 'x'|'y' = horizontal ? 'x' : 'y'
+        const towards = (from: PointLike, to: PointLike): PointLike => (
+            horizontal ? { x: to.x, y: from.y } : { x: from.x, y: to.y }
+        )
+        const squareStart = this.firstElement.boundaryIntersections(towards(firstCentroid, lastCentroid))[0]
+        const squareEnd = this.lastElement.boundaryIntersections(towards(lastCentroid, firstCentroid))[0]
+        if (!squareStart || !squareEnd) {
+            return [start, end]
+        }
+        return horizontal
+            ? [{ x: squareStart[along], y: line }, { x: squareEnd[along], y: line }]
+            : [{ x: line, y: squareStart[along] }, { x: line, y: squareEnd[along] }]
     }
 
     protected movePathPoint(position: PointLike) {

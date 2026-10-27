@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from 'bun:test'
 
-import { ARRANGE_OPS, type ArrangeBounds, arrangeTargets, minimumForArrange } from '#editor/editor/arrange'
+import { ARRANGE_OPS, type ArrangeBounds, arrangeTargets, centreLine, minimumForArrange } from '#editor/editor/arrange'
 
 const box = (left: number, top: number, width: number, height: number): ArrangeBounds =>
     ({ left, top, right: left + width, bottom: top + height })
@@ -84,5 +84,24 @@ describe('arrangeTargets', () => {
 
     test('align needs two items and distribute three', () => {
         expect(ARRANGE_OPS.map(minimumForArrange)).toEqual([2, 2, 2, 2, 2, 2, 3, 3])
+    })
+})
+
+describe('aligning by centres', () => {
+    test('align middle and centre move each object\'s own centre onto the line', () => {
+        const bounds = [
+            { left: 0, top: 0, right: 20, bottom: 40, centre: { x: 10, y: 10 } },   // centre off the middle
+            { left: 50, top: 5, right: 70, bottom: 25 }
+        ]
+        expect(centreLine(bounds, 'middle')).toBe(20)
+        expect(arrangeTargets(bounds, 'middle').map(d => d.dy)).toEqual([10, 5])
+        expect(centreLine(bounds, 'centre')).toBe(35)
+        expect(arrangeTargets(bounds, 'centre').map(d => d.dx)).toEqual([25, -25])
+    })
+    test('there is no centre line for edges, distributing, or too few objects', () => {
+        const box = { left: 0, top: 0, right: 10, bottom: 10 }
+        expect(centreLine([box, box], 'left')).toBeNull()
+        expect(centreLine([box, box, box], 'distribute-h')).toBeNull()
+        expect(centreLine([box], 'middle')).toBeNull()
     })
 })
