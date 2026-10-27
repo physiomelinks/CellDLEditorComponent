@@ -409,7 +409,8 @@ export class CellDLEditor {
         // Handle click events on control points
         document.addEventListener('select-object', this.#objectClickEvent.bind(this))
 
-        // An edit that moves elements into another compartment gives them its location, as part of its undo step
+        // An edit that moves elements into another compartment gives them its location, as part of its undo step,
+        // when compartments give locations (../editor/locations.ts)
         undoRedo.listen({
             stepAdded: (undoState) => this.#followCompartments(undoState),
             stepRestored: () => this.#compartments.note(this.#celldlDiagram)
@@ -855,8 +856,7 @@ export class CellDLEditor {
                     const object = this.selectionSet.objects[0]!
                     if (panel.panelId === PANEL_ID.PROPERTIES_PANEL
                      || (panel.panelId === PANEL_ID.METADATA_PANEL && object.isCompartment)) {
-                        // Undoable, as the host's `element` command's edits are, and as a compartment's label is
-                        // the location of what's inside it
+                        // Undoable, as the host's `element` command's edits are, and a compartment's label edits are
                         await this.editProperties([object], async () => {
                             await panel.updateObjectProperties(object, detail.itemId, detail.value)
                         })
