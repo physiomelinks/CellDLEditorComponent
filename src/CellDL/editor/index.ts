@@ -60,7 +60,7 @@ import { CompartmentHandles, compartmentMoveGroup, defaultBounds, placeSpatial }
 import { EditorFrame } from './editorframe'
 import { CompartmentTracker } from './locations'
 import { DEFAULT_VIEW_STATE, editGuides, EDITOR_GRID_CLASS } from './editguides'
-import PanZoom, { ZOOM_STEP } from './panzoom'
+import PanZoom, { DEFAULT_WHEEL_MODE, type WheelMode, wheelModeOrDefault, ZOOM_STEP } from './panzoom'
 import { BoxMaker } from './boxmaker'
 import { drawSideLabels } from './sidelabels'
 import { type TooltipContent, type TooltipDisplay, Tooltips } from './tooltips'
@@ -259,6 +259,7 @@ export class CellDLEditor {
 
     #panning: boolean = false
     #panzoom: PanZoom | null = null
+    #wheelMode: WheelMode = DEFAULT_WHEEL_MODE
     protected pointerMoved: boolean = false
     protected moving: boolean = false
     protected moved: boolean = false
@@ -430,6 +431,7 @@ export class CellDLEditor {
         this.#panzoom = new PanZoom(this.#container, (scale: number) => {
             document.dispatchEvent(new CustomEvent(VIEW_CHANGED_EVENT, { detail: { scale } }))
         })
+        this.#panzoom.wheelMode = this.#wheelMode
         this.#bondDrag.mount(this.#container)
 
         // Set up event handlers
@@ -1077,6 +1079,18 @@ export class CellDLEditor {
                     this.#statusPos.innerText = position
                 }
             }
+        }
+    }
+
+    /** What a plain wheel does over the diagram: zoom for a mouse and pan for a trackpad, or always one */
+    get wheelMode(): WheelMode {
+        return this.#wheelMode
+    }
+
+    set wheelMode(mode: WheelMode) {
+        this.#wheelMode = wheelModeOrDefault(mode)
+        if (this.#panzoom) {
+            this.#panzoom.wheelMode = this.#wheelMode
         }
     }
 

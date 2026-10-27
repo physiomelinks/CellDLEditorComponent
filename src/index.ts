@@ -72,6 +72,8 @@ export { CANVAS_EMPTY_CLICK_EVENT } from '#editor/editor'
 
 export { ARROW_STYLES, type ArrowStyle, DEFAULT_ARROW_STYLE } from '#root/utils/arrows'
 
+export { DEFAULT_WHEEL_MODE, WHEEL_MODES, type WheelMode } from '#editor/editor/panzoom'
+
 export type {
     DiagramElement,
     ElementEdit,

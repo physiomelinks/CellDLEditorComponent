@@ -95,6 +95,7 @@ import { HOVER_TOOLTIP_DELAY } from '#editor/editor/tooltips'
 import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
 import { isMacOs } from '#root/utils/common'
 import { type ArrowStyle, arrowStyleClass, arrowStyleOrDefault, displayArrowDefinitions } from '#root/utils/arrows'
+import { DEFAULT_WHEEL_MODE, type WheelMode, wheelModeOrDefault } from '#editor/editor/panzoom'
 
 import {
     type Annotations,
@@ -353,6 +354,13 @@ export interface CellDLEditorProps {
      * its own, and is SI without one. Default `'cellular'`.
      */
     unitSystem?: UnitSystemId
+    /**
+     * What a plain mouse wheel or two-finger scroll does over the diagram:
+     * `'auto'` zooms for a mouse wheel and pans for a trackpad, `'pan'` always
+     * pans and `'zoom'` always zooms. A pinch and Ctrl/Cmd+wheel always zoom.
+     * Default `'auto'`.
+     */
+    wheelMode?: WheelMode
 }
 export type EditorData = {
     data: string
@@ -508,6 +516,18 @@ vue.watch(
     () => props.chrome?.tooltipDelay,
     (delay) => {
         celldlEditor.tooltipDelay = (delay !== undefined && delay >= 0) ? delay : HOVER_TOOLTIP_DELAY
+    },
+    { immediate: true }
+)
+
+// What a plain wheel does over the diagram
+vue.watch(
+    () => props.wheelMode,
+    (mode) => {
+        if (mode !== undefined && wheelModeOrDefault(mode) !== mode) {
+            console.warn(`Unknown wheel mode '${mode}': using '${DEFAULT_WHEEL_MODE}'`)
+        }
+        celldlEditor.wheelMode = wheelModeOrDefault(mode)
     },
     { immediate: true }
 )
