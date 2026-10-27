@@ -299,6 +299,13 @@ export const BG_ELEMENT_TYPE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/b
 export const BG_ELEMENT_SPECIES_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-species`
 export const BG_ELEMENT_LOCATION_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-location`
 export const BG_ELEMENT_PORT_TYPE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-port-type`
+export const BG_ELEMENT_PORT_VARIABLES_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-port-variables`
+export const BG_ELEMENT_PORT_DIRECTION_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-port-direction`
+export const BG_ELEMENT_PORT_ORDER_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-port-order`
+export const BG_ELEMENT_MULTI_PORT_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-multi-port`
+// a module port's other properties, shown with its port type
+const BG_PORT_DETAIL_ITEMS = [BG_ELEMENT_PORT_VARIABLES_ITEM, BG_ELEMENT_PORT_DIRECTION_ITEM,
+                              BG_ELEMENT_PORT_ORDER_ITEM, BG_ELEMENT_MULTI_PORT_ITEM]
 
 export const BG_ELEMENT_VALUE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementInitialValue}/bg-element-value`
 
@@ -350,6 +357,30 @@ function elementPropertiesTemplate(): IndexedPropertyGroup[] {
                 itemId: BG_ELEMENT_PORT_TYPE_ITEM,
                 property: BGF.uri('portType').value,
                 name: 'Port type (as a module port)',
+                defaultValue: ''
+            },
+            {
+                itemId: BG_ELEMENT_PORT_VARIABLES_ITEM,
+                property: BGF.uri('portVariables').value,
+                name: 'Port variables (e.g. "v", "q", "u v"; default by element)',
+                defaultValue: ''
+            },
+            {
+                itemId: BG_ELEMENT_PORT_DIRECTION_ITEM,
+                property: BGF.uri('portDirection').value,
+                name: 'Port direction (entrance, exit, general)',
+                defaultValue: ''
+            },
+            {
+                itemId: BG_ELEMENT_PORT_ORDER_ITEM,
+                property: BGF.uri('portOrder').value,
+                name: 'Place in a port of several variables',
+                defaultValue: ''
+            },
+            {
+                itemId: BG_ELEMENT_MULTI_PORT_ITEM,
+                property: BGF.uri('multiPort').value,
+                name: 'Multi port (True, sum)',
                 defaultValue: ''
             }
         ]
@@ -1793,11 +1824,10 @@ export class BondgraphPlugin implements PluginInterface {
         return errorMsg
     }
 
-    // Whether an element can be a module's port (bgf:portType): a flow or potential source, or a signal port block
+    // Whether an element can be a module's port (bgf:portType): any bond element or signal block (a source of its flow
+    // and potential, a port block of its output, another element of the variables bgf:portVariables names)
     #hasPortType(pluginData: PluginData): boolean {
-        const types = [pluginData.baseComponent?.type, pluginData.elementTemplate?.type]
-        return ['FlowSource', 'PotentialSource', 'SignalInputPort', 'SignalOutputPort']
-                   .some(name => types.includes(BGF.uri(name).value))
+        return !!(pluginData.baseComponent || pluginData.elementTemplate)
     }
 
     #loadElementProperties(celldlObject: CellDLObject, componentGroup: PropertyGroup, groupTemplate: IndexedPropertyGroup) {
@@ -1807,7 +1837,8 @@ export class BondgraphPlugin implements PluginInterface {
             if (itemDetails.itemId === BG_ELEMENT_TYPE_ITEM) {
                 const discreteItem = this.#getElementTypeItem(celldlObject, itemDetails, pluginData)
                 items.push(discreteItem)
-            } else if (itemDetails.itemId === BG_ELEMENT_PORT_TYPE_ITEM) {
+            } else if (itemDetails.itemId === BG_ELEMENT_PORT_TYPE_ITEM
+                    || BG_PORT_DETAIL_ITEMS.includes(itemDetails.itemId)) {
                 if (this.#hasPortType(pluginData)) {
                     const item = getItemProperty(celldlObject, itemDetails)
                     if (item) {
@@ -2183,7 +2214,7 @@ export class BondgraphPlugin implements PluginInterface {
                         } else {
                             alert.error(errorMsg)
                         }
-                    } else if (itemId === BG_ELEMENT_PORT_TYPE_ITEM) {
+                    } else if (itemId === BG_ELEMENT_PORT_TYPE_ITEM || BG_PORT_DETAIL_ITEMS.includes(itemId)) {
                         updateItemProperty(item.property, value, celldlObject)
                     } else if (itemId === BG_ELEMENT_LOCATION_ITEM) {
                         //pluginData.location = value.newValue

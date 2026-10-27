@@ -152,7 +152,7 @@ describe('signal blocks', () => {
 })
 
 describe('module ports', () => {
-    test('a port block and a flow source have a port type; a block has no species or location', async () => {
+    test('any element or block may have a port type and its port details; a block has no species or location', async () => {
         await emptyDiagram()
         const plugin = bondgraphPlugin()
         const load = (object: CellDLObject) => loadPropertyGroups(PANEL_ID.PROPERTIES_PANEL,
@@ -168,7 +168,15 @@ describe('module ports', () => {
         const source = await place('chemical/flux-source', 100)
         expect(load(source).flatMap(g => g.items).map(i => i.itemId.split('/')[1])).toContain('bg-element-port-type')
         const lag = await place('signal/SignalBlock/FirstOrderLag', 200)
-        expect(load(lag).flatMap(g => g.items).map(i => i.itemId.split('/')[1])).not.toContain('bg-element-port-type')
+        const lagGroups = load(lag)
+        const lagIds = lagGroups.flatMap(g => g.items).map(i => i.itemId.split('/')[1])
+        for (const id of ['bg-element-port-type', 'bg-element-port-variables', 'bg-element-port-direction',
+                          'bg-element-port-order', 'bg-element-multi-port']) {
+            expect(lagIds).toContain(id)
+        }
+        await plugin.updateObjectProperties(lag, PANEL_ID.PROPERTIES_PANEL, 'bg-element-properties/bg-element-port-order',
+                                            { oldValue: '', newValue: '3' }, lagGroups)
+        expect(triples(lag)).toContain('bgf:portOrder 3')
     })
 })
 
