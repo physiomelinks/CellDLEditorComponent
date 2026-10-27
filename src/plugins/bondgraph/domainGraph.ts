@@ -69,6 +69,7 @@ const POWER_BOND_QUERY = `
             a celldl:Connection ;
             bgf:hasSource ?source ;
             bgf:hasTarget ?target .
+        FILTER NOT EXISTS { ?bond a bgf:SignalBond }
     }
 `
 
@@ -164,6 +165,9 @@ export class DomainGraph {
     }
 
     deleteNode(nodeUri: string) {
+        if (!this.#graph.hasNode(nodeUri)) {
+            return      // e.g. a signal block, which has no physical domain
+        }
         const domain = this.#graph.getNodeAttribute(nodeUri, 'domain')
         this.#deleteDomain(nodeUri, domain)
         this.#graph.dropNode(nodeUri)

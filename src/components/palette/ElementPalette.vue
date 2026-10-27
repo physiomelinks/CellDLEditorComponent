@@ -43,6 +43,27 @@
                     @keydown.space.prevent="toggleSpatial(entry)"
                 )
                     img.palette-glyph(:src="entry.imageData" alt="" draggable="false")
+        //- Whether new bonds are signal bonds (dashed, carrying a variable to a signal input or a parameter's scale)
+        //- rather than power bonds; a bond to or from a signal block is always a signal bond
+        .palette-group.bonds(role="group" aria-label="Bonds")
+            span.palette-group-label Bonds
+            .palette-tiles
+                .palette-tile.icon-only.signal-toggle(
+                    id="signal-bond-toggle"
+                    :class="{ armed: signalBonds }"
+                    role="switch"
+                    tabindex="0"
+                    aria-label="Draw signal bonds"
+                    :aria-checked="signalBonds"
+                    v-tippy="{ content: signalBonds ? 'Drawing signal bonds: click to draw power bonds' : 'Drawing power bonds: click to draw signal bonds', placement: layout === 'left' ? 'right' : 'bottom' }"
+                    @click="toggleSignalBonds()"
+                    @keydown.enter.prevent="toggleSignalBonds()"
+                    @keydown.space.prevent="toggleSignalBonds()"
+                )
+                    svg.palette-glyph(viewBox="0 0 40 20" width="40" height="20" aria-hidden="true")
+                        line(x1="3" y1="10" x2="31" y2="10" stroke="currentColor" stroke-width="2" stroke-dasharray="5 3")
+                        polygon(points="30,5 38,10 30,15" fill="currentColor")
+                    span.palette-label Signal
 </template>
 
 <script setup lang="ts">
@@ -54,6 +75,7 @@ import * as vue from 'vue'
 import { type PaletteEntry, paletteDomains, paletteEntries } from '#root/plugins/bondgraph/palette'
 
 import { type SpatialEntry, spatialEntries } from '#root/plugins/drawing/spatial'
+import { drawSignalBonds } from '#root/plugins/bondgraph/signals'
 
 import { armEntry, armSpatial, disarm, entryEventDetails, shownDomain, spatialEventDetails } from './paletteState'
 
@@ -68,6 +90,12 @@ const domainOptions = paletteDomains()
 const entries = vue.computed(() => paletteEntries(shownDomain.value))
 
 const SPATIAL_ENTRIES = spatialEntries()
+
+const signalBonds = vue.computed(() => drawSignalBonds.value)
+
+function toggleSignalBonds() {
+    drawSignalBonds.value = !drawSignalBonds.value
+}
 
 //==============================================================================
 

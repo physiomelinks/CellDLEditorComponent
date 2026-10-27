@@ -30,7 +30,8 @@ const BG_RDF_TEMPLATE_URIS = [
     `${BG_RDF_TEMPLATE_BASE_URI}templates/chemical.ttl`,
     `${BG_RDF_TEMPLATE_BASE_URI}templates/electrical.ttl`,
     `${BG_RDF_TEMPLATE_BASE_URI}templates/hydraulic.ttl`,
-    `${BG_RDF_TEMPLATE_BASE_URI}templates/mechanical.ttl`
+    `${BG_RDF_TEMPLATE_BASE_URI}templates/mechanical.ttl`,
+    `${BG_RDF_TEMPLATE_BASE_URI}templates/signal.ttl`
 ]
 
 //==============================================================================

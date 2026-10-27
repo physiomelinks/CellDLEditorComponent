@@ -66,6 +66,9 @@ describe('the BG-RDF templates', async () => {
         return new Map(rows.map((r: Map<string, { value: string }>) =>
             [r.get('element')!.value.replace(BGF, ''), { lawLabel: r.get('lawLabel')?.value, overrides: styleOverrides(r) }]))
     }
+    // the domain of each template, as the palette offers a domain's templates together
+    const domains = (base: string) => new Map(store.query(`${SPARQL_PREFIXES}${elementTemplatesQuery(`${BGF}${base}`)}`)
+        .map((r: Map<string, { value: string }>) => [r.get('element')!.value.replace(BGF, ''), r.get('domain')!.value]))
 
     test('each element class offers its laws, a non-default law with its label and style', () => {
         const reactions = templates('Reaction')
@@ -87,14 +90,20 @@ describe('the BG-RDF templates', async () => {
         expect(templates('OneResistanceNode').get('BernoulliHydraulicResistanceNode')?.lawLabel).toBe('PB')
     })
 
-    test('within an element class, every labelled law is drawn differently from the others and the default', () => {
+    test('within an element class and a domain, every labelled law is drawn differently from the others and the default', () => {
         for (const base of ['Reaction', 'Resistance', 'QuantityStore']) {
-            const drawn = [...templates(base).values()].map(t =>
-                JSON.stringify([t.lawLabel, templateStyle(REACTION_STYLE, t.overrides)]))
-            const labelled = [...templates(base).values()].filter(t => t.lawLabel).length
-            expect(labelled).toBeGreaterThan(0)
-            // the unlabelled templates share the base look; each labelled one has its own
-            expect(new Set(drawn).size).toBe(labelled + 1)
+            const domainOf = domains(base)
+            let labelledLaws = 0
+            for (const domain of new Set(domainOf.values())) {
+                const inDomain = [...templates(base)].filter(([type]) => domainOf.get(type) === domain).map(([, t]) => t)
+                const drawn = inDomain.map(t => JSON.stringify([t.lawLabel, templateStyle(REACTION_STYLE, t.overrides)]))
+                const labelled = inDomain.filter(t => t.lawLabel).length
+                const unlabelled = inDomain.length - labelled
+                labelledLaws += labelled
+                // the unlabelled templates share the base look; each labelled one has its own
+                expect(new Set(drawn).size).toBe(labelled + (unlabelled ? 1 : 0))
+            }
+            expect(labelledLaws).toBeGreaterThan(0)
         }
     })
 })
