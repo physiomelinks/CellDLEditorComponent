@@ -90,7 +90,7 @@ import {
 } from '#editor/editor'
 import type { EditorMessage } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
-import { compartmentsKey } from '#editor/editor/locations'
+import { compartmentsKey, setCompartmentLocations } from '#editor/editor/locations'
 import { HOVER_TOOLTIP_DELAY } from '#editor/editor/tooltips'
 import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
 import { isMacOs } from '#root/utils/common'
@@ -322,6 +322,14 @@ export type EditorChrome = {
      * show while a bond is drawn. Default 600.
      */
     tooltipDelay?: number
+    /**
+     * Whether a labelled compartment or region gives the stores and sources
+     * inside it its label as their location, and element lists carry the
+     * `compartment` each is in. Off, compartments and regions are decorative,
+     * as in CellDL: their label is plain text, and they set and check nothing
+     * about what is inside them. Default `false`.
+     */
+    compartmentLocations?: boolean
 }
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
@@ -443,6 +451,9 @@ const props = defineProps<CellDLEditorProps>()
 // Bonds' arrowheads, drawn with display-only markers beside the diagram
 const displayArrows = displayArrowDefinitions()
 const arrowClass = vue.computed(() => arrowStyleClass(arrowStyleOrDefault(props.arrowStyle)))
+
+// Whether compartments give locations, before a diagram is opened
+vue.watch(() => props.chrome?.compartmentLocations === true, on => setCompartmentLocations(on), { immediate: true })
 
 // How the Properties panel shows values
 vue.provide(VALUES_CHROME_KEY, vue.computed<ValuesChrome>(() => ({

@@ -25,6 +25,9 @@ limitations under the License.
 // An element's location follows its compartment only when that changes: when a box is placed, moved, resized,
 // relabelled or deleted, or the element is moved in or out of one, or added. So a location set by hand in a box that
 // gives another is kept, and reported as a mismatch (`locationMismatches()`).
+//
+// All of this is off by default (`setCompartmentLocations()`, the `chrome.compartmentLocations` option): compartments
+// and regions are then decorative, as in CellDL, and set or check nothing about what is inside them.
 
 import type { CellDLObject } from '#editor/celldlObjects'
 import type { CellDLDiagram } from '#editor/diagram'
@@ -40,6 +43,18 @@ import { boxOf } from './compartments'
 
 function bondgraphPlugin(): BondgraphPlugin|undefined {
     return componentLibraryPlugin.getPlugin(PLUGIN_ID) as BondgraphPlugin|undefined
+}
+
+let compartmentLocationsOn = false
+
+/** Turns compartments giving locations on or off (off by default) */
+export function setCompartmentLocations(on: boolean) {
+    compartmentLocationsOn = on
+}
+
+/** Whether compartments give locations */
+export function compartmentLocationsEnabled(): boolean {
+    return compartmentLocationsOn
 }
 
 /** The location a compartment gives what is inside it: its label, if it has one */
@@ -70,12 +85,12 @@ function inside(box: Box, point: PointLike): boolean {
 
 /**
  * Each located element (a store or source) of the diagram, with the location of the innermost labelled compartment
- * its centre is in, or `undefined` when it is in none.
+ * its centre is in, or `undefined` when it is in none. None when compartments don't give locations.
  */
 export function compartmentLocations(diagram: CellDLDiagram): Map<CellDLObject, string|undefined> {
     const plugin = bondgraphPlugin()
     const locations: Map<CellDLObject, string|undefined> = new Map()
-    if (!plugin) {
+    if (!plugin || !compartmentLocationsOn) {
         return locations
     }
     const boxes = locatingBoxes(diagram)
@@ -131,11 +146,13 @@ export type LocationEdit = {
  */
 export class CompartmentTracker {
     #diagram: CellDLDiagram|null = null
+    #enabled = compartmentLocationsOn
     #known: Map<string, string|undefined> = new Map()
 
     /** Notes where each element is, as an opened diagram or an undo leaves them, changing none */
     note(diagram: CellDLDiagram|null) {
         this.#diagram = diagram
+        this.#enabled = compartmentLocationsOn
         this.#known = new Map()
         if (diagram) {
             for (const [object, location] of compartmentLocations(diagram)) {
@@ -149,7 +166,8 @@ export class CompartmentTracker {
      * elements included), whose own location isn't that compartment's. Notes where each element now is.
      */
     changes(diagram: CellDLDiagram): LocationEdit[] {
-        if (diagram !== this.#diagram) {
+        // Turning compartment locations on changes no location until an element's compartment changes
+        if (diagram !== this.#diagram || this.#enabled !== compartmentLocationsOn) {
             this.note(diagram)
             return []
         }
