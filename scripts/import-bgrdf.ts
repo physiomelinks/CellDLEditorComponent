@@ -8,11 +8,13 @@
 // gives each the model's own properties in place of the editor's defaults (symbols, species, values, parameter
 // values, a signal bond's input or modulation, ...), so the saved RDF is the model's; an element the model gives no
 // symbol is given its identifier as its symbol, so bg2cellml names its variables as it does the model's. Power-bonded elements are laid
-// out left to right along their bonds, and signal blocks in rows below, near what they are connected to. Writes
+// out left to right along their bonds, and signal blocks in rows below, near what they are connected to, except where
+// <model>.layout.json beside the Turtle gives an element's position ({"<id>": [x, y]}). The model's own properties
+// (bgf:unitSystem, naming rules) are kept on the document's model. Writes
 // OUTDIR/<model>.celldl.svg.
 
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { basename, join, resolve } from 'node:path'
@@ -113,6 +115,14 @@ function readModel(path: string): { elements: ModelElement[], bonds: ModelBond[]
     const parts = ['usesTemplate', 'hasBondElement', 'hasJunctionStructure', 'hasSignalBlock', 'hasSignalBond', 'hasPowerBond']
                     .map(p => `${BGF}${p}`)
     const modelTriples = data(model[0], [RDF_TYPE, ...parts])
+    // positions from <model>.layout.json beside the Turtle ({id: [x, y]}), where it gives them
+    const layoutFile = path.replace(/\.ttl$/, '.layout.json')
+    if (existsSync(layoutFile)) {
+        const positions = JSON.parse(readFileSync(layoutFile, 'utf8'))
+        for (const e of elements) {
+            if (positions[e.id]) { e.x = positions[e.id][0]; e.y = positions[e.id][1] }
+        }
+    }
     return { elements, bonds, modelTriples }
 }
 
