@@ -84,6 +84,131 @@ export function pinchZoomFactor(event: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'd
     return Math.exp(-delta * PINCH_RATE)
 }
 
+//==============================================================================
+
+/**
+ * What a plain wheel (no Ctrl/Cmd) does over the diagram: `'auto'` zooms for a
+ * mouse wheel and pans for a trackpad's two-finger scroll, `'pan'` always pans
+ * and `'zoom'` always zooms. A pinch and Ctrl/Cmd+wheel zoom whatever the mode,
+ * and Shift+wheel pans across.
+ */
+export type WheelMode = 'auto' | 'pan' | 'zoom'
+
+export const WHEEL_MODES: readonly WheelMode[] = ['auto', 'pan', 'zoom']
+
+export const DEFAULT_WHEEL_MODE: WheelMode = 'auto'
+
+export function wheelModeOrDefault(mode: string | undefined | null): WheelMode {
+    return WHEEL_MODES.includes(mode as WheelMode) ? mode as WheelMode : DEFAULT_WHEEL_MODE
+}
+
+/** What sent a wheel event */
+export type WheelDevice = 'mouse' | 'trackpad'
+
+/** A wheel event, with the non-standard `wheelDeltaY` most browsers still send */
+export type WheelLike = Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode'> & { wheelDeltaY?: number }
+
+/** One notch of a mouse wheel, in the non-standard `wheelDeltaY` */
+const WHEEL_DELTA_NOTCH = 120
+
+/** Chromium's and Safari's `deltaY` per notch of a mouse wheel on macOS, which isn't a whole number */
+const MAC_NOTCH_DELTA = 4.000244140625
+
+/** A whole-pixel `deltaY` at least this large, with no `deltaX`, is a mouse wheel's notch */
+const MOUSE_MIN_PIXEL_DELTA = 40
+
+/**
+ * Whether a wheel event came from a mouse wheel or a trackpad. Browsers don't say, so this goes by
+ * what each sends, in order:
+ *
+ * - `deltaMode` in lines or pages: a mouse (Firefox, unless its pixel mode is on). Firefox reports
+ *   lines only when `deltaMode` is read before the deltas, so it's read first.
+ * - any `deltaX`: a trackpad, as a mouse wheel scrolls only one way (macOS turns Shift+wheel into
+ *   `deltaX`, which pans either way).
+ * - `wheelDeltaY` a non-zero multiple of 120: a mouse's notches (Chromium on Windows and macOS,
+ *   Safari, Firefox). A trackpad's `wheelDeltaY` is `-3 * deltaY`, which is seldom a multiple of 120
+ *   in a gesture's first event.
+ * - `deltaY` a multiple of 4.000244140625: a mouse on macOS in Chromium or Safari.
+ * - a fractional `deltaY`: a trackpad (also covers Windows' scaled deltas without `wheelDeltaY`).
+ * - a whole `deltaY` of 40 pixels or more: a mouse (Chromium on Windows sends 100 a notch, Firefox
+ *   in pixel mode about 48 to 57). Smaller whole deltas: a trackpad.
+ *
+ * It's a guess, so the first event of a gesture decides it for the whole gesture: see `WheelGestures`.
+ */
+export function wheelDevice(event: WheelLike): WheelDevice {
+    const deltaMode = event.deltaMode
+    if (deltaMode === 1 || deltaMode === 2) {
+        return 'mouse'
+    }
+    if (event.deltaX) {
+        return 'trackpad'
+    }
+    const deltaY = event.deltaY
+    const wheelDeltaY = event.wheelDeltaY
+    if (wheelDeltaY && wheelDeltaY % WHEEL_DELTA_NOTCH === 0) {
+        return 'mouse'
+    }
+    const macNotches = Math.abs(deltaY) / MAC_NOTCH_DELTA
+    if (deltaY && Math.abs(macNotches - Math.round(macNotches)) < 1e-9) {
+        return 'mouse'
+    }
+    if (!Number.isInteger(deltaY)) {
+        return 'trackpad'
+    }
+    return Math.abs(deltaY) >= MOUSE_MIN_PIXEL_DELTA ? 'mouse' : 'trackpad'
+}
+
+/** Wheel events closer together than this, in milliseconds, are one gesture */
+export const WHEEL_GESTURE_GAP = 200
+
+/**
+ * Wheel events grouped into gestures: a burst with gaps of less than `WHEEL_GESTURE_GAP`, such as a
+ * trackpad scroll and its momentum tail, or a mouse wheel spun. Each gesture keeps the device its
+ * first event was taken for, so a scroll never switches between panning and zooming part way.
+ */
+export class WheelGestures {
+    #device: WheelDevice | null = null
+    #lastTime: number = -Infinity
+
+    /** The device of the gesture that a wheel event, at a time in milliseconds, is part of */
+    device(event: WheelLike, time: number): WheelDevice {
+        if (this.#device === null || time - this.#lastTime >= WHEEL_GESTURE_GAP || time < this.#lastTime) {
+            this.#device = wheelDevice(event)
+        }
+        this.#lastTime = time
+        return this.#device
+    }
+
+    reset() {
+        this.#device = null
+        this.#lastTime = -Infinity
+    }
+}
+
+/** How much one notch of a mouse wheel zooms by: two notches make a zoom button's step */
+export const WHEEL_ZOOM_STEP = Math.sqrt(ZOOM_STEP)
+
+/**
+ * The factor a mouse wheel zooms by, `WHEEL_ZOOM_STEP` a notch, rolling forward (away from you) to
+ * zoom in. Its notches come from `wheelDeltaY` or, in lines, three lines a notch; otherwise it's one.
+ */
+export function wheelZoomFactor(event: WheelLike): number {
+    const deltaMode = event.deltaMode
+    const deltaY = event.deltaY
+    if (!deltaY) {
+        return 1
+    }
+    let notches = 1
+    if (event.wheelDeltaY && event.wheelDeltaY % WHEEL_DELTA_NOTCH === 0) {
+        notches = Math.abs(event.wheelDeltaY) / WHEEL_DELTA_NOTCH
+    } else if (deltaMode === 1) {
+        notches = Math.max(1, Math.round(Math.abs(deltaY) / 3))
+    }
+    // However many notches a coalesced event carries, at most a few at once
+    notches = Math.min(notches, 4)
+    return WHEEL_ZOOM_STEP ** (-Math.sign(deltaY) * notches)
+}
+
 /** Safari's pinch event, which isn't in TypeScript's DOM types */
 interface GestureEvent extends UIEvent {
     readonly scale: number
@@ -115,11 +240,14 @@ export default class PanZoom {
     /** Safari's pinch scale at its last event, while a pinch is under way */
     #gestureScale: number | null = null
 
+    #wheelMode: WheelMode = DEFAULT_WHEEL_MODE
+    #wheelGestures = new WheelGestures()
+
     constructor(container: HTMLElement, viewChanged: ViewChangedHandler | null = null) {
         this.#viewChanged = viewChanged
         // Not passive, so that a pinch or Ctrl/Cmd+wheel over the diagram zooms only the diagram,
-        // and not the page as well, and so that a plain wheel or two-finger scroll pans the diagram
-        // rather than scrolling the page.
+        // and not the page as well, and so that a plain wheel or two-finger scroll pans or zooms the
+        // diagram, as `wheelMode` says, rather than scrolling the page.
         container.addEventListener('wheel', this.#wheelEvent.bind(this), { passive: false })
         // Safari sends a trackpad pinch as gesture events, and zooms the page unless they're cancelled
         container.addEventListener('gesturestart', this.#gestureEvent.bind(this) as EventListener)
@@ -138,6 +266,16 @@ export default class PanZoom {
 
     get scale() {
         return this.#scale
+    }
+
+    /** What a plain wheel does over the diagram */
+    get wheelMode(): WheelMode {
+        return this.#wheelMode
+    }
+
+    set wheelMode(mode: WheelMode) {
+        this.#wheelMode = wheelModeOrDefault(mode)
+        this.#wheelGestures.reset()
     }
 
     #currentViewbox(): Extent {
@@ -350,6 +488,8 @@ export default class PanZoom {
         if (!this.#svgDiagram) {
             return
         }
+        // Firefox reports a mouse wheel in lines only when deltaMode is read before the deltas
+        void event.deltaMode
         if (isZoomWheel(event)) {
             // Keep the browser from zooming the page as well
             event.preventDefault()
@@ -361,7 +501,18 @@ export default class PanZoom {
                 || (event.target instanceof Node && this.#svgDiagram.contains(event.target))) {
             // Over the diagram, not an overlay such as a menu, which keeps its own scroll
             event.preventDefault()
-            this.panBy(wheelPanDelta(event, this.#containerSize))
+            // Every event joins its gesture, so one with Shift held part way doesn't start a new one
+            const device = this.#wheelGestures.device(event as WheelLike, event.timeStamp)
+            const zoom = !event.shiftKey && event.deltaY !== 0
+                      && (this.#wheelMode === 'zoom' || (this.#wheelMode === 'auto' && device === 'mouse'))
+            if (!zoom) {
+                this.panBy(wheelPanDelta(event, this.#containerSize))
+            } else if (device === 'mouse') {
+                this.#zoomAboutClient(wheelZoomFactor(event as WheelLike), event.clientX, event.clientY)
+            } else {
+                // A trackpad scroll, in zoom mode, zooms smoothly as a pinch does
+                this.#zoomAboutClient(pinchZoomFactor(event), event.clientX, event.clientY)
+            }
         }
     }
 

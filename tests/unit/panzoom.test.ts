@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Bounds } from '../../src/CellDL/geometry'
-import PanZoom, { isZoomWheel, PINCH_MAX_DELTA, PINCH_RATE, pinchZoomFactor, wheelPanDelta } from '../../src/CellDL/editor/panzoom'
+import PanZoom, {
+    isZoomWheel, PINCH_MAX_DELTA, PINCH_RATE, pinchZoomFactor, WHEEL_GESTURE_GAP, WHEEL_ZOOM_STEP, type WheelLike,
+    WheelGestures, wheelDevice, wheelModeOrDefault, wheelPanDelta, wheelZoomFactor, ZOOM_STEP
+} from '../../src/CellDL/editor/panzoom'
 
 function diagram(): { panzoom: PanZoom, container: HTMLElement, svg: SVGSVGElement } {
     const container = document.createElement('div')
@@ -9,6 +12,8 @@ function diagram(): { panzoom: PanZoom, container: HTMLElement, svg: SVGSVGEleme
     // happy-dom does no layout, so give the container a size
     Object.defineProperty(container, 'clientWidth', { value: 200 })
     Object.defineProperty(container, 'clientHeight', { value: 200 })
+    Object.defineProperty(container, 'clientLeft', { value: 0 })
+    Object.defineProperty(container, 'clientTop', { value: 0 })
     document.body.appendChild(container)
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     svg.setAttribute('viewBox', '0 0 100 100')
@@ -18,12 +23,21 @@ function diagram(): { panzoom: PanZoom, container: HTMLElement, svg: SVGSVGEleme
     return { panzoom, container, svg }
 }
 
-function wheel(init: WheelEventInit): WheelEvent {
+function wheel(init: WheelEventInit & { wheelDeltaY?: number, timeStamp?: number }): WheelEvent {
     const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ...init })
+    if (init.wheelDeltaY !== undefined) {
+        Object.defineProperty(event, 'wheelDeltaY', { value: init.wheelDeltaY })
+    }
+    if (init.timeStamp !== undefined) {
+        Object.defineProperty(event, 'timeStamp', { value: init.timeStamp })
+    }
     // happy-dom's WheelEvent leaves out the modifier keys
     Object.defineProperty(event, 'ctrlKey', { value: !!init.ctrlKey })
     Object.defineProperty(event, 'metaKey', { value: !!init.metaKey })
     Object.defineProperty(event, 'shiftKey', { value: !!init.shiftKey })
+    // ...and the pointer's position
+    Object.defineProperty(event, 'clientX', { value: init.clientX ?? 0 })
+    Object.defineProperty(event, 'clientY', { value: init.clientY ?? 0 })
     return event
 }
 
@@ -130,6 +144,7 @@ describe('panning the diagram with a plain wheel or two-finger scroll', () => {
 
     test('a wheel pans the same distance on screen whatever the zoom', () => {
         const { panzoom, container, svg } = diagram()
+        panzoom.wheelMode = 'pan'
         panzoom.zoomBy(4)
         const before = viewbox(svg)
         container.dispatchEvent(wheel({ deltaY: 3, deltaMode: 1 }))
@@ -232,6 +247,8 @@ describe('setting the view as soon as a host has moved the editor', () => {
         let width = 200
         Object.defineProperty(container, 'clientWidth', { get: () => width })
         Object.defineProperty(container, 'clientHeight', { value: 200 })
+    Object.defineProperty(container, 'clientLeft', { value: 0 })
+    Object.defineProperty(container, 'clientTop', { value: 0 })
         document.body.appendChild(container)
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
         svg.setAttribute('viewBox', '0 0 100 100')
@@ -243,4 +260,153 @@ describe('setting the view as soon as a host has moved the editor', () => {
         expect(svg.getAttribute('viewBox')!.split(' ').map(Number)).toEqual([-150, -50, 400, 200])
         expect(panzoom.fitScale(new Bounds(0, 0, 100, 100), 0)).toBe(2)
     })
+})
+
+//==============================================================================
+
+const px = (deltaY: number, more: Partial<WheelLike> = {}): WheelLike => ({ deltaX: 0, deltaY, deltaMode: 0, ...more })
+
+describe('telling a mouse wheel from a trackpad', () => {
+    test('a mouse wheel\'s notch, as each browser sends it, is a mouse', () => {
+        // Firefox, in lines (or pages)
+        expect(wheelDevice(px(3, { deltaMode: 1 }))).toBe('mouse')
+        expect(wheelDevice(px(-1, { deltaMode: 2 }))).toBe('mouse')
+        // Chromium on Windows: 100 pixels and 120 in wheelDeltaY, also scaled for the display
+        expect(wheelDevice(px(100, { wheelDeltaY: -120 }))).toBe('mouse')
+        expect(wheelDevice(px(125, { wheelDeltaY: -120 }))).toBe('mouse')
+        // Chromium on macOS: 40 pixels a notch, or two notches coalesced
+        expect(wheelDevice(px(-40, { wheelDeltaY: 120 }))).toBe('mouse')
+        expect(wheelDevice(px(80, { wheelDeltaY: -240 }))).toBe('mouse')
+        // Chromium and Safari on macOS, without wheelDeltaY
+        expect(wheelDevice(px(4.000244140625))).toBe('mouse')
+        expect(wheelDevice(px(-12.000732421875))).toBe('mouse')
+        // Firefox in pixel mode, and a wheel without wheelDeltaY
+        expect(wheelDevice(px(48))).toBe('mouse')
+        expect(wheelDevice(px(-100))).toBe('mouse')
+    })
+
+    test('a two-finger scroll is a trackpad', () => {
+        // Chromium and Safari: wheelDeltaY is -3 * deltaY
+        expect(wheelDevice(px(2, { wheelDeltaY: -6 }))).toBe('trackpad')
+        expect(wheelDevice(px(-7, { wheelDeltaY: 21 }))).toBe('trackpad')
+        // Any sideways movement
+        expect(wheelDevice(px(100, { deltaX: 1, wheelDeltaY: -120 }))).toBe('trackpad')
+        expect(wheelDevice(px(0, { deltaX: 12 }))).toBe('trackpad')
+        // Fractional deltas, as Firefox and Windows precision touchpads send
+        expect(wheelDevice(px(1.5))).toBe('trackpad')
+        expect(wheelDevice(px(-0.25))).toBe('trackpad')
+        // Small whole deltas
+        expect(wheelDevice(px(4))).toBe('trackpad')
+        expect(wheelDevice(px(-10))).toBe('trackpad')
+    })
+
+    test('a gesture keeps its first event\'s device, momentum tail and all', () => {
+        const gestures = new WheelGestures()
+        // A trackpad flick: small deltas, then large, then a long momentum tail
+        let time = 0
+        expect(gestures.device(px(3, { wheelDeltaY: -9 }), time)).toBe('trackpad')
+        for (const deltaY of [40, 100, 120, 60, 30, 10, 4, 1]) {
+            time += 16
+            expect(gestures.device(px(deltaY, { wheelDeltaY: -3 * deltaY }), time)).toBe('trackpad')
+        }
+        // After a pause, a mouse notch starts a new gesture, and its spin stays a mouse
+        time += WHEEL_GESTURE_GAP
+        expect(gestures.device(px(100, { wheelDeltaY: -120 }), time)).toBe('mouse')
+        time += 50
+        expect(gestures.device(px(2), time)).toBe('mouse')
+        // A short pause continues it, a pause of the gap starts another
+        time += WHEEL_GESTURE_GAP - 1
+        expect(gestures.device(px(2), time)).toBe('mouse')
+        time += WHEEL_GESTURE_GAP
+        expect(gestures.device(px(2), time)).toBe('trackpad')
+    })
+
+    test('a mouse notch zooms by a step around the pointer, rolling forward to zoom in', () => {
+        expect(wheelZoomFactor(px(-100, { wheelDeltaY: 120 }))).toBeCloseTo(WHEEL_ZOOM_STEP)
+        expect(wheelZoomFactor(px(100, { wheelDeltaY: -120 }))).toBeCloseTo(1 / WHEEL_ZOOM_STEP)
+        expect(wheelZoomFactor(px(-80, { wheelDeltaY: 240 }))).toBeCloseTo(WHEEL_ZOOM_STEP ** 2)
+        expect(wheelZoomFactor(px(-6, { deltaMode: 1 }))).toBeCloseTo(WHEEL_ZOOM_STEP ** 2)
+        expect(wheelZoomFactor(px(4.000244140625))).toBeCloseTo(1 / WHEEL_ZOOM_STEP)
+        expect(wheelZoomFactor(px(0))).toBe(1)
+        // Two notches make a zoom button's step
+        expect(WHEEL_ZOOM_STEP ** 2).toBeCloseTo(ZOOM_STEP)
+    })
+
+    test('an unknown wheel mode is automatic', () => {
+        expect(wheelModeOrDefault('zoom')).toBe('zoom')
+        expect(wheelModeOrDefault('pan')).toBe('pan')
+        expect(wheelModeOrDefault('spin')).toBe('auto')
+        expect(wheelModeOrDefault(undefined)).toBe('auto')
+    })
+})
+
+describe('what a plain wheel does in each mode', () => {
+    const viewbox = (svg: SVGSVGElement) => svg.getAttribute('viewBox')!.split(' ').map(Number)
+    const mouseNotch = (timeStamp: number, deltaY = -100) => wheel({ deltaY, wheelDeltaY: -1.2 * deltaY, timeStamp, clientX: 50, clientY: 50 })
+    const trackpad = (timeStamp: number, deltaY = 6) => wheel({ deltaY, wheelDeltaY: -3 * deltaY, timeStamp, clientX: 50, clientY: 50 })
+
+    test('automatically, a mouse wheel zooms around the pointer, and a trackpad pans', () => {
+        const { panzoom, container, svg } = diagram()
+        const scale = panzoom.scale
+        const [x, y] = viewbox(svg)
+        // The diagram's point under the pointer, which stays there
+        const under = { x: x + 50 / scale, y: y + 50 / scale }
+        const event = mouseNotch(1000)
+        container.dispatchEvent(event)
+        expect(event.defaultPrevented).toBe(true)
+        expect(panzoom.scale).toBeCloseTo(scale * WHEEL_ZOOM_STEP)
+        const after = viewbox(svg)
+        expect(after[0] + 50 / panzoom.scale).toBeCloseTo(under.x)
+        expect(after[1] + 50 / panzoom.scale).toBeCloseTo(under.y)
+
+        const before = viewbox(svg)
+        const pan = trackpad(2000)
+        container.dispatchEvent(pan)
+        expect(pan.defaultPrevented).toBe(true)
+        expect(panzoom.scale).toBeCloseTo(scale * WHEEL_ZOOM_STEP)
+        expect(viewbox(svg)[1] - before[1]).toBeCloseTo(6 / panzoom.scale)
+    })
+
+    test('a trackpad scroll that speeds up doesn\'t start zooming part way', () => {
+        const { panzoom, container } = diagram()
+        const scale = panzoom.scale
+        container.dispatchEvent(trackpad(1000, 2))
+        container.dispatchEvent(trackpad(1016, 40))
+        container.dispatchEvent(wheel({ deltaY: 100, timeStamp: 1032 }))
+        expect(panzoom.scale).toBe(scale)
+    })
+
+    test('Shift+wheel pans across, even with a mouse wheel', () => {
+        const { panzoom, container, svg } = diagram()
+        const scale = panzoom.scale
+        const before = viewbox(svg)
+        const event = wheel({ deltaY: 100, wheelDeltaY: -120, shiftKey: true, timeStamp: 1000 })
+        container.dispatchEvent(event)
+        expect(event.defaultPrevented).toBe(true)
+        expect(panzoom.scale).toBe(scale)
+        expect(viewbox(svg)[0] - before[0]).toBeCloseTo(100 / scale)
+        expect(viewbox(svg)[1]).toBe(before[1])
+    })
+
+    test('in pan mode, a mouse wheel pans', () => {
+        const { panzoom, container, svg } = diagram()
+        panzoom.wheelMode = 'pan'
+        const scale = panzoom.scale
+        const before = viewbox(svg)
+        container.dispatchEvent(mouseNotch(1000))
+        expect(panzoom.scale).toBe(scale)
+        expect(viewbox(svg)[1] - before[1]).toBeCloseTo(-100 / scale)
+    })
+
+    test('in zoom mode, a trackpad scroll zooms as a pinch does, and a mouse wheel by notches', () => {
+        const { panzoom, container } = diagram()
+        panzoom.wheelMode = 'zoom'
+        const scale = panzoom.scale
+        container.dispatchEvent(trackpad(1000, -4))
+        expect(panzoom.scale).toBeCloseTo(scale * Math.exp(4 * PINCH_RATE))
+        const zoomed = panzoom.scale
+        container.dispatchEvent(mouseNotch(2000, 100))
+        expect(panzoom.scale).toBeCloseTo(zoomed / WHEEL_ZOOM_STEP)
+    })
+
 })

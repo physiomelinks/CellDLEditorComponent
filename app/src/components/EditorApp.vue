@@ -58,6 +58,7 @@
                 :chrome="devChrome"
                 :annotations="devAnnotations"
                 :arrowStyle="arrowStyle"
+                :wheelMode="wheelMode"
                 :theme="editorTheme"
                 @diagramChanged="onDiagramChanged"
                 @elements="onElements"
@@ -146,7 +147,8 @@ import type {
     FileStatus,
     SvgViewerOptions,
     Theme,
-    ViewState
+    ViewState,
+    WheelMode
 } from '../../../src'
 import { editorInitialised, EditorStatus } from '../../../src'
 import { DEFAULT_VIEW_STATE } from '../../../src'
@@ -713,6 +715,9 @@ function setArrowStyle(style: ArrowStyle) {
         // Not remembered
     }
 }
+
+// What a plain wheel does over the diagram, from `?wheelMode=` (for tests)
+const wheelMode = (new URLSearchParams(window.location.search).get('wheelMode') ?? undefined) as WheelMode|undefined
 
 function onViewAction(action: string, value: number|boolean|string) {
     if (action === 'arrow-style') {
