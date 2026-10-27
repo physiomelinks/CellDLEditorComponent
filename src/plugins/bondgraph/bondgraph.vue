@@ -27,6 +27,9 @@
                     v-tippy="{ content: toolDefn.name, placement: 'right' }"
                     @mousedown="selectionEvent"
                 )
+            label.signal-bonds
+                input#bondgraph-signal-bonds(type="checkbox" :checked="signalBonds" @change="toggleSignalBonds")
+                |  Signal bonds (dashed, from a variable to a signal input or a parameter)
 </template>
 
 <script setup lang="ts">
@@ -41,6 +44,7 @@ import ToolPopover from '#root/components/toolbar/ToolPopover.vue'
 import { componentLibraryPlugin } from '#root/plugins'
 
 import { PLUGIN_ID } from '.'
+import { drawSignalBonds } from './signals'
 
 //==============================================================================
 
@@ -78,6 +82,13 @@ type BondgraphTool = {
 }
 
 const toolDefinitions = vue.ref<BondgraphTool[]>([])
+
+// Whether new bonds are signal bonds, as the element palette's Signal toggle also sets
+const signalBonds = vue.computed(() => drawSignalBonds.value)
+
+function toggleSignalBonds() {
+    drawSignalBonds.value = !drawSignalBonds.value
+}
 
 //==============================================================================
 

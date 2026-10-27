@@ -101,8 +101,10 @@ export function displayArrowDefinitions(): string {
         harpoonMarker(displayArrowId('bond'), 'bondgraph'),
         arrowMarker(displayArrowId('classic'), 'bondgraph')
     ]
+    // a signal bond (class `signal`) keeps the closed arrow, whichever style power bonds are shown in
     const rules = ARROW_STYLES.map((style) =>
-        `.celldl-editor.${arrowStyleClass(style)} .celldl-Connection.bondgraph.arrow{marker-end:url(#${displayArrowId(style)})}`
+        `.celldl-editor.${arrowStyleClass(style)} .celldl-Connection.bondgraph.arrow:not(.signal){marker-end:url(#${displayArrowId(style)})}`
     )
+    rules.push(`.celldl-editor .celldl-Connection.bondgraph.signal.arrow{marker-end:url(#${displayArrowId('classic')})}`)
     return `<defs>${markers.join('')}</defs><style>${rules.join('')}</style>`
 }
