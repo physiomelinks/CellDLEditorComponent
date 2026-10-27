@@ -26,6 +26,7 @@ import { DCT, RDFS, type Term } from '@celldl/rdf'
 
 import type { CellDLObject } from '#editor/celldlObjects'
 import type { NamedProperty } from '#editor/components'
+import { compartmentLocationsEnabled } from '#editor/editor/locations'
 
 import { componentLibraryPlugin } from '#root/plugins'
 import {
@@ -76,8 +77,8 @@ export function objectMetadataTemplate(): PropertyGroup {
 const COMPARTMENT_GROUP = 'compartment-group'
 
 /**
- * A compartment's Properties: the location it gives the stores and sources inside it, which is its label
- * (../editor/locations.ts).
+ * A compartment's Properties: its label, which is also the location it gives the stores and sources inside it when
+ * compartments give locations (../editor/locations.ts).
  */
 export function compartmentPropertiesTemplate(): PropertyGroup {
     return {
@@ -86,7 +87,7 @@ export function compartmentPropertiesTemplate(): PropertyGroup {
         items: [{
             itemId: `${COMPARTMENT_GROUP}/location`,
             property: RDFS.uri('label').value,
-            name: 'Location',
+            name: compartmentLocationsEnabled() ? 'Location' : 'Label',
             defaultValue: ''
         }]
     }
