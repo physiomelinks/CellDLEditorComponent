@@ -55,7 +55,7 @@ type Term = any
 
 await initialise()
 
-function readModel(path: string): { elements: ModelElement[], bonds: ModelBond[] } {
+function readModel(path: string): { elements: ModelElement[], bonds: ModelBond[], modelTriples: string } {
     const store = new RdfStore()
     store.load(BASE, readFileSync(path, 'utf8'))
     const statements = store.statements()
@@ -109,7 +109,11 @@ function readModel(path: string): { elements: ModelElement[], bonds: ModelBond[]
     // in the model's order (s2 before s10)
     bonds.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
     layout(elements, bonds)
-    return { elements, bonds }
+    // the model's own properties (e.g. bgf:unitSystem, naming rules), but not its parts
+    const parts = ['usesTemplate', 'hasBondElement', 'hasJunctionStructure', 'hasSignalBlock', 'hasSignalBond', 'hasPowerBond']
+                    .map(p => `${BGF}${p}`)
+    const modelTriples = data(model[0], [RDF_TYPE, ...parts])
+    return { elements, bonds, modelTriples }
 }
 
 //==============================================================================
@@ -302,6 +306,12 @@ const scenario = (src: string, model: object) => `(async () => {
         drawSignalBonds.value = false
         if (plugin.isSignalBond(bond) !== b.signal) throw new Error(b.id + ' is not a ' + (b.signal ? 'signal' : 'power') + ' bond')
         replace(bond, b.triples, ['hasSource', 'hasTarget'])
+    }
+    // the model's own properties, on the document's model
+    const first = objects.values().next().value
+    if (first && model.modelTriples.trim()) {
+        const triples = model.modelTriples.split('SUBJECT').join('?model')
+        first.rdfStore.update('INSERT { ' + triples + ' } WHERE { ?model a <' + BGF + 'BondgraphModel> }')
     }
     notifyChanges()
     await wait(300)
