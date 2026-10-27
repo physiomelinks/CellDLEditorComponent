@@ -6,8 +6,8 @@
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 
 <> a celldl:Document, bgf:BondgraphModel ;
-  dcterms:created "2026-10-27T00:33:28.827Z" ;
-  dcterms:modified "2026-10-27T00:33:31.056Z" ;
+  dcterms:created "2026-10-27T00:41:48.652Z" ;
+  dcterms:modified "2026-10-27T00:41:50.583Z" ;
   owl:versionInfo "1.0" ;
   bgf:hasSignalBlock :ID-00000001, :ID-00000002, :ID-00000003, :ID-00000004 ;
   bgf:hasSignalBond :ID-00000005, :ID-00000006, :ID-00000007 ;
@@ -24,6 +24,10 @@
     bgf:hasValue "2.52 s-1"^^cdt:ucum ;
     bgf:varName "y_min"
   ], [
+    bgf:hasSymbol "k_ab" ;
+    bgf:hasValue "1.6 kPa"^^cdt:ucum ;
+    bgf:varName "k"
+  ], [
     bgf:hasSymbol "f_ab_max" ;
     bgf:hasValue "47.78 s-1"^^cdt:ucum ;
     bgf:varName "y_max"
@@ -31,10 +35,6 @@
     bgf:hasSymbol "P_nom" ;
     bgf:hasValue "12 kPa"^^cdt:ucum ;
     bgf:varName "u_nom"
-  ], [
-    bgf:hasSymbol "k_ab" ;
-    bgf:hasValue "1.6 kPa"^^cdt:ucum ;
-    bgf:varName "k"
   ] .
 
 :ID-00000003 a celldl:Component, bgf:FirstOrderLag ;

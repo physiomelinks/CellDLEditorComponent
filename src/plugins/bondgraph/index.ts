@@ -298,6 +298,7 @@ const BG_PROPERTY_GROUP_IDS = Object.entries(BG_PROPERTY_GROUP_ID).map(([_, valu
 export const BG_ELEMENT_TYPE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-type`
 export const BG_ELEMENT_SPECIES_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-species`
 export const BG_ELEMENT_LOCATION_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-location`
+export const BG_ELEMENT_PORT_TYPE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-port-type`
 
 export const BG_ELEMENT_VALUE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementInitialValue}/bg-element-value`
 
@@ -343,6 +344,12 @@ function elementPropertiesTemplate(): IndexedPropertyGroup[] {
                 itemId: BG_ELEMENT_LOCATION_ITEM,
                 property: BGF.uri('hasLocation').value,
                 name: 'Location',
+                defaultValue: ''
+            },
+            {
+                itemId: BG_ELEMENT_PORT_TYPE_ITEM,
+                property: BGF.uri('portType').value,
+                name: 'Port type (as a module port)',
                 defaultValue: ''
             }
         ]
@@ -1772,6 +1779,13 @@ export class BondgraphPlugin implements PluginInterface {
         return errorMsg
     }
 
+    // Whether an element can be a module's port (bgf:portType): a flow or potential source, or a signal port block
+    #hasPortType(pluginData: PluginData): boolean {
+        const types = [pluginData.baseComponent?.type, pluginData.elementTemplate?.type]
+        return ['FlowSource', 'PotentialSource', 'SignalInputPort', 'SignalOutputPort']
+                   .some(name => types.includes(BGF.uri(name).value))
+    }
+
     #loadElementProperties(celldlObject: CellDLObject, componentGroup: PropertyGroup, groupTemplate: IndexedPropertyGroup) {
         const pluginData = <PluginData>celldlObject.pluginData(this.id)
         groupTemplate.items.forEach((itemDetails: ItemDetails) => {
@@ -1779,6 +1793,16 @@ export class BondgraphPlugin implements PluginInterface {
             if (itemDetails.itemId === BG_ELEMENT_TYPE_ITEM) {
                 const discreteItem = this.#getElementTypeItem(celldlObject, itemDetails, pluginData)
                 items.push(discreteItem)
+            } else if (itemDetails.itemId === BG_ELEMENT_PORT_TYPE_ITEM) {
+                if (this.#hasPortType(pluginData)) {
+                    const item = getItemProperty(celldlObject, itemDetails)
+                    if (item) {
+                        items.push(item)
+                    }
+                }
+            } else if ((itemDetails.itemId === BG_ELEMENT_SPECIES_ITEM ||
+                        itemDetails.itemId === BG_ELEMENT_LOCATION_ITEM) && pluginData.baseComponent?.isSignalBlock) {
+                // a signal block has no species or location
             } else if (itemDetails.itemId === BG_ELEMENT_SPECIES_ITEM ||
                        itemDetails.itemId === BG_ELEMENT_LOCATION_ITEM) {
                 const item = getItemProperty(celldlObject, itemDetails)
@@ -2145,6 +2169,8 @@ export class BondgraphPlugin implements PluginInterface {
                         } else {
                             alert.error(errorMsg)
                         }
+                    } else if (itemId === BG_ELEMENT_PORT_TYPE_ITEM) {
+                        updateItemProperty(item.property, value, celldlObject)
                     } else if (itemId === BG_ELEMENT_LOCATION_ITEM) {
                         //pluginData.location = value.newValue
                         errorMsg = await this.#updateSvgElement(celldlObject, pluginData.species, value.newValue)
