@@ -31,6 +31,18 @@ import type { BGElementStyle } from './utils'
 const BORDER_STYLES: BorderStyle[] = ['solid', 'dashed', 'double']
 
 /**
+ * A symbol that is a plain name with underscores, such as `P_gc_f`, as LaTeX: its first part with the rest as an
+ * upright subscript, braced so species and location scripts can follow. Any other symbol is LaTeX already.
+ */
+function symbolName(symbol: string): string {
+    if (!/^[A-Za-z][A-Za-z0-9]*(_[A-Za-z0-9]+)+$/.test(symbol)) {
+        return symbol
+    }
+    const [head, ...rest] = symbol.split('_')
+    return `{${head}_{\\mathrm{${rest.join('\\_')}}}}`
+}
+
+/**
  * An element's symbol as LaTeX: the symbol with its species as a superscript and its location as a
  * subscript, and the law label of its template's constitutive relation (e.g. `sat`) as a small upright
  * pre-superscript, so elements with different relations read differently.
@@ -41,7 +53,7 @@ export function makeLatex(symbol: string, species: string|undefined, location: s
     if (lawLabel) {
         latex.push(`{}^{\\scriptscriptstyle\\mathrm{${lawLabel}}}\\!`)
     }
-    latex.push(symbol)
+    latex.push(symbolName(symbol))
     if (species) {
         latex.push(`^{${species}}`)
     }

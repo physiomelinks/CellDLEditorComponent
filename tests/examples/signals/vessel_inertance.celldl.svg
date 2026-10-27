@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="40 20 980 80"><metadata id="celldl-rdf-metadata" data-content-type="text/turtle"><![CDATA[@prefix : <#> .
+@prefix bgf: <https://bg-rdf.org/ontologies/bondgraph-framework#> .
+@prefix cdt: <https://w3id.org/cdt/> .
+@prefix celldl: <http://celldl.org/ontologies/celldl#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+<> a celldl:Document, bgf:BondgraphModel ;
+  dcterms:created "2026-10-27T00:33:23.312Z" ;
+  dcterms:modified "2026-10-27T00:33:24.870Z" ;
+  owl:versionInfo "1.0" ;
+  bgf:hasBondElement :ID-00000001, :ID-00000002, :ID-00000003, :ID-00000004, :ID-00000005, :ID-00000006, :ID-00000007 ;
+  <https://physiomelinks.github.io/ns/celldl#unitSystem> <https://physiomelinks.github.io/ns/celldl#Cellular> .
+
+:ID-00000001 a celldl:Component, bgf:HydraulicPotential ;
+  bgf:hasValue "0 J/L"^^cdt:ucum .
+
+:ID-00000002 a celldl:Component, bgf:RectifyingHydraulicResistanceNode ;
+  bgf:parameterValue [
+    bgf:hasValue "0.1 J/L"^^cdt:ucum ;
+    bgf:varName "u_0"
+  ], [
+    bgf:hasValue "0.5 L2.s-1.J-1"^^cdt:ucum ;
+    bgf:varName "k"
+  ] .
+
+:ID-00000003 a celldl:Component, bgf:HydraulicElasticStorageNode ;
+  bgf:hasValue "0.2 L"^^cdt:ucum ;
+  bgf:parameterValue [
+    bgf:hasValue "0.05 L"^^cdt:ucum ;
+    bgf:varName "q_hat"
+  ], [
+    bgf:hasValue "0.1 J"^^cdt:ucum ;
+    bgf:varName "E"
+  ], [
+    bgf:hasValue "0.6 L"^^cdt:ucum ;
+    bgf:varName "q_bar"
+  ] .
+
+:ID-00000004 a celldl:Component, bgf:HydraulicInertanceNode ;
+  bgf:hasValue "0.05 L/s"^^cdt:ucum ;
+  bgf:parameterValue [
+    bgf:hasValue "0.05 J.s2/L2"^^cdt:ucum ;
+    bgf:varName "I"
+  ] .
+
+:ID-00000005 a celldl:Component, bgf:ViscoelasticHydraulicComplianceNode ;
+  bgf:hasValue "1.2 L"^^cdt:ucum ;
+  bgf:parameterValue [
+    bgf:hasValue "0.1 J.s/L2"^^cdt:ucum ;
+    bgf:varName "R_v"
+  ], [
+    bgf:hasValue "0.1 L2/J"^^cdt:ucum ;
+    bgf:varName "C"
+  ], [
+    bgf:hasValue "0.5 L"^^cdt:ucum ;
+    bgf:varName "q_us"
+  ] .
+
+:ID-00000006 a celldl:Component, bgf:ResistiveHydraulicInertanceNode ;
+  bgf:hasValue "0.1 L/s"^^cdt:ucum ;
+  bgf:parameterValue [
+    bgf:hasValue "2 J.s/L2"^^cdt:ucum ;
+    bgf:varName "R"
+  ], [
+    bgf:hasValue "0.01 J.s2/L2"^^cdt:ucum ;
+    bgf:varName "I"
+  ] .
+
+:ID-00000007 a celldl:Component, bgf:HydraulicPotential ;
+  bgf:hasValue "13 J/L"^^cdt:ucum .
+
+:ID-00000008 a celldl:Connection ;
+  celldl:hasSource :ID-00000007 ;
+  celldl:hasTarget :ID-00000006 ;
+  bgf:hasSource :ID-00000007 ;
+  bgf:hasTarget :ID-00000006 .
+
+:ID-00000009 a celldl:Connection ;
+  celldl:hasSource :ID-00000006 ;
+  celldl:hasTarget :ID-00000005 ;
+  bgf:hasSource :ID-00000006 ;
+  bgf:hasTarget :ID-00000005 .
+
+:ID-00000010 a celldl:Connection ;
+  celldl:hasSource :ID-00000005 ;
+  celldl:hasTarget :ID-00000004 ;
+  bgf:hasSource :ID-00000005 ;
+  bgf:hasTarget :ID-00000004 .
+
+:ID-00000011 a celldl:Connection ;
+  celldl:hasSource :ID-00000004 ;
+  celldl:hasTarget :ID-00000003 ;
+  bgf:hasSource :ID-00000004 ;
+  bgf:hasTarget :ID-00000003 .
+
+:ID-00000012 a celldl:Connection ;
+  celldl:hasSource :ID-00000003 ;
+  celldl:hasTarget :ID-00000002 ;
+  bgf:hasSource :ID-00000003 ;
+  bgf:hasTarget :ID-00000002 .
+
+:ID-00000013 a celldl:Connection ;
+  celldl:hasSource :ID-00000002 ;
+  celldl:hasTarget :ID-00000001 ;
+  bgf:hasSource :ID-00000002 ;
+  bgf:hasTarget :ID-00000001 .
+]]></metadata><defs id="celldl-svg-definitions"><style id="celldl-svg-stylesheet">svg{font-size:16px}.celldl-Connection{stroke-linejoin:round;fill:none}.celldl-Compartment&gt;rect.compartment{fill:#CCC;opacity:0.6;stroke:#444;rx:10px;ry:10px}.celldl-InterfacePort{fill:red;r:4px}.celldl-Unconnected{fill:red;fill-opacity:0.1;stroke:red;r:4px}.celldl-Connection.bondgraph.arrow:not(.signal) { marker-end:url(#connection-end-arrow-bondgraph) } .celldl-Connection.bondgraph.signal { stroke-dasharray: 6 4 } .celldl-Connection.bondgraph.signal.arrow { marker-end:url(#connection-end-arrow-bondgraph) }
+</style><marker id="connection-end-arrow-bondgraph" class="bondgraph" viewBox="-10 -10 20 20" refX="0" refY="0" markerWidth="12.5" markerHeight="12.5" markerUnits="strokeWidth" orient="auto-start-reverse"><polyline points="-5,-4 0,0 -5,4 -5,-4" fill="context-stroke" stroke="context-stroke" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs><g id="celldl-diagram-layer" class="celldl-Layer"><g transform="matrix(1,0,0,1,967.1484375,45.3125)" id="ID-00000001" class="celldl-Component" style="cursor: move;"><image href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' style='vertical-align: -1.5ex%3b' width='3.5ex' height='4ex' role='img' focusable='false' viewBox='-451.146 -1104.863 1547.293 1767.781'%3e%3cdefs%3e%3cpath id='MJX-17-NCM-I-1D446' d='M133 157C133 181 136 201 141 217C141 227 136 232 125 232C120 232 116 230 114 228C109 223 52 8 52-8C52-17 57-22 67-22C72-22 79-17 88-6L133 47C168 1 224-22 300-22C366-22 424 5 476 58C528 111 554 170 554 236C554 283 538 323 505 355C490 368 470 379 445 388C422 393 400 399 378 405L312 423C279 432 254 469 254 509C254 552 271 589 306 621C341 653 380 669 423 669C515 669 561 619 561 520C561 502 557 482 557 465L557 462C560 455 565 451 573 451C582 451 588 459 592 474L645 691C645 700 640 705 630 705C625 705 618 700 609 689L566 637C538 682 491 705 424 705C361 705 304 681 254 634C202 586 176 531 176 468C176 396 223 339 282 323L387 296C441 281 475 262 475 195C475 149 457 108 422 72C387 36 347 17 302 17C204 17 133 60 133 157Z'/%3e%3c/defs%3e%3crect x='-440.094' y='-1093.814' width='1525.188' height='1745.684' fill='%23FBE4D5' data-fill-style='%23FBE4D5' stroke='grey' stroke-width='11.052' rx='331.563'/%3e%3cg stroke='currentColor' fill='currentColor' stroke-width='0' transform='scale(1%2c-1)'%3e%3cg data-mml-node='math'%3e%3cg data-mml-node='mi'%3e%3cuse data-c='1D446' xlink:href='%23MJX-17-NCM-I-1D446'/%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/svg%3e"/></g><g transform="matrix(1,0,0,1,814.3504686355591,45.3125)" id="ID-00000002" class="celldl-Component" style="cursor: move;"><image href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' style='vertical-align: -1.5ex%3b' width='4.262ex' height='4ex' role='img' focusable='false' viewBox='-276.291 -1104.952 1884.081 1767.923'%3e%3cdefs%3e%3cpath id='MJX-30-NCM-N-6D' d='M315 413C361 413 384 378 384 307L384 79C384 60 381 48 374 44C367 40 344 38 307 38L307 0L423 3L538 0L538 38C501 38 479 40 472 44C465 48 461 60 461 79L461 259C461 339 513 413 590 413C637 413 660 378 660 307L660 79C660 60 656 48 649 44C642 40 619 38 582 38L582 0L698 3L813 0L813 38C781 38 760 39 750 42C740 45 736 52 736 64L736 251C736 298 734 331 731 350C721 411 676 442 597 442C534 442 487 413 455 354C441 413 397 442 322 442C259 442 211 412 179 352L179 442L32 431L32 393C68 393 90 390 98 384C106 378 109 365 109 342L109 79C109 60 105 48 98 44C91 40 69 38 32 38L32 0L148 3L263 0L263 38C226 38 203 40 196 44C189 48 185 60 185 79L185 259C185 340 238 413 315 413Z'/%3e%3cpath id='MJX-30-NCM-N-61' d='M483 91L483 150L451 150L451 91C451 52 440 32 419 32C399 32 387 57 387 77L387 274C387 309 383 335 376 353C352 412 283 448 213 448C136 448 60 405 60 333C60 300 77 283 110 283C143 283 159 299 159 332C159 361 144 378 113 381C135 406 168 419 211 419C273 419 311 362 311 297L311 264C233 259 174 247 133 228C66 197 32 154 32 97C32 71 42 49 61 32C93 3 137-11 193-11C252-11 294 14 320 65C327 27 355-6 398-6C451-6 483 36 483 91M200 18C154 18 116 52 116 98C116 191 213 231 311 236L311 141C311 74 267 18 200 18Z'/%3e%3cpath id='MJX-30-NCM-N-78' d='M418 3C441 4 474 3 516 0L516 38C463 38 443 39 422 67L292 235C335 288 364 324 380 343C408 375 447 392 498 393L498 431C470 429 442 428 414 428C377 428 344 429 315 431L315 393C334 391 344 382 344 366C344 357 339 346 330 334L272 262L198 357C193 364 190 369 190 372C190 385 202 392 225 393L225 431L114 428C88 427 56 428 17 431L17 393C53 393 76 390 86 385C96 380 112 363 134 334L229 210C180 147 150 109 139 96C107 57 65 38 12 38L12 0C49 3 77 4 98 3L195 0L195 38C176 41 167 50 167 65C167 69 168 74 170 79C176 92 203 126 251 183L323 89C334 75 340 65 343 59C343 46 331 39 307 38L307 0Z'/%3e%3cpath id='MJX-30-NCM-I-1D463' d='M369 391C369 383 378 370 394 350C410 330 418 307 418 281C418 252 404 203 375 134C354 86 306 18 247 18C201 18 178 45 178 100C178 139 197 208 235 307C243 328 247 345 247 357C247 407 213 442 163 442C119 442 84 417 59 367C39 326 29 300 29 287C29 278 34 273 45 273C58 273 60 279 64 293C87 373 119 413 160 413C173 413 180 404 180 385C180 369 175 347 164 318C127 219 108 152 108 115C108 64 125 29 159 10C186-4 214-11 243-11C332-11 394 85 420 162C452 256 468 325 468 369C468 418 452 442 421 442C396 442 369 416 369 391Z'/%3e%3c/defs%3e%3crect x='-165.775' y='-994.457' width='1663.049' height='1546.933' fill='%23FCE4D6' data-fill-style='%23FCE4D6' stroke='%23C00000' stroke-width='110.516' stroke-dasharray='331.549 221.033' rx='331.549'/%3e%3cg stroke='currentColor' fill='currentColor' stroke-width='0' transform='scale(1%2c-1)'%3e%3cg data-mml-node='math'%3e%3cg data-mml-node='msup'%3e%3cg data-mml-node='TeXAtom' data-mjx-texclass='ORD'/%3e%3cg data-mml-node='TeXAtom' transform='translate(33%2c363) scale(0.707)' data-mjx-texclass='ORD'%3e%3cg data-mml-node='mstyle' transform='scale(0.707)'%3e%3cg data-mml-node='TeXAtom' data-mjx-texclass='ORD'%3e%3cg data-mml-node='mi'%3e%3cuse data-c='6D' xlink:href='%23MJX-30-NCM-N-6D'/%3e%3cuse data-c='61' xlink:href='%23MJX-30-NCM-N-61' transform='translate(833%2c0)'/%3e%3cuse data-c='78' xlink:href='%23MJX-30-NCM-N-78' transform='translate(1333%2c0)'/%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/g%3e%3cg data-mml-node='mspace' transform='translate(1013.5%2c0)'/%3e%3cg data-mml-node='mi' transform='translate(846.5%2c0)'%3e%3cuse data-c='1D463' xlink:href='%23MJX-30-NCM-I-1D463'/%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/svg%3e"/></g><g transform="matrix(1,0,0,1,667.1484375,45.3125)" id="ID-00000003" class="celldl-Component" style="cursor: move;"><image href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' style='vertical-align: -1.5ex%3b' width='3.5ex' height='4ex' role='img' focusable='false' viewBox='-547.216 -1104.934 1546.432 1767.894'%3e%3cdefs%3e%3cpath id='MJX-15-NCM-I-1D45E' d='M372 377C352 420 321 442 280 442C215 442 158 409 109 342C63 280 40 216 40 149C40 62 90-13 173-13C209-13 245 4 282 38L241-126C238-141 229-150 215-153C210-154 197-155 174-155C168-156 164-156 162-156C153-157 148-165 148-179L148-183C151-190 157-194 165-194C184-194 244-191 263-191C282-191 345-194 364-194C378-194 385-186 385-170C385-160 375-155 356-155C338-155 313-156 313-144C313-140 314-133 317-123L452 427C452 436 447 441 438 441C420 441 382 391 372 377M340 373C349 352 354 338 354 329C354 328 353 322 351 313L327 216C308 144 299 107 298 105C279 70 224 16 176 16C137 16 117 46 117 105C117 151 148 263 162 300C181 347 225 412 280 412C307 412 327 399 340 373Z'/%3e%3c/defs%3e%3crect x='-436.757' y='-994.441' width='1325.513' height='1546.908' fill='%23E2F0D9' data-fill-style='%23E2F0D9' stroke='red' stroke-width='110.459' rx='331.378'/%3e%3cg stroke='currentColor' fill='currentColor' stroke-width='0' transform='scale(1%2c-1)'%3e%3cg data-mml-node='math'%3e%3cg data-mml-node='mi'%3e%3cuse data-c='1D45E' xlink:href='%23MJX-15-NCM-I-1D45E'/%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/svg%3e"/></g><g transform="matrix(1,0,0,1,517.1484375,45.3125)" id="ID-00000004" class="celldl-Component" style="cursor: move;"><image href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' style='vertical-align: -1.5ex%3b' width='3.5ex' height='4ex' role='img' focusable='false' viewBox='-432.861 -1104.651 1546.723 1767.442'%3e%3cdefs%3e%3cpath id='MJX-29-NCM-I-1D43F' d='M520 667C520 678 513 683 500 683L354 680L223 683C208 684 200 676 200 659C200 652 203 647 209 646C218 645 226 644 231 644C262 643 279 641 284 640C289 639 292 636 292 631C292 629 291 623 288 613L156 82C150 60 140 47 125 42C119 40 101 39 70 39C49 39 39 31 39 15C39 5 49 0 70 0L527 0C552 0 554 0 561 19L639 233C642 240 643 245 643 248C643 258 638 263 627 263C617 263 612 254 607 240C588 191 570 154 555 131C518 75 455 39 363 39L270 39C259 39 252 39 249 40C242 40 239 42 239 45C239 47 241 54 244 67L377 601C383 624 396 637 415 642C421 643 442 644 478 644C506 644 520 644 520 667Z'/%3e%3c/defs%3e%3crect x='-322.381' y='-994.186' width='1325.762' height='1546.512' fill='lightgrey' data-fill-style='lightgrey' stroke='green' stroke-width='110.48' rx='331.441'/%3e%3cg stroke='currentColor' fill='currentColor' stroke-width='0' transform='scale(1%2c-1)'%3e%3cg data-mml-node='math'%3e%3cg data-mml-node='mi'%3e%3cuse data-c='1D43F' xlink:href='%23MJX-29-NCM-I-1D43F'/%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/svg%3e"/></g><g transform="matrix(1,0,0,1,366.41039085388184,45.3125)" id="ID-00000005" class="celldl-Component" style="cursor: move;"><image href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' style='vertical-align: -1.5ex%3b' width='3.701ex' height='4ex' role='img' focusable='false' viewBox='-276.29 -1104.894 1636.081 1767.831'%3e%3cdefs%3e%3cpath id='MJX-31-NCM-N-56' d='M622 581C638 622 674 643 730 644L730 683C687 680 654 679 630 680L513 683L513 645C562 644 586 628 586 599C586 595 584 589 581 581L404 114L218 603C215 613 213 619 213 620C213 636 240 644 294 644L294 683C252 680 204 679 149 680L19 683L19 644C56 644 80 642 91 639C102 636 110 626 116 609L346 2C352-14 361-22 374-22C387-22 396-15 401-1Z'/%3e%3cpath id='MJX-31-NCM-N-45' d='M230 74L230 334L315 334C360 334 388 326 400 311C412 296 418 265 418 218L451 218L451 488L418 488C418 441 412 411 400 396C388 381 360 373 315 373L230 373L230 606C230 642 236 641 275 641L402 641C474 641 522 627 547 598C579 559 583 523 592 450L625 450L596 680L33 680L33 641L61 641C96 641 117 639 124 634C131 629 135 617 135 599L135 81C135 63 131 51 124 46C117 41 96 39 61 39L33 39L33 0L610 0L653 263L620 263C611 208 602 166 591 136C580 106 560 82 530 63C505 47 464 39 406 39L275 39C236 39 230 38 230 74Z'/%3e%3cpath id='MJX-31-NCM-I-1D45E' d='M372 377C352 420 321 442 280 442C215 442 158 409 109 342C63 280 40 216 40 149C40 62 90-13 173-13C209-13 245 4 282 38L241-126C238-141 229-150 215-153C210-154 197-155 174-155C168-156 164-156 162-156C153-157 148-165 148-179L148-183C151-190 157-194 165-194C184-194 244-191 263-191C282-191 345-194 364-194C378-194 385-186 385-170C385-160 375-155 356-155C338-155 313-156 313-144C313-140 314-133 317-123L452 427C452 436 447 441 438 441C420 441 382 391 372 377M340 373C349 352 354 338 354 329C354 328 353 322 351 313L327 216C308 144 299 107 298 105C279 70 224 16 176 16C137 16 117 46 117 105C117 151 148 263 162 300C181 347 225 412 280 412C307 412 327 399 340 373Z'/%3e%3c/defs%3e%3crect x='-165.774' y='-994.405' width='1415.048' height='1546.852' fill='%23E2F0D9' data-fill-style='%23E2F0D9' stroke='%232F5597' stroke-width='110.516' rx='331.548'/%3e%3crect x='11.052' y='-817.579' width='1061.396' height='1193.2' fill='none' stroke='%232F5597' stroke-width='66.31' rx='154.722'/%3e%3cg stroke='currentColor' fill='currentColor' stroke-width='0' transform='scale(1%2c-1)'%3e%3cg data-mml-node='math'%3e%3cg data-mml-node='msup'%3e%3cg data-mml-node='TeXAtom' data-mjx-texclass='ORD'/%3e%3cg data-mml-node='TeXAtom' transform='translate(33%2c363) scale(0.707)' data-mjx-texclass='ORD'%3e%3cg data-mml-node='mstyle' transform='scale(0.707)'%3e%3cg data-mml-node='TeXAtom' data-mjx-texclass='ORD'%3e%3cg data-mml-node='mi'%3e%3cuse data-c='56' xlink:href='%23MJX-31-NCM-N-56'/%3e%3cuse data-c='45' xlink:href='%23MJX-31-NCM-N-45' transform='translate(750%2c0)'/%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/g%3e%3cg data-mml-node='mspace' transform='translate(798.5%2c0)'/%3e%3cg data-mml-node='mi' transform='translate(631.5%2c0)'%3e%3cuse data-c='1D45E' xlink:href='%23MJX-31-NCM-I-1D45E'/%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/svg%3e"/></g><g transform="matrix(1,0,0,1,215.89265632629395,45.3125)" id="ID-00000006" class="celldl-Component" style="cursor: move;"><image href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' style='vertical-align: -1.5ex%3b' width='3.842ex' height='4ex' role='img' focusable='false' viewBox='-276.21 -1104.925 1697.921 1767.88'%3e%3cdefs%3e%3cpath id='MJX-32-NCM-N-52' d='M611 501C611 558 580 604 519 639C468 668 411 683 349 683L35 683L35 644L63 644C98 644 119 641 126 636C133 631 137 620 137 602L137 81C137 63 133 51 126 46C119 41 98 38 63 38L35 38L35-1C62 2 111 3 183 3C256 3 305 2 332-1L332 38L304 38C269 38 248 41 241 46C234 51 230 63 230 81L230 327L340 327C404 327 451 289 462 235C464 224 465 200 465 165C465 138 466 118 467 106C473 22 546-22 634-22C672-22 699-6 714 25C726 48 732 70 732 91C732 104 726 111 715 111C706 111 700 105 699 92C694 36 673 8 638 8C603 8 591 41 585 70C579 104 575 130 572 147L559 226C544 278 507 316 448 339C524 361 611 415 611 501M470 600C491 581 502 548 502 501C502 463 492 431 473 404C450 373 405 357 336 357L230 357L230 609C230 630 236 641 248 642C255 643 274 644 306 644C385 644 426 641 470 600Z'/%3e%3cpath id='MJX-32-NCM-N-49' d='M180 3C257 3 308 2 333 0L333 39L304 39C268 39 246 41 239 46C232 51 228 63 228 81L228 602C228 620 232 631 239 636C246 641 268 644 304 644L333 644L333 683C308 681 257 680 181 680C104 680 53 681 28 683L28 644L57 644C93 644 115 641 122 636C129 631 133 620 133 602L133 81C133 63 129 51 122 46C115 41 93 39 57 39L28 39L28 0C53 2 104 3 180 3Z'/%3e%3cpath id='MJX-32-NCM-I-1D43F' d='M520 667C520 678 513 683 500 683L354 680L223 683C208 684 200 676 200 659C200 652 203 647 209 646C218 645 226 644 231 644C262 643 279 641 284 640C289 639 292 636 292 631C292 629 291 623 288 613L156 82C150 60 140 47 125 42C119 40 101 39 70 39C49 39 39 31 39 15C39 5 49 0 70 0L527 0C552 0 554 0 561 19L639 233C642 240 643 245 643 248C643 258 638 263 627 263C617 263 612 254 607 240C588 191 570 154 555 131C518 75 455 39 363 39L270 39C259 39 252 39 249 40C242 40 239 42 239 45C239 47 241 54 244 67L377 601C383 624 396 637 415 642C421 643 442 644 478 644C506 644 520 644 520 667Z'/%3e%3c/defs%3e%3crect x='-165.726' y='-994.433' width='1476.953' height='1546.895' fill='lightgrey' data-fill-style='lightgrey' stroke='%23C00000' stroke-width='110.484' rx='331.453'/%3e%3cg stroke='currentColor' fill='currentColor' stroke-width='0' transform='scale(1%2c-1)'%3e%3cg data-mml-node='math'%3e%3cg data-mml-node='msup'%3e%3cg data-mml-node='TeXAtom' data-mjx-texclass='ORD'/%3e%3cg data-mml-node='TeXAtom' transform='translate(33%2c363) scale(0.707)' data-mjx-texclass='ORD'%3e%3cg data-mml-node='mstyle' transform='scale(0.707)'%3e%3cg data-mml-node='TeXAtom' data-mjx-texclass='ORD'%3e%3cg data-mml-node='mi'%3e%3cuse data-c='52' xlink:href='%23MJX-32-NCM-N-52'/%3e%3cuse data-c='49' xlink:href='%23MJX-32-NCM-N-49' transform='translate(736%2c0)'/%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/g%3e%3cg data-mml-node='mspace' transform='translate(631.5%2c0)'/%3e%3cg data-mml-node='mi' transform='translate(464.5%2c0)'%3e%3cuse data-c='1D43F' xlink:href='%23MJX-32-NCM-I-1D43F'/%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/svg%3e"/></g><g transform="matrix(1,0,0,1,67.1484375,45.3125)" id="ID-00000007" class="celldl-Component" style="cursor: move;"><image href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' style='vertical-align: -1.5ex%3b' width='3.5ex' height='4ex' role='img' focusable='false' viewBox='-451.146 -1104.863 1547.293 1767.781'%3e%3cdefs%3e%3cpath id='MJX-17-NCM-I-1D446' d='M133 157C133 181 136 201 141 217C141 227 136 232 125 232C120 232 116 230 114 228C109 223 52 8 52-8C52-17 57-22 67-22C72-22 79-17 88-6L133 47C168 1 224-22 300-22C366-22 424 5 476 58C528 111 554 170 554 236C554 283 538 323 505 355C490 368 470 379 445 388C422 393 400 399 378 405L312 423C279 432 254 469 254 509C254 552 271 589 306 621C341 653 380 669 423 669C515 669 561 619 561 520C561 502 557 482 557 465L557 462C560 455 565 451 573 451C582 451 588 459 592 474L645 691C645 700 640 705 630 705C625 705 618 700 609 689L566 637C538 682 491 705 424 705C361 705 304 681 254 634C202 586 176 531 176 468C176 396 223 339 282 323L387 296C441 281 475 262 475 195C475 149 457 108 422 72C387 36 347 17 302 17C204 17 133 60 133 157Z'/%3e%3c/defs%3e%3crect x='-440.094' y='-1093.814' width='1525.188' height='1745.684' fill='%23FBE4D5' data-fill-style='%23FBE4D5' stroke='grey' stroke-width='11.052' rx='331.563'/%3e%3cg stroke='currentColor' fill='currentColor' stroke-width='0' transform='scale(1%2c-1)'%3e%3cg data-mml-node='math'%3e%3cg data-mml-node='mi'%3e%3cuse data-c='1D446' xlink:href='%23MJX-17-NCM-I-1D446'/%3e%3c/g%3e%3c/g%3e%3c/g%3e%3c/svg%3e"/></g><path class="bondgraph linear arrow celldl-Connection" stroke="#567" stroke-width="2" d="M92.3516 60L216.3927 60" id="ID-00000008"/><path class="bondgraph linear arrow celldl-Connection" stroke="#567" stroke-width="2" d="M243.6073 60L366.9104 60" id="ID-00000009"/><path class="bondgraph linear arrow celldl-Connection" stroke="#567" stroke-width="2" d="M393.0896 60L517.6484 60" id="ID-00000010"/><path class="bondgraph linear arrow celldl-Connection" stroke="#567" stroke-width="2" d="M542.3516 60L667.6484 60" id="ID-00000011"/><path class="bondgraph linear arrow celldl-Connection" stroke="#567" stroke-width="2" d="M692.3516 60L814.8505 60" id="ID-00000012"/><path class="bondgraph linear arrow celldl-Connection" stroke="#567" stroke-width="2" d="M845.1495 60L967.6484 60" id="ID-00000013"/></g></svg>

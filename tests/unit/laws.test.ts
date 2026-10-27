@@ -27,6 +27,11 @@ describe('law labels', () => {
         expect(makeLatex('Rx', 'i', 'j')).toBe('Rx^{i}_{j}')
         expect(makeLatex('k', undefined, undefined)).toBe('k')
     })
+    test('a name with underscores is one upright subscript, which scripts can follow', () => {
+        expect(makeLatex('P_gc_f', undefined, undefined)).toBe('{P_{\\mathrm{gc\\_f}}}')
+        expect(makeLatex('v_renin', 'i', 'j')).toBe('{v_{\\mathrm{renin}}}^{i}_{j}')
+        expect(makeLatex('\\tau', undefined, undefined)).toBe('\\tau')
+    })
 })
 
 describe('template styles', () => {
