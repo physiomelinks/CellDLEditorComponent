@@ -1703,6 +1703,12 @@ export class BondgraphPlugin implements PluginInterface {
     // How many power bonds an element can have
     #powerPortLimit(celldlObject: CellDLObject): number {
         const pluginData = (<PluginData>celldlObject.pluginData(this.id))
+        // a source joins its bonds as bg2cellml does (a potential source's share its potential, a flow source's its
+        // flow), e.g. a plasma chemostat that blood flows take Na from and return it to
+        const types = [pluginData.baseComponent?.type, pluginData.elementTemplate?.type]
+        if (['FlowSource', 'PotentialSource'].some(name => types.includes(BGF.uri(name).value))) {
+            return Infinity
+        }
         const ports = pluginData.elementTemplate?.ports
         if (ports && ports.inward + ports.outward > 0) {
             return ports.inward + ports.outward

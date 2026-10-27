@@ -240,6 +240,17 @@ describe('signal bonds', () => {
         expect(source.numConnections).toBe(2)
     })
 
+    test('a source takes several power bonds, joined as bg2cellml joins them', async () => {
+        // a plasma chemostat that the afferent flow takes Na from and the renal vein returns it to
+        await emptyDiagram()
+        const plasma = await place('all/PotentialSource', 0)
+        const afferent = await place('all/Reaction', 150)
+        const vein = await place('all/Reaction', 300)
+        addBond(plasma, afferent)
+        addBond(vein, plasma)
+        expect(plasma.numConnections).toBe(2)
+    })
+
     test('an opened document\'s full element keeps its signal bonds', async () => {
         // vessel_inertance's flow source Sf_intake has its one power bond and a signal bond setting its value
         const text = readFileSync(join(import.meta.dir, '../examples/signals/vessel_inertance.celldl.svg'), 'utf8')
