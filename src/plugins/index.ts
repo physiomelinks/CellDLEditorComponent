@@ -179,6 +179,15 @@ export interface PluginInterface {
     getMaxConnections: (celldlObject: CellDLObject) => number
 
     /**
+     * Whether a connection counts towards its ends' connection limits (by default it does): e.g. a bond graph's
+     * signal bond doesn't, as it carries no power.
+     *
+     * @param celldlObject An object a connection is being added to.
+     * @param connection The connection.
+     */
+    countsTowardsLimit?: (celldlObject: CellDLObject, connection: CellDLConnection) => boolean
+
+    /**
      * Return the template for an object, given its Id.
      *
      * @param templateId
@@ -362,6 +371,16 @@ export class ComponentLibraryPlugin {
                 plugin.connectionDeleted(connection)
             }
         }
+    }
+
+    countsTowardsLimit(celldlObject: CellDLObject, connection: CellDLConnection): boolean {
+        for (const pluginId of celldlObject.pluginIds) {
+            const plugin = this.#registeredPlugins.get(pluginId)
+            if (plugin && Object.keys(celldlObject.pluginData(pluginId)).length) {
+                return plugin.countsTowardsLimit?.(celldlObject, connection) ?? true
+            }
+        }
+        return true
     }
 
     getMaxConnections(celldlObject: CellDLObject): number {

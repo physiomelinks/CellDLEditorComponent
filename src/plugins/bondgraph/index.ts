@@ -1650,9 +1650,23 @@ export class BondgraphPlugin implements PluginInterface {
         if (limit === Infinity || celldlObject.isConnection) {
             return limit
         }
-        const signals = celldlObject.connections.length - this.#powerConnections(celldlObject).length
+        // from the RDF, which has an opened document's signal bonds before their connections are added
+        const signals = celldlObject.rdfStore.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT DISTINCT ?bond WHERE {
+                ?bond a bgf:SignalBond .
+                { ?bond bgf:hasSource ${celldlObject.uri.toString()} } UNION { ?bond bgf:hasTarget ${celldlObject.uri.toString()} }
+            }`).length
         const drawing = (drawSignalBonds.value || this.#pendingSignalTarget === celldlObject.id) ? 1 : 0
         return limit + signals + drawing
+    }
+
+    /** A signal bond (one already typed, or a new one joining a signal block, or drawn as one) carries no power. */
+    countsTowardsLimit(_celldlObject: CellDLObject, connection: CellDLConnection): boolean {
+        const [source, target] = [connection.source, connection.target]
+        return !(this.isSignalBond(connection)
+              || (source && target && this.#bondQuery(connection, 'bgf:hasSource ?value').length === 0
+                  && this.#isSignalPair(source, target)))
     }
 
     // How many power bonds an element can have

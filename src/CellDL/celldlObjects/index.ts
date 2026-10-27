@@ -442,7 +442,8 @@ export class CellDLConnectedObject extends CellDLMoveableObject {
     }
 
     addConnection(connection: CellDLConnection) {
-        if (this.numConnections < this.maxConnections) {
+        if (this.numConnections < this.maxConnections
+         || !componentLibraryPlugin.countsTowardsLimit(this, connection)) {
             this.#connections.set(connection.id, connection)
         } else {
             alert.elementError(
