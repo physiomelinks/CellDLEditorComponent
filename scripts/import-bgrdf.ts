@@ -6,7 +6,8 @@
 // google-chrome) on a new diagram, adds each of the model's bond elements, junctions and signal blocks as the
 // palette does (addElement), then each power and signal bond (addBond, signal bonds with signal bonds chosen), and
 // gives each the model's own properties in place of the editor's defaults (symbols, species, values, parameter
-// values, a signal bond's input or modulation, ...), so the saved RDF is the model's. Power-bonded elements are laid
+// values, a signal bond's input or modulation, ...), so the saved RDF is the model's; an element the model gives no
+// symbol is given its identifier as its symbol, so bg2cellml names its variables as it does the model's. Power-bonded elements are laid
 // out left to right along their bonds, and signal blocks in rows below, near what they are connected to. Writes
 // OUTDIR/<model>.celldl.svg.
 
@@ -88,7 +89,10 @@ function readModel(path: string): { elements: ModelElement[], bonds: ModelBond[]
     const elements: ModelElement[] = []
     for (const [predicate, isBlock] of [['hasBondElement', false], ['hasJunctionStructure', false], ['hasSignalBlock', true]] as const) {
         for (const uri of listed(predicate)) {
-            elements.push({ id: fragment(uri), type: typeOf(uri)!, isBlock, triples: data(uri, [RDF_TYPE]), x: 0, y: 0 })
+            // named by its identifier when the model gives no symbol, so the CellML's names are the model's
+            const named = (bySubject.get(uri) ?? []).some(({ p }) => p === `${BGF}hasSymbol`)
+            const triples = data(uri, [RDF_TYPE]) + (named ? '' : `\nSUBJECT <${BGF}hasSymbol> ${JSON.stringify(fragment(uri))} .`)
+            elements.push({ id: fragment(uri), type: typeOf(uri)!, isBlock, triples, x: 0, y: 0 })
         }
     }
     const bonds: ModelBond[] = []

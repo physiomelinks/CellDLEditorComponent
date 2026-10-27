@@ -52,7 +52,10 @@ export interface SignalTarget {
     sourceValue?: string
 }
 
-/** How a signal bond acts on its target: as one of its signal inputs, or scaling a parameter by s^exponent. */
+/**
+ * How a signal bond acts on its target: setting one of its signal inputs, or a parameter or a source's value, to the
+ * signal (bgf:signalInput), or scaling a parameter or a source's value by s^exponent (bgf:modulates).
+ */
 export type SignalUse =
     | { signalInput: string }
     | { modulates: string, exponent: number }
@@ -90,13 +93,20 @@ export function parseSignalUse(value: string, exponent: number = 1): SignalUse {
     return {}
 }
 
-/** The uses a target offers, as the Properties panel lists them: its signal inputs, then what can be scaled. */
+/**
+ * The uses a target offers, as the Properties panel lists them: its signal inputs, then each parameter (and a
+ * source's value) set to the signal or scaled by it. Setting one writes it as the bond's bgf:signalInput.
+ */
 export function signalUseOptions(target: SignalTarget): { name: string, value: string }[] {
+    const value = target.sourceValue
     return [
         ...target.inputs.map(name => ({ name: `Signal input ${name}`, value: `input:${name}` })),
-        ...target.parameters.map(name => ({ name: `Scales parameter ${name}`, value: `modulates:${name}` })),
-        ...(target.sourceValue ? [{ name: `Scales the source's ${target.sourceValue}`,
-                                     value: `modulates:${target.sourceValue}` }] : [])
+        ...target.parameters.flatMap(name => [
+            { name: `Sets parameter ${name}`, value: `input:${name}` },
+            { name: `Scales parameter ${name}`, value: `modulates:${name}` }
+        ]),
+        ...(value ? [{ name: `Sets the source's value ${value}`, value: `input:${value}` },
+                     { name: `Scales the source's value ${value}`, value: `modulates:${value}` }] : [])
     ]
 }
 

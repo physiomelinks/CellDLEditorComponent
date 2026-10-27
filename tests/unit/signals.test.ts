@@ -47,8 +47,15 @@ describe('signal bonds\' choices', () => {
         }
         expect(parseSignalUse('')).toEqual({})
         expect(parseSignalUse('modulates:k', 7)).toEqual({ modulates: 'k', exponent: 1 })
-        expect(signalUseOptions({ inputs: ['u'], parameters: ['tau'], sourceValue: 'v' }).map(o => o.value))
-            .toEqual(['input:u', 'modulates:tau', 'modulates:v'])
+        expect(signalUseOptions({ inputs: ['u'], parameters: ['tau'], sourceValue: 'v' })).toEqual([
+            { name: 'Signal input u', value: 'input:u' },
+            { name: 'Sets parameter tau', value: 'input:tau' },
+            { name: 'Scales parameter tau', value: 'modulates:tau' },
+            { name: 'Sets the source\'s value v', value: 'input:v' },
+            { name: 'Scales the source\'s value v', value: 'modulates:v' }
+        ])
+        // setting a parameter is written as the bond's signal input
+        expect(parseSignalUse('input:tau')).toEqual({ signalInput: 'tau' })
     })
 
     test('a value is typed with its units, or keeps those stored, else is dimensionless', () => {
@@ -142,6 +149,27 @@ describe('signal blocks', () => {
     })
 })
 
+describe('module ports', () => {
+    test('a port block and a flow source have a port type; a block has no species or location', async () => {
+        await emptyDiagram()
+        const plugin = bondgraphPlugin()
+        const load = (object: CellDLObject) => loadPropertyGroups(PANEL_ID.PROPERTIES_PANEL,
+                                                                   plugin.getPanelTemplates(PANEL_ID.PROPERTIES_PANEL), object)
+        const port = await place('signal/SignalBlock/SignalInputPort', 0)
+        const groups = load(port)
+        const ids = groups.flatMap(g => g.items).map(i => i.itemId.split('/')[1])
+        expect(ids).toContain('bg-element-port-type')
+        expect(ids).not.toContain('bg-element-species')
+        await plugin.updateObjectProperties(port, PANEL_ID.PROPERTIES_PANEL, 'bg-element-properties/bg-element-port-type',
+                                            { oldValue: '', newValue: 'renal_perfusion_pressure_port' }, groups)
+        expect(triples(port)).toContain('bgf:portType renal_perfusion_pressure_port')
+        const source = await place('chemical/flux-source', 100)
+        expect(load(source).flatMap(g => g.items).map(i => i.itemId.split('/')[1])).toContain('bg-element-port-type')
+        const lag = await place('signal/SignalBlock/FirstOrderLag', 200)
+        expect(load(lag).flatMap(g => g.items).map(i => i.itemId.split('/')[1])).not.toContain('bg-element-port-type')
+    })
+})
+
 describe('signal bonds', () => {
     test('a bond from or to a block is a signal bond, setting an input or scaling a parameter', async () => {
         const diagram = await emptyDiagram()
@@ -202,8 +230,8 @@ describe('signal bonds', () => {
         const groups = loadPropertyGroups(PANEL_ID.PROPERTIES_PANEL, plugin.getPanelTemplates(PANEL_ID.PROPERTIES_PANEL), bond)
         const items = groups.find(g => g.groupId === 'bg-signal-bond')!.items
         expect(items.map(i => i.itemId.split('/')[1])).toEqual(['kind', 'variable', 'use'])
-        expect(items[2]!.possibleValues!.map(o => o.value)).toEqual(['input:Pi_in', 'input:Pi_out', 'modulates:Lp',
-                                                                      'modulates:sigma'])
+        expect(items[2]!.possibleValues!.map(o => o.value)).toEqual(['input:Pi_in', 'input:Pi_out', 'input:Lp',
+                                                                      'modulates:Lp', 'input:sigma', 'modulates:sigma'])
         expect(plugin.signalUse(bond)).toEqual({ signalInput: 'Pi_in' })
         await plugin.updateObjectProperties(bond, PANEL_ID.PROPERTIES_PANEL, 'bg-signal-bond/use',
                                             { oldValue: 'input:Pi_in', newValue: 'modulates:Lp' }, groups)
