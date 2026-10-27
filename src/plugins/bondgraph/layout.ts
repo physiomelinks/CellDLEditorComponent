@@ -45,6 +45,11 @@ limitations under the License.
 //  7. A last snap (snapToLines): nodes of a kind within a fifth of a bond of one line move onto it, a group at a
 //     time, kept only when that costs nothing and every node stays where it must be; then the layout is centred
 //     where it was.
+//
+// With `rows`, for a diagram drawn in rows (a module's bond graph above its signal blocks), stages 1-4 are left
+// out and nodes move only along their rows, a node with a `side` (a module's input or output) only up and down the
+// layout's first or last column; a bond passing through a node (bondsThroughNodes), as one along a row past its
+// neighbours does, costs `weights.overlap`.
 
 import {
     type Complexity, complexityOptions, layoutComplexity, type LayoutBond, type LayoutNode, type Point2, type Rect,
@@ -65,6 +70,9 @@ export interface LayoutOptions {
     cycles: boolean             // draw cycles as circles
     regionsFirst: boolean       // place the regions, then their nodes
     rectangles: boolean         // regions as rectangles where they can be (planRectangles), else free-form
+    rows?: boolean              // nodes keep the rows they're drawn in, those with a side are kept in the layout's
+                                // first or last column and the others between: no cycles, region placement or
+                                // stress, and moves along the rows only (up and down the column for a node with a side)
     regionPull: number          // how strongly stress pulls a node towards its region (0: not at all)
     sgdSweeps: number           // stress sweeps
     steps: number               // annealing moves
@@ -331,13 +339,43 @@ function withCircles(complexity: Complexity, nodes: LayoutNode[], cycles: number
     return { ...complexity, total: complexity.total + weights.circle * off + weights.inside * inside }
 }
 
+/**
+ * Bonds passing through a node other than their own, each such pair counted once: with nodes in rows, a bond along
+ * a row past its neighbours, which crosses no other bond.
+ */
+export function bondsThroughNodes(nodes: LayoutNode[], bonds: LayoutBond[]): number {
+    const byId = new Map(nodes.map(m => [m.id, m]))
+    let count = 0
+    for (const b of bonds) {
+        const p = byId.get(b.a), q = byId.get(b.b)
+        if (!p || !q) continue
+        const dx = q.x - p.x, dy = q.y - p.y
+        for (const m of nodes) {
+            if (m === p || m === q) continue
+            // the segment against the node's box (Liang-Barsky)
+            let t0 = 0, t1 = 1
+            const clip = (d: number, e: number) => {
+                if (d === 0) return e >= 0
+                const t = e / d
+                if (d < 0) { if (t > t1) return false; if (t > t0) t0 = t }
+                else { if (t < t0) return false; if (t < t1) t1 = t }
+                return true
+            }
+            if (clip(-dx, p.x - (m.x - m.w / 2)) && clip(dx, m.x + m.w / 2 - p.x)
+                && clip(-dy, p.y - (m.y - m.h / 2)) && clip(dy, m.y + m.h / 2 - p.y) && t0 < t1) count++
+        }
+    }
+    return count
+}
+
 function measures(nodes: LayoutNode[], bonds: LayoutBond[], cycles: number[][], settings: ReturnType<typeof complexityOptions>
-                  & { start?: Map<string, Point2> }, weights: typeof WEIGHTS, exclude: Set<number>): LayoutMeasures {
+                  & { start?: Map<string, Point2> }, weights: typeof WEIGHTS, exclude: Set<number>, rows = false): LayoutMeasures {
     const saved = { ...WEIGHTS }
     Object.assign(WEIGHTS, weights)
     const lines = lineCount(nodes, exclude)
     const measured = withCircles(layoutComplexity(nodes, bonds, settings), nodes, cycles, weights)
-    const complexity = { ...measured, total: measured.total + weights.align * (lines.columns + lines.rows) }
+    const through = rows ? weights.overlap * bondsThroughNodes(nodes, bonds) : 0
+    const complexity = { ...measured, total: measured.total + weights.align * (lines.columns + lines.rows) + through }
     Object.assign(WEIGHTS, saved)
     const byId = new Map(nodes.map(n => [n.id, n]))
     const lengths = bonds.map(b => [byId.get(b.a), byId.get(b.b)]).filter(([a, c]) => a && c)
@@ -557,7 +595,11 @@ function clampTo(p: Point2, r: Target): Point2 {
 export async function reorganiseLayout(input: LayoutNode[], bonds: LayoutBond[], given: Partial<LayoutOptions> = {},
                                        onProgress?: (done: number, of: number) => void | Promise<void>): Promise<LayoutResult> {
     const started = Date.now()
-    const options: LayoutOptions = { ...DEFAULT_OPTIONS, ...given, weights: { ...DEFAULT_OPTIONS.weights, ...given.weights } }
+    const options: LayoutOptions = { ...DEFAULT_OPTIONS, ...given, weights: { ...DEFAULT_OPTIONS.weights, ...given.weights },
+                                     ...(given.rows && { cycles: false, regionsFirst: false, sgdSweeps: 0 }) }
+    // with `rows`: the layout's first and last columns, and the axis a node moves along
+    const left = Math.min(...input.map(m => m.x)), right = Math.max(...input.map(m => m.x))
+    const rowAxis = (m: LayoutNode): 'x'|'y' => m.side ? 'y' : 'x'
     const rand = random(options.seed)
     const nodes = input.map(n => ({ ...n }))
     const n = nodes.length
@@ -581,7 +623,7 @@ export async function reorganiseLayout(input: LayoutNode[], bonds: LayoutBond[],
     })
     const bodyOf = new Int32Array(n).fill(-1)
     bodies.forEach((b, k) => { for (const i of bodyNodes(b)) bodyOf[i] = k })
-    const before = measures(input, bonds, cycles, settings, options.weights, inCycle)
+    const before = measures(input, bonds, cycles, settings, options.weights, inCycle, options.rows)
     // each cycle's region (most of its nodes'), and the span its circle needs
     const cycleSpan = new Map<string, number>()
     const bodyLabel = bodies.map(body => {
@@ -612,6 +654,8 @@ export async function reorganiseLayout(input: LayoutNode[], bonds: LayoutBond[],
     // every node where it must be: a node in its region's rectangle, a boundary step on its edge, a cycle (as a body)
     // in its region's rectangle
     const project = () => {
+        // with rows, a node with a side in the first or last column, and every other between them
+        if (options.rows) for (const m of nodes) m.x = m.side ? (m.side === 'left' ? left : right) : Math.min(Math.max(m.x, left), right)
         const placed = plan
         if (!placed) return
         bodies.forEach((body, k) => {
@@ -738,7 +782,8 @@ export async function reorganiseLayout(input: LayoutNode[], bonds: LayoutBond[],
                 const ox = (a.w + b.w) / 2 + gap - Math.abs(a.x - b.x), oy = (a.h + b.h) / 2 + gap - Math.abs(a.y - b.y)
                 if (ox <= 0 || oy <= 0) continue
                 moved = true
-                const along = ox < oy ? 'x' : 'y', push = (Math.min(ox, oy) / 2 + 0.5) * (a[along] <= b[along] ? 1 : -1)
+                const along = options.rows ? (a.side && b.side ? 'y' : 'x') : ox < oy ? 'x' : 'y'
+                const push = ((along === 'x' ? ox : oy) / 2 + 0.5) * (a[along] <= b[along] ? 1 : -1)
                 const shift = (k: number, s: number) => {
                     const idx = bodyOf[k]! >= 0 ? bodyNodes(bodies[bodyOf[k]!]!) : [k]
                     for (const m of idx) nodes[m]![along] += s / (bodyOf[k]! >= 0 ? 2 : 1)
@@ -790,7 +835,9 @@ export async function reorganiseLayout(input: LayoutNode[], bonds: LayoutBond[],
     const saved = { ...WEIGHTS }
     Object.assign(WEIGHTS, options.weights)
     const energyOf = () => {
-        const c = withCircles(layoutComplexity(nodes, bonds, settings), nodes, cycles, options.weights)
+        const measured = withCircles(layoutComplexity(nodes, bonds, settings), nodes, cycles, options.weights)
+        const c = options.rows ? { ...measured, total: measured.total + options.weights.overlap * bondsThroughNodes(nodes, bonds) }
+                               : measured
         if (options.weights.align <= 0) return c
         const lines = lineCount(nodes, inCycle)
         return { ...c, total: c.total + options.weights.align * (lines.columns + lines.rows) }
@@ -802,7 +849,7 @@ export async function reorganiseLayout(input: LayoutNode[], bonds: LayoutBond[],
         const kinds = new Map<string, number[]>()
         nodes.forEach((m, i) => { if (!inCycle.has(i)) kinds.set(m.kind ?? 'other', [...(kinds.get(m.kind ?? 'other') ?? []), i]) })
         for (const idx of kinds.values()) {
-            for (const axis of ['x', 'y'] as const) {
+            for (const axis of options.rows ? ['x'] as const : ['x', 'y'] as const) {     // rows are kept
                 const sorted = [...idx].sort((a, b) => nodes[a]![axis] - nodes[b]![axis])
                 let group: number[] = []
                 const flush = () => {
@@ -830,7 +877,8 @@ export async function reorganiseLayout(input: LayoutNode[], bonds: LayoutBond[],
                     const ox = (a.w + b.w) / 2 + gap - Math.abs(a.x - b.x), oy = (a.h + b.h) / 2 + gap - Math.abs(a.y - b.y)
                     if (ox <= 0 || oy <= 0) continue
                     movedApart = true
-                    const along = Math.abs(a.x - b.x) < 0.5 ? 'y' : Math.abs(a.y - b.y) < 0.5 ? 'x' : ox < oy ? 'x' : 'y'
+                    const along = options.rows ? (a.side && b.side ? 'y' : 'x')
+                                : Math.abs(a.x - b.x) < 0.5 ? 'y' : Math.abs(a.y - b.y) < 0.5 ? 'x' : ox < oy ? 'x' : 'y'
                     const push = ((along === 'x' ? ox : oy) / 2 + 0.5) * (a[along] <= b[along] ? 1 : -1)
                     a[along] -= push; b[along] += push
                 }
@@ -900,6 +948,8 @@ export async function reorganiseLayout(input: LayoutNode[], bonds: LayoutBond[],
                 for (const i of idx) { nodes[i]!.x += radius * Math.cos(angle); nodes[i]!.y += radius * Math.sin(angle) }
             }
         }
+        // with rows, each node moved along its axis only
+        if (options.rows) nodes.forEach((m, i) => { if (rowAxis(m) === 'x') m.y = old[i]!.y; else m.x = old[i]!.x })
         project()
         const measured = energyOf()
         const temperature = 2 * cooling + 1e-3
@@ -928,7 +978,7 @@ export async function reorganiseLayout(input: LayoutNode[], bonds: LayoutBond[],
     const sx = (input.reduce((s, m) => s + m.x, 0) - nodes.reduce((s, m) => s + m.x, 0)) / n
     const sy = (input.reduce((s, m) => s + m.y, 0) - nodes.reduce((s, m) => s + m.y, 0)) / n
     for (const m of nodes) { m.x += sx; m.y += sy }
-    const after = measures(nodes, bonds, cycles, settings, options.weights, inCycle)
+    const after = measures(nodes, bonds, cycles, settings, options.weights, inCycle, options.rows)
     const improved = after.complexity.total < before.complexity.total
     const moveRect = (r: Rect) => ({ x0: r.x0 + sx, y0: r.y0 + sy, x1: r.x1 + sx, y1: r.y1 + sy })
     return {

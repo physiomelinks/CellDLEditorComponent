@@ -11,8 +11,8 @@
                 select#layout-preset(v-model="layoutPreset" aria-label="Reorganise option" :disabled="reorganising"
                                      :title="LAYOUT_PRESETS.find(p => p.id === layoutPreset)?.description")
                     option(v-for="p in LAYOUT_PRESETS" :key="p.id" :value="p.id") {{ p.name }}
-                button.reorganise(type="button" :disabled="reorganising || steps.length === 0" @click="reorganiseLayout")
-                    | {{ reorganising ? `Reorganising… ${progress}%` : 'Reorganise by region' }}
+                button.reorganise(type="button" :disabled="reorganising || elementCount === 0" @click="reorganiseLayout")
+                    | {{ reorganising ? `Reorganising… ${progress}%` : locations.length ? 'Reorganise by region' : 'Reorganise' }}
                 button.undo(v-if="canUndo && !reorganising" type="button" @click="undoLayout") Undo reorganise
                 p.status(v-if="layoutStatus") {{ layoutStatus }}
             p.note(v-if="needValues.length") New: {{ needValues.join(", ") }}, with parameters of 1 and initial values of 0.
@@ -78,13 +78,16 @@ const newName = vue.ref('')
 const newText = vue.ref('')
 const needValues = vue.ref<string[]>([])   // new elements, whose values start at the defaults
 const locations = vue.ref<string[]>([])    // the diagram's regions, sorted, as drawn behind it
+const elementCount = vue.ref(0)            // the diagram's elements, which Reorganise moves
 
 function refresh() {
     needValues.value.push(...takeAddedElements())
     steps.value = componentLibraryPlugin.reactionEquations().map(eq => ({
         id: eq.id, name: eq.name, kind: eq.kind, text: equationText(eq), regions: eq.regions
     }))
-    locations.value = [...new Set(diagramLayout().nodes.flatMap(n => n.labels))].sort()
+    const { nodes } = diagramLayout()
+    locations.value = [...new Set(nodes.flatMap(n => n.labels))].sort()
+    elementCount.value = nodes.length
     canUndo.value = canUndoReorganise()
 }
 
@@ -138,7 +141,8 @@ async function reorganiseLayout() {
         const { before, after, rings } = result
         const kept = rings ? ` ${rings} cycle${rings === 1 ? '' : 's'} drawn as a circle.` : ''
         layoutStatus.value = after.total < before.total
-            ? `Complexity ${before.total.toFixed(0)} → ${after.total.toFixed(0)}: ${describe(after.subspaces, after.regions, after.rectangular)}, `
+            ? `Complexity ${before.total.toFixed(0)} → ${after.total.toFixed(0)}: `
+              + (locations.value.length ? `${describe(after.subspaces, after.regions, after.rectangular)}, ` : '')
               + `${after.crossings} crossing bond${after.crossings === 1 ? '' : 's'} (were ${before.crossings}).${kept}`
             : `No simpler layout found (complexity ${before.total.toFixed(0)}).`
     } finally {

@@ -1075,6 +1075,30 @@ export class BondgraphPlugin implements PluginInterface {
     }
 
     /**
+     * The diagram's signal blocks, by kind (`input` and `output` for its signal ports, else `signal`), and its
+     * signal bonds, for laying the diagram out.
+     */
+    signalLayout(): { blocks: Map<string, 'signal'|'input'|'output'>, bonds: { a: string, b: string }[] } {
+        const blocks = new Map<string, 'signal'|'input'|'output'>()
+        const bonds: { a: string, b: string }[] = []
+        const store = this.#documentStore
+        if (!store) return { blocks, bonds }
+        const prefix = `${this.#currentDocumentUri}#`
+        const input = BGF.uri('SignalInputPort').value, output = BGF.uri('SignalOutputPort').value
+        for (const r of store.query(`SELECT ?node ?type WHERE { ?node a ?type }`) as Map<string, $rdf.Term>[]) {
+            const node = r.get('node')!.value, type = r.get('type')!.value
+            if (!node.startsWith(prefix) || !this.#elementTemplates.get(type)?.baseComponent.isSignalBlock) continue
+            blocks.set(node, type === input ? 'input' : type === output ? 'output' : 'signal')
+        }
+        for (const r of store.query(`${SPARQL_PREFIXES}
+            SELECT ?bond ?source ?target WHERE { ?bond a bgf:SignalBond ; bgf:hasSource ?source ; bgf:hasTarget ?target }`
+        ) as Map<string, $rdf.Term>[]) {
+            if (r.get('bond')!.value.startsWith(prefix)) bonds.push({ a: r.get('source')!.value, b: r.get('target')!.value })
+        }
+        return { blocks, bonds }
+    }
+
+    /**
      * Whether an element takes its location from the compartment it is in: a store or a source (a chemostat), but
      * not a step (a reaction or transporter, which may join locations), a transformer or a junction.
      */

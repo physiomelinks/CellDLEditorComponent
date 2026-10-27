@@ -52,8 +52,10 @@ export interface LayoutNode {
     w: number               // size
     h: number
     labels: string[]        // its regions: one, several (a step on a boundary) or none
-    kind?: string           // store, reaction, resistance, source or other (./layout.ts finds cycles by it)
+    kind?: string           // store, reaction, resistance, source, signal, input, output or other (./layout.ts
+                            // finds cycles by it, and lines up nodes of a kind)
     text?: string           // its species, else its identifier (side compounds are known by it)
+    side?: 'left'|'right'   // a module's input or output, kept in the first or last column (./layout.ts's `rows`)
 }
 
 export interface LayoutBond {

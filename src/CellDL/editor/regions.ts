@@ -79,6 +79,25 @@ export function diagramLayout(): { nodes: LayoutNode[], bonds: LayoutBond[], obj
     return { nodes, bonds: layout.bonds.filter(b => ids.has(b.a) && ids.has(b.b)), objects }
 }
 
+/**
+ * The diagram as reorganiseDiagram lays it out: diagramLayout()'s nodes and bonds, with its signal blocks as kinds
+ * of their own (`signal`, and `input` and `output` for its signal ports, with a side, left or right) and its signal
+ * bonds. A diagram with signal blocks but no regions (a module's bond graph drawn above its signal blocks) keeps
+ * its rows, its inputs in the first column and outputs in the last: its `options` are layout.ts's `rows`.
+ */
+export function reorganisingLayout(): ReturnType<typeof diagramLayout> & { options?: Partial<LayoutOptions> } {
+    const layout = diagramLayout()
+    const signals = plugin()?.signalLayout()
+    if (!signals || signals.blocks.size === 0) return layout
+    const nodes = layout.nodes.map((n): LayoutNode => {
+        const block = signals.blocks.get(n.id)
+        return block ? { ...n, kind: block, ...(block !== 'signal' && { side: block === 'input' ? 'left' : 'right' }) } : n
+    })
+    const ids = new Set(nodes.map(n => n.id))
+    return { nodes, bonds: [...layout.bonds, ...signals.bonds.filter(b => ids.has(b.a) && ids.has(b.b))],
+             objects: layout.objects, ...(!nodes.some(n => n.labels.length) && { options: { rows: true } }) }
+}
+
 //==============================================================================
 
 function regionLayer(): SVGGElement|null {
@@ -236,17 +255,17 @@ export function currentComplexity(): Complexity|undefined {
 }
 
 /**
- * Move the diagram's nodes to a layout of lower complexity (../../plugins/bondgraph/layout.ts), by one of its
- * presets, adjusted by `options`. Returns its measures before and after (after equals before when no simpler
- * layout was found, and nothing moves) and the cycles drawn as circles. undoReorganise() puts the nodes back.
+ * Move the diagram's nodes (as reorganisingLayout() gives them) to a layout of lower complexity
+ * (../../plugins/bondgraph/layout.ts), by one of its presets, adjusted by `options`. Returns its measures before
+ * and after (after equals before when no simpler layout was found, and nothing moves) and the cycles drawn as circles. undoReorganise() puts the nodes back.
  */
 export async function reorganiseDiagram(onProgress?: (done: number, of: number) => void,
                                         options: Partial<LayoutOptions> = {}, preset: string = 'balanced') {
-    const { nodes, bonds, objects } = diagramLayout()
+    const { nodes, bonds, objects, options: layered } = reorganisingLayout()
     if (nodes.length === 0) return
     const chosen = presetOptions(preset)
     const result = await reorganiseLayout(nodes, bonds,
-        { ...chosen, ...options, weights: { ...chosen.weights, ...options.weights } },
+        { ...chosen, ...layered, ...options, weights: { ...chosen.weights, ...options.weights } },
         async (done, of) => {
             onProgress?.(done, of)
             await new Promise(resolve => setTimeout(resolve, 0))      // keep the editor responsive

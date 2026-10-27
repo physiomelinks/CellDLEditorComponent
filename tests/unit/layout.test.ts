@@ -1,7 +1,7 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: <test fixtures exist> */
 import { describe, expect, test } from 'bun:test'
 
-import { circularity, findCycles, lineCount, planRectangles, presetOptions, reorganiseLayout, snapToLines } from '../../src/plugins/bondgraph/layout'
+import { bondsThroughNodes, circularity, findCycles, lineCount, planRectangles, presetOptions, reorganiseLayout, snapToLines } from '../../src/plugins/bondgraph/layout'
 import type { LayoutBond, LayoutNode } from '../../src/plugins/bondgraph/regions'
 
 const node = (id: string, x: number, y: number, labels: string[], kind = 'store', text = id): LayoutNode =>
@@ -210,5 +210,57 @@ describe('lines and rectangles', () => {
         const labels = ['a', 'b', 'c', 'd', 'e', 'f']
         const nodes = labels.map((l, k) => node(l, 100 * k, 0, [l]))
         expect(planRectangles(nodes, 60, new Map())).toBeUndefined()
+    })
+})
+
+describe('rows', () => {
+    // a module drawn in rows: a chain of bond elements (in -> R1 -> C -> R2 -> out) above a row of signal blocks in
+    // an order that crosses their links to the chain, with an input at the right and an output at the left
+    function module(): { nodes: LayoutNode[], bonds: LayoutBond[] } {
+        const sized = (n: LayoutNode): LayoutNode => ({ ...n, w: 40, h: 24 })
+        const chain = ['in', 'R1', 'C', 'R2', 'out'].map((id, k) =>
+            sized(node(id, 100 * k, 0, [], id.startsWith('R') ? 'resistance' : id === 'C' ? 'store' : 'source')))
+        const blocks = ['s4', 's3', 's2', 's1'].map((id, k) => sized(node(id, 100 * k + 50, 150, [], 'signal')))
+        const ports = [sized({ ...node('u', 450, 150, [], 'input'), side: 'left' }),
+                       sized({ ...node('y', -50, 150, [], 'output'), side: 'right' })]
+        const bonds: LayoutBond[] = []
+        for (let k = 1; k < chain.length; k++) bonds.push({ a: chain[k - 1]!.id, b: chain[k]!.id })
+        // s1 reads the first resistance, s2 the store, s3 the second resistance, s4 the outlet
+        bonds.push({ a: 'R1', b: 's1' }, { a: 'C', b: 's2' }, { a: 'R2', b: 's3' }, { a: 'out', b: 's4' },
+                   { a: 'u', b: 's1' }, { a: 's4', b: 'y' })
+        return { nodes: [...chain, ...blocks, ...ports], bonds }
+    }
+    const options = { ...presetOptions('balanced'), steps: 1500, rows: true }
+
+    test('nodes keep their rows, inputs go to the first column and outputs to the last, and crossings go', async () => {
+        const { nodes, bonds } = module()
+        const result = await reorganiseLayout(nodes, bonds, options)
+        expect(result.improved).toBe(true)
+        expect(result.after.complexity.crossings).toBeLessThan(result.before.complexity.crossings)
+        const at = (id: string) => result.positions.get(id)!
+        // the layout is centred where it was, so rows are compared with each other
+        const rowOf = (id: string) => at(id).y - at('in').y
+        for (const id of ['R1', 'C', 'R2', 'out']) expect(Math.abs(rowOf(id))).toBeLessThan(0.5)
+        for (const id of ['s1', 's2', 's3', 's4']) expect(Math.abs(rowOf(id) - 150)).toBeLessThan(0.5)
+        const xs = nodes.map(n => at(n.id).x)
+        expect(at('u').x).toBeCloseTo(Math.min(...xs))
+        expect(at('y').x).toBeCloseTo(Math.max(...xs))
+    })
+
+    test('a chain along a row keeps its order: no bond passes through a node', async () => {
+        const { nodes, bonds } = module()
+        const result = await reorganiseLayout(nodes, bonds, options)
+        const moved = nodes.map(n => ({ ...n, ...result.positions.get(n.id) }))
+        expect(bondsThroughNodes(moved, bonds)).toBe(0)
+        const order = ['in', 'R1', 'C', 'R2', 'out'].map(id => result.positions.get(id)!.x)
+        expect([order, [...order].reverse()].some(xs => xs.every((x, k) => k === 0 || x > xs[k - 1]!))).toBe(true)
+    })
+
+    test('a bond through a node is counted, one past it is not', () => {
+        const nodes = [node('a', 0, 0, []), node('b', 100, 0, []), node('c', 200, 0, [])]
+        expect(bondsThroughNodes(nodes, [{ a: 'a', b: 'c' }])).toBe(1)
+        expect(bondsThroughNodes(nodes, [{ a: 'a', b: 'b' }, { a: 'b', b: 'c' }])).toBe(0)
+        nodes[1]!.y = 40
+        expect(bondsThroughNodes(nodes, [{ a: 'a', b: 'c' }])).toBe(0)
     })
 })
