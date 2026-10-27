@@ -34,12 +34,13 @@ export const ARRANGE_OPS: readonly ArrangeOp[] = [
     'left', 'centre', 'right', 'top', 'middle', 'bottom', 'distribute-h', 'distribute-v'
 ]
 
-/** An object's bounds, in SVG coordinates */
+/** An object's bounds, and its centre when that isn't the middle of its bounds, in SVG coordinates */
 export type ArrangeBounds = {
     left: number
     top: number
     right: number
     bottom: number
+    centre?: { x: number, y: number }
 }
 
 /** How far to move an object */
@@ -58,7 +59,8 @@ export function minimumForArrange(op: ArrangeOp): number {
 /**
  * The moves that arrange objects, one per object in the order given.
  *
- * Align uses the edges or centre of the objects' bounding box. Distribute keeps
+ * Align uses the edges of the objects' bounding box, or puts their centres on
+ * the line through the middle of it. Distribute keeps
  * the two outermost objects where they are and makes the gaps between objects'
  * edges equal. Too few objects, or none to move, give zero moves.
  */
@@ -78,13 +80,13 @@ export function arrangeTargets(bounds: readonly ArrangeBounds[], op: ArrangeOp):
         } else if (op === 'right') {
             delta.dx = right - b.right
         } else if (op === 'centre') {
-            delta.dx = (left + right) / 2 - (b.left + b.right) / 2
+            delta.dx = (left + right) / 2 - (b.centre?.x ?? (b.left + b.right) / 2)
         } else if (op === 'top') {
             delta.dy = top - b.top
         } else if (op === 'bottom') {
             delta.dy = bottom - b.bottom
         } else if (op === 'middle') {
-            delta.dy = (top + bottom) / 2 - (b.top + b.bottom) / 2
+            delta.dy = (top + bottom) / 2 - (b.centre?.y ?? (b.top + b.bottom) / 2)
         }
     })
     if (op === 'distribute-h') {
@@ -93,6 +95,21 @@ export function arrangeTargets(bounds: readonly ArrangeBounds[], op: ArrangeOp):
         distribute(bounds, deltas, 'top', 'bottom', 'dy')
     }
     return deltas
+}
+
+/**
+ * The line that aligning centres puts every centre on: an x for `centre`, a y
+ * for `middle`, otherwise `null`.
+ */
+export function centreLine(bounds: readonly ArrangeBounds[], op: ArrangeOp): number | null {
+    if (bounds.length < minimumForArrange(op)) {
+        return null
+    } else if (op === 'centre') {
+        return (Math.min(...bounds.map(b => b.left)) + Math.max(...bounds.map(b => b.right))) / 2
+    } else if (op === 'middle') {
+        return (Math.min(...bounds.map(b => b.top)) + Math.max(...bounds.map(b => b.bottom))) / 2
+    }
+    return null
 }
 
 function distribute(bounds: readonly ArrangeBounds[], deltas: ArrangeDelta[],
@@ -118,6 +135,9 @@ function centre(bounds: ArrangeBounds, start: 'left'|'top', end: 'right'|'bottom
 
 //==============================================================================
 
+/** How near horizontal or vertical, in pixels, a bond between arranged components is squared up */
+export const SQUARE_UP_TOLERANCE = 6
+
 /**
  * The bonds whose two ends are both among the objects, once each. Arranging
  * straightens these; a bond with only one end among them keeps its bends.
@@ -131,6 +151,28 @@ export function bondsWithin<Bond extends { readonly connectedObjects: readonly u
         for (const bond of object.connections) {
             const ends = bond.connectedObjects
             if (ends.length >= 2 && arranged.has(ends[0]) && arranged.has(ends[ends.length - 1])) {
+                bonds.add(bond)
+            }
+        }
+    }
+    return [...bonds]
+}
+
+//
+
+/**
+ * The bonds with exactly one end among the objects, once each. Arranging re-draws
+ * these between centres when they're straight.
+ */
+export function bondsLeaving<Bond extends { readonly connectedObjects: readonly unknown[] }>(
+    objects: readonly { readonly connections: readonly Bond[] }[]
+): Bond[] {
+    const arranged: Set<unknown> = new Set(objects)
+    const bonds: Set<Bond> = new Set()
+    for (const object of objects) {
+        for (const bond of object.connections) {
+            const ends = bond.connectedObjects
+            if (ends.length >= 2 && (arranged.has(ends[0]) !== arranged.has(ends[ends.length - 1]))) {
                 bonds.add(bond)
             }
         }

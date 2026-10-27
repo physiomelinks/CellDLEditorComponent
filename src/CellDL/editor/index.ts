@@ -25,7 +25,7 @@ import { useTippy } from "vue-tippy"
 
 import '#root/assets/svgContent.css'
 
-import type { CellDLCompartment, CellDLObject } from '#editor/celldlObjects'
+import type { CellDLCompartment, CellDLConnection, CellDLObject } from '#editor/celldlObjects'
 import { ConnectionStyle } from '#editor/connections'
 import { PathMaker, type PathNode } from '#editor/connections/pathmaker'
 import type { TemplateEventDetails } from '#editor/components'
@@ -50,7 +50,10 @@ import { DRAWING_TOOLS, type SpatialKind, spatialEntry } from '#root/plugins/dra
 
 //==============================================================================
 
-import { type ArrangeBounds, type ArrangeOp, arrangeTargets, bondsWithin, minimumForArrange } from './arrange'
+import {
+    type ArrangeBounds, type ArrangeOp, arrangeTargets, bondsLeaving, bondsWithin, centreLine, minimumForArrange,
+    SQUARE_UP_TOLERANCE
+} from './arrange'
 import { drawBondCounts } from './bondcounts'
 import { BondDrag } from './bonddrag'
 import { CompartmentHandles, compartmentMoveGroup, defaultBounds, placeSpatial } from './compartments'
@@ -185,6 +188,7 @@ export enum CONTEXT_MENU {
     EDIT_GROUP = 'menu-edit-group',
     INFO = 'menu-info',
     GROUP_OBJECTS = 'menu-group',
+    STRAIGHTEN = 'menu-straighten',
     UNGROUP_OBJECTS = 'menu-ungroup'
 }
 
@@ -482,6 +486,7 @@ export class CellDLEditor {
                 this.setSelectedObject(clickedObject)
             }
             this.enableContextMenuItem(CONTEXT_MENU.DELETE, this.selectionSet.size > 0)
+            this.enableContextMenuItem(CONTEXT_MENU.STRAIGHTEN, this.canStraighten())
             this.#contextMenuPoint = {
                 client: { x: event.clientX, y: event.clientY },
                 svg: this.#domToSvgCoords(event)
@@ -506,6 +511,8 @@ export class CellDLEditor {
                 }
             } else if (targetId === CONTEXT_MENU.DELETE) {
                 this.#deleteSelectedObjects()
+            } else if (targetId === CONTEXT_MENU.STRAIGHTEN) {
+                this.straightenSelection()
             } else if (targetId === CONTEXT_MENU.INFO) {
 // WIP               this.#showSelectedObjectInfo()
             } else if (targetId === CONTEXT_MENU.GROUP_OBJECTS) {
@@ -2119,8 +2126,11 @@ export class CellDLEditor {
 
     /**
      * Aligns or distributes the selected components, as one undoable step.
-     * Their bonds follow them, and those between two of them are straightened.
-     * Nothing snaps to the grid.
+     * Aligning centres puts them exactly on one line. Nothing snaps to the grid.
+     *
+     * Bonds between two of them are straightened, and squared up when nearly
+     * horizontal or vertical; straight bonds with one end among them are redrawn
+     * between centres. Bonds with one end among them keep their bends.
      *
      * @returns Whether anything moved or was straightened.
      */
@@ -2134,22 +2144,27 @@ export class CellDLEditor {
             return false
         }
         const bounds: ArrangeBounds[] = objects.map(object => {
-            const b = object.celldlSvgElement!.svgBounds()
-            return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }
+            const svgElement = object.celldlSvgElement!
+            const b = svgElement.svgBounds()
+            const c = svgElement.centroid
+            return { left: b.left, top: b.top, right: b.right, bottom: b.bottom, centre: { x: c.x, y: c.y } }
         })
         const deltas = arrangeTargets(bounds, op)
+        const line = centreLine(bounds, op)
         const moving = objects.map((object, i) => ({ object, delta: deltas[i]! }))
                               .filter(({ delta }) => Math.abs(delta.dx) > 1e-6 || Math.abs(delta.dy) > 1e-6)
-        const straightening = bondsWithin(objects)
-                                .filter(connection => (<SvgConnection|null>connection.celldlSvgElement)?.hasControlPoints)
-        if (moving.length === 0 && straightening.length === 0) {
-            return false
-        }
-        const moveOptions = { noAlign: true }
+        const within = bondsWithin(objects)
+        const leaving = bondsLeaving(objects)
+                            .filter(connection => !(<SvgConnection|null>connection.celldlSvgElement)?.hasControlPoints)
         undoRedo.beginGroup()
+        const moveOptions = { noAlign: true }
         for (const { object, delta } of moving) {
             const centroid = object.celldlSvgElement!.centroid
-            const target = { x: centroid.x + delta.dx, y: centroid.y + delta.dy }
+            // Exactly on the line, not just within rounding of it
+            const target = {
+                x: (op === 'centre' && line !== null) ? line : centroid.x + delta.dx,
+                y: (op === 'middle' && line !== null) ? line : centroid.y + delta.dy
+            }
             const undoState = undoRedo.setMoveUndoState(object, centroid)
             undoState.moveOptions = moveOptions
             object.reposition(centroid, target, moveOptions)
@@ -2158,14 +2173,61 @@ export class CellDLEditor {
             undoState.endMove(target)
         }
         // Once every end is where it goes
-        if (straightening.length) {
-            const pathsUndoState = undoRedo.setPathsUndoState(straightening)
-            for (const connection of straightening) {
-                (<SvgConnection>connection.celldlSvgElement).straighten()
+        this.#straightenConnections([...within, ...leaving], connection => within.includes(connection) ? SQUARE_UP_TOLERANCE : 0)
+        const changed = undoRedo.endGroup()
+        if (changed) {
+            this.setDirty()
+            notifyChanges()
+        }
+        return changed
+    }
+
+    /** Straightens connections' paths as one undoable change, recording nothing when none changes */
+    #straightenConnections(connections: CellDLConnection[], square: (connection: CellDLConnection) => number) {
+        const straightening = connections.filter(connection => connection.celldlSvgElement)
+        if (straightening.length === 0 || this.#celldlDiagram === null) {
+            return
+        }
+        const pathsUndoState = undoRedo.setPathsUndoState(straightening)
+        for (const connection of straightening) {
+            if ((<SvgConnection>connection.celldlSvgElement).straighten(square(connection))) {
                 this.#celldlDiagram.objectMoved(connection)
             }
-            undoRedo.endPathsEdit(pathsUndoState)
         }
+        undoRedo.endPathsEdit(pathsUndoState)
+    }
+
+    /** The bent bonds that Straighten acts on: those selected, and those between selected components */
+    #bentSelectedConnections(): CellDLConnection[] {
+        const selected = this.selectionSet.objects
+        const connections = new Set(selected.filter(object => object.isConnection) as CellDLConnection[])
+        for (const connection of bondsWithin(selected.filter(object => !object.isConnection))) {
+            connections.add(connection)
+        }
+        return [...connections].filter(connection => (<SvgConnection|null>connection.celldlSvgElement)?.hasControlPoints)
+    }
+
+    /** Whether any selected bond, or any bond between selected components, has bends to remove */
+    canStraighten(): boolean {
+        return this.#celldlDiagram !== null && this.#bentSelectedConnections().length > 0
+    }
+
+    /**
+     * Removes the bends of the selected bonds and of the bonds between selected
+     * components, as one undoable step.
+     *
+     * @returns Whether any bond was straightened.
+     */
+    straightenSelection(): boolean {
+        if (this.#celldlDiagram === null || this.moving || this.#pathMaker !== null || this.#bondDrag.active) {
+            return false
+        }
+        const bent = this.#bentSelectedConnections()
+        if (bent.length === 0) {
+            return false
+        }
+        undoRedo.beginGroup()
+        this.#straightenConnections(bent, () => 0)
         const changed = undoRedo.endGroup()
         if (changed) {
             this.setDirty()

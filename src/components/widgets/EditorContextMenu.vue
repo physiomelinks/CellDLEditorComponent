@@ -82,6 +82,10 @@ const items = vue.computed(() => {
         disabled: !props.contextMenuProps?.state.has(CONTEXT_MENU.DELETE),
         label: 'Delete'
     },
+    // Only when a selected bond, or one between selected elements, has bends
+    ...(props.contextMenuProps?.state.has(CONTEXT_MENU.STRAIGHTEN)
+        ? [{ command: () => contextMenuEvent(CONTEXT_MENU.STRAIGHTEN), label: 'Straighten' }]
+        : []),
     { separator: true },
     {
         command: () => contextMenuEvent(CONTEXT_MENU.GROUP_OBJECTS),
