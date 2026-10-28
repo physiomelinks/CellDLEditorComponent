@@ -119,10 +119,9 @@ export function setLocationShading(on: boolean) {
     shading = on
     locationShadingState.on = on
     if (on) {
-        scheduleRegions(0)
+        scheduleRegions()
     } else {
-        if (scheduled) clearTimeout(scheduled)
-        scheduled = undefined
+        cancelScheduled()
         CellDLEditor.instance?.celldlDiagram?.svgDiagram?.getElementById(REGION_LAYER_ID)?.remove()
     }
 }
@@ -229,17 +228,42 @@ export function drawBondCounts(): number {
     return diagram ? drawDiagramBondCounts(diagram) : 0
 }
 
-let scheduled: ReturnType<typeof setTimeout>|undefined
+let scheduled: (() => void)|undefined     // cancels the scheduled redraw
+let lastDrawCost = 0            // ms the last redraw took
 
-/** Redraw the location shading shortly, after a diagram opens and whenever it changes; nothing when it is off. */
-export function scheduleRegions(delay: number = 150) {
-    if (!shading) return
-    if (scheduled) clearTimeout(scheduled)
-    scheduled = setTimeout(() => { scheduled = undefined; drawRegions() }, delay)
+// A redraw within a frame's budget is in the next frame; a slower one (a large diagram's free-form regions) waits
+// four times as long as it took, so redrawing takes at most a fifth of the time while a change is dragged
+const FRAME_BUDGET = 8
+
+function cancelScheduled() {
+    scheduled?.()
+    scheduled = undefined
+}
+
+/**
+ * Redraw the location shading after a diagram opens and after every change to it (an element placed, moved,
+ * deleted or relocated, a bond drawn, an undo or redo), in the next frame so it follows a drag; a burst of changes
+ * redraws once, with what the diagram is then. Nothing when it is off.
+ */
+export function scheduleRegions() {
+    if (!shading || scheduled !== undefined) return
+    const draw = () => {
+        scheduled = undefined
+        const start = performance.now()
+        drawRegions()
+        lastDrawCost = performance.now() - start
+    }
+    if (lastDrawCost <= FRAME_BUDGET && typeof requestAnimationFrame === 'function') {
+        const frame = requestAnimationFrame(draw)
+        scheduled = () => cancelAnimationFrame(frame)
+    } else {
+        const timer = setTimeout(draw, Math.max(16, 4 * lastDrawCost))
+        scheduled = () => clearTimeout(timer)
+    }
 }
 
 document.addEventListener('file-edited', () => scheduleRegions())
-document.addEventListener('diagram-opened', () => scheduleRegions(50))
+document.addEventListener('diagram-opened', () => scheduleRegions())
 
 //==============================================================================
 

@@ -956,7 +956,7 @@ export class BondgraphPlugin implements PluginInterface {
 
     /**
      * The diagram's regions (./regions.ts): each store's and source's location, each step's species' locations
-     * (several for a step between compartments), and the bonds between nodes.
+     * (several for a step between compartments, its own location while it has none), and the bonds between nodes.
      */
     regionLayout(): { regions: Map<string, string[]>, bonds: { a: string, b: string, id?: string, count: number }[] } {
         const { bonds, nodes, steps, species } = this.#diagramGraph()
@@ -965,7 +965,10 @@ export class BondgraphPlugin implements PluginInterface {
             if (n.location) regions.set(n.id, [n.location])
         }
         for (const [node, isResistance] of steps) {
-            regions.set(node, stepEquation(node, isResistance, bonds, nodes).regions)
+            // a step not yet bonded to located species is in its own location, if it has one
+            const joined = stepEquation(node, isResistance, bonds, nodes).regions
+            const own = nodes.get(node)?.location
+            regions.set(node, joined.length ? joined : own ? [own] : [])
         }
         return { regions, bonds: bonds.map(b => ({ a: b.source, b: b.target, id: b.id, count: b.count })) }
     }
