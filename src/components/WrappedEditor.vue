@@ -91,6 +91,7 @@ import {
 import type { EditorMessage } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
 import { compartmentsKey, setCompartmentLocations } from '#editor/editor/locations'
+import { setLocationShading } from '#editor/editor/regions'
 import { HOVER_TOOLTIP_DELAY } from '#editor/editor/tooltips'
 import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
 import { isMacOs } from '#root/utils/common'
@@ -98,7 +99,7 @@ import { type ArrowStyle, arrowStyleClass, arrowStyleOrDefault, displayArrowDefi
 import { DEFAULT_WHEEL_MODE, type WheelMode, wheelModeOrDefault } from '#editor/editor/panzoom'
 
 import {
-    type Annotations,
+    type ElementInfoById,
     type EditorToolAction,
     type EditorToolButton,
     PANEL_ID,
@@ -134,6 +135,8 @@ import type { PopoverEventData, ViewInfo, ViewState } from '#root/utils/editor-t
 
 import PropertiesPanel from './panels/PropertiesPanel.vue'
 import ReactionsPanel from './panels/ReactionsPanel.vue'
+import VariablesPanel from './panels/VariablesPanel.vue'
+import AnnotationsPanel from './panels/AnnotationsPanel.vue'
 import StylingPanel from './panels/StylingPanel.vue'
 
 import AddElementPopover from './palette/AddElementPopover.vue'
@@ -144,6 +147,7 @@ import ArrangeBar from './controls/ArrangeBar.vue'
 import CanvasControls from './controls/CanvasControls.vue'
 import EditorToolbar from './toolbar/EditorToolbar.vue'
 import { closeSelectionPanels } from './toolbar/selectionPanels'
+import { isShownPanel, type PanelName } from './toolbar/shownPanels'
 import EditorContextMenu from './widgets/EditorContextMenu.vue'
 import type { ContextMenuProps } from './widgets/EditorContextMenu.vue'
 
@@ -287,8 +291,8 @@ export type EditorChrome = {
     /**
      * The right-hand panels: `false` hides the panel bar, a list shows just
      * those panels. When absent, or `true`, Properties, Metadata, Style and
-     * Reactions are shown. `variables` and `annotations` are accepted for panels
-     * still to come, which are only shown when listed.
+     * Reactions are shown; Variables and Annotations are shown only when
+     * listed.
      */
     panels?: boolean | EditorPanelName[]
     /**
@@ -316,7 +320,7 @@ export type EditorChrome = {
     arrange?: boolean
     /**
      * How long, in milliseconds, the pointer stays on an element before its
-     * tooltip (its law, or the `options.tooltip` annotation) shows. No tooltips
+     * tooltip (its law, or its `elementInfo` `options.tooltip` field) shows. No tooltips
      * show while a bond is drawn. Default 600.
      */
     tooltipDelay?: number
@@ -328,16 +332,29 @@ export type EditorChrome = {
      * about what is inside them. Default `false`.
      */
     compartmentLocations?: boolean
+    /**
+     * Location shading: each location (an element's `bgf:hasLocation`) shaded
+     * behind the diagram, under compartment and region boxes, with its name.
+     * It is redrawn on every change and never saved. Off, nothing is drawn and
+     * the Reactions panel's location headings have no colour swatches.
+     * Default `true`.
+     */
+    locationShading?: boolean
 }
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
 
-export type EditorPanelName = 'properties' | 'metadata' | 'style' | 'reactions' | 'variables' | 'annotations'
+export type EditorPanelName = PanelName
 
 //==============================================================================
 
 export interface CellDLEditorProps {
-    annotations?: Annotations
+    /**
+     * The host's information about the diagram's elements, by component id:
+     * the `options.tooltip` field is an element's tooltip, and an element's
+     * information comes with its viewer events (`component.info`).
+     */
+    elementInfo?: ElementInfoById
     /**
      * How bonds' arrowheads are drawn, in every diagram whatever marker it was
      * saved with: `'bond'`, the editor's notched head, or `'classic'`, PhLynx's
@@ -460,6 +477,9 @@ const arrowClass = vue.computed(() => arrowStyleClass(arrowStyleOrDefault(props.
 // Whether compartments give locations, before a diagram is opened
 vue.watch(() => props.chrome?.compartmentLocations === true, on => setCompartmentLocations(on), { immediate: true })
 
+// Whether locations are shaded behind the diagram
+vue.watch(() => props.chrome?.locationShading !== false, on => setLocationShading(on), { immediate: true })
+
 // How the Properties panel shows values
 vue.provide(VALUES_CHROME_KEY, vue.computed<ValuesChrome>(() => ({
     mode: props.chrome?.values ?? 'editable',
@@ -492,7 +512,7 @@ vue.watch(
 
 //==============================================================================
 
-// Annotate diagram components and report pointer events, as `@celldl/viewer` does
+// The host's information about elements, and pointer events reported as `@celldl/viewer` does
 
 celldlEditor.setViewerEventHandler((event: ViewerEvent) => {
     emit('event', event)
@@ -503,12 +523,12 @@ celldlEditor.setMessageHandler((message: EditorMessage) => {
     emit('message', message)
 })
 
-celldlEditor.setAnnotations(props.annotations, props.options)
+celldlEditor.setElementInfo(props.elementInfo, props.options)
 
 vue.watch(
-    () => [props.annotations, props.options],
+    () => [props.elementInfo, props.options],
     () => {
-        celldlEditor.setAnnotations(props.annotations, props.options)
+        celldlEditor.setElementInfo(props.elementInfo, props.options)
     }
 )
 
@@ -911,26 +931,23 @@ const panelButtons = vue.ref<EditorToolButton[]>([
         prompt: 'Reactions',
         icon: 'lucide-FlaskConical',
         panel: vue.markRaw(ReactionsPanel)
+    },
+    {
+        toolId: PANEL_ID.VARIABLES_PANEL,
+        prompt: 'Variables',
+        icon: 'lucide-Tags',
+        panel: vue.markRaw(VariablesPanel)
+    },
+    {
+        toolId: PANEL_ID.ANNOTATIONS_PANEL,
+        prompt: 'Annotations',
+        icon: 'lucide-BookMarked',
+        panel: vue.markRaw(AnnotationsPanel)
     }
 ])
 
-// The panels shown when `chrome.panels` is absent or `true`
-const DEFAULT_EDITOR_PANELS: readonly EditorPanelName[] = ['properties', 'metadata', 'style', 'reactions']
-
-const PANEL_NAMES: Record<string, EditorPanelName> = {
-    [PANEL_ID.PROPERTIES_PANEL]: 'properties',
-    [PANEL_ID.METADATA_PANEL]: 'metadata',
-    [PANEL_ID.STYLE_PANEL]: 'style',
-    [PANEL_ID.REACTIONS_PANEL]: 'reactions'
-}
-
 const shownPanelButtons = vue.computed(() => {
-    const panels = props.chrome?.panels
-    if (panels === false) {
-        return []
-    }
-    const shown: readonly EditorPanelName[] = Array.isArray(panels) ? panels : DEFAULT_EDITOR_PANELS
-    return panelButtons.value.filter(button => shown.includes(PANEL_NAMES[button.toolId] as EditorPanelName))
+    return panelButtons.value.filter(button => isShownPanel(button.toolId, props.chrome?.panels))
 })
 
 // Close a panel whose button is hidden, as it could not be closed otherwise
@@ -1026,6 +1043,14 @@ vue.watch(
             const options = command.options
             if (options.action === 'clean') {
                 undoRedo.clean()
+            } else if (options.action === 'map-variables') {
+                // open the Variables panel
+                const button = document.getElementById(PANEL_ID.VARIABLES_PANEL)
+                if (button && !button.classList.contains('active')) button.click()
+            } else if (options.action === 'annotate') {
+                // open the Annotations panel
+                const button = document.getElementById(PANEL_ID.ANNOTATIONS_PANEL)
+                if (button && !button.classList.contains('active')) button.click()
             }
         } else if (props.editorCommand?.command === 'element') {
             await elementCommand(props.editorCommand as EditorElementCommand)

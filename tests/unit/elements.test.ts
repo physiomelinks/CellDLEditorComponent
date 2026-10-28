@@ -332,6 +332,15 @@ describe('select', () => {
         expect(viewerEvents).toEqual([{ type: 'unselect', component: { id: STORE_E } }])
     })
 
+    test('carries the host\'s elementInfo for the element', async () => {
+        await openFixture('enzyme.celldl')
+        editor.setElementInfo({ [STORE_S]: { tooltip: 'q_S', primary: 'q_S' } }, { tooltip: 'tooltip' })
+        expect(editor.selectObjectById(STORE_S)).toBe(true)
+        expect(viewerEvents).toEqual([{ type: 'select', component: { id: STORE_S, info: { tooltip: 'q_S', primary: 'q_S' } } }])
+        editor.selectObjectById(null)
+        editor.setElementInfo(undefined, undefined)
+    })
+
     test('reports an unknown id', async () => {
         await openFixture('enzyme.celldl')
         expect(editor.selectObjectById('ID-99999999')).toBe(false)

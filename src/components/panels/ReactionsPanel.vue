@@ -7,10 +7,21 @@
                 | Edit an equation and press Enter to change the bond graph:
                 | coefficients with a space (#[code 2 ADP[c]]), species joined by #[code  + ].
                 | A new species gets a new store.
+            .layout
+                select#layout-preset(v-model="layoutPreset" aria-label="Reorganise option" :disabled="reorganising"
+                                     :title="LAYOUT_PRESETS.find(p => p.id === layoutPreset)?.description")
+                    option(v-for="p in LAYOUT_PRESETS" :key="p.id" :value="p.id") {{ p.name }}
+                button.reorganise(type="button" :disabled="reorganising || steps.length === 0" @click="reorganiseLayout")
+                    | {{ reorganising ? `Reorganising… ${progress}%` : 'Reorganise by location' }}
+                button.undo(v-if="canUndo && !reorganising" type="button" @click="undoLayout") Undo reorganise
+                p.status(v-if="layoutStatus") {{ layoutStatus }}
             p.note(v-if="needValues.length") New: {{ needValues.join(", ") }}, with parameters of 1 and initial values of 0.
             p(v-if="steps.length === 0") This diagram has no reactions yet.
             section.region-group(v-for="group in groups" :key="group.key")
-                h4.region-heading {{ group.title }}
+                h4.region-heading
+                    template(v-if="locationShadingState.on")
+                        span.swatch(v-for="r in group.regions" :key="r" :style="{ background: regionColour(r) }")
+                    | {{ group.title }}
                 .step.reactions-step(v-for="step in group.steps" :key="step.id" :class="step.kind")
                     .heading
                         span.name {{ step.name }}
@@ -43,6 +54,10 @@
 import * as vue from 'vue'
 
 import { addReaction, applyEquation, takeAddedElements } from '#editor/editor/reactions'
+import {
+    canUndoReorganise, diagramLayout, locationShadingState, REGION_COLOURS, reorganiseDiagram, undoReorganise
+} from '#editor/editor/regions'
+import { LAYOUT_PRESETS } from '#root/plugins/bondgraph/layout'
 
 import { componentLibraryPlugin } from '#root/plugins'
 import { equationText, type StepKind } from '#root/plugins/bondgraph/equations'
@@ -63,12 +78,20 @@ const errors = vue.ref<Record<string, string>>({})
 const newName = vue.ref('')
 const newText = vue.ref('')
 const needValues = vue.ref<string[]>([])   // new elements, whose values start at the defaults
+const locations = vue.ref<string[]>([])    // the diagram's locations, sorted, as shaded behind it
 
 function refresh() {
     needValues.value.push(...takeAddedElements())
     steps.value = componentLibraryPlugin.reactionEquations().map(eq => ({
         id: eq.id, name: eq.name, kind: eq.kind, text: equationText(eq), regions: eq.regions
     }))
+    locations.value = locationShadingState.on ? [...new Set(diagramLayout().nodes.flatMap(n => n.labels))].sort() : []
+    canUndo.value = canUndoReorganise()
+}
+
+function regionColour(region: string): string {
+    const k = locations.value.indexOf(region)
+    return REGION_COLOURS[(k < 0 ? 0 : k) % REGION_COLOURS.length] ?? 'gray'
 }
 
 function listed(regions: string[]): string {
@@ -92,6 +115,43 @@ const groups = vue.computed(() => {
     const rank = (g: { regions: string[] }) => g.regions.length === 0 ? 99 : g.regions.length
     return [...byKey.values()].sort((a, b) => rank(a) - rank(b) || a.key.localeCompare(b.key))
 })
+
+const layoutPreset = vue.ref('balanced')
+const reorganising = vue.ref(false)
+const progress = vue.ref(0)
+const layoutStatus = vue.ref('')
+const canUndo = vue.ref(false)
+
+function describe(subspaces: number, regions: number, rectangular?: boolean): string {
+    if (rectangular && regions > 1) return `the ${regions} locations as rectangles`
+    return subspaces === regions ? `each of ${regions} location${regions === 1 ? '' : 's'} in one piece`
+                                 : `${regions} locations in ${subspaces} pieces`
+}
+
+async function reorganiseLayout() {
+    reorganising.value = true
+    progress.value = 0
+    layoutStatus.value = ''
+    try {
+        const result = await reorganiseDiagram((done, of) => { progress.value = Math.round(100 * done / of) }, {},
+                                               layoutPreset.value)
+        if (!result) return
+        const { before, after, rings } = result
+        const kept = rings ? ` ${rings} cycle${rings === 1 ? '' : 's'} drawn as a circle.` : ''
+        layoutStatus.value = after.total < before.total
+            ? `Complexity ${before.total.toFixed(0)} → ${after.total.toFixed(0)}: ${describe(after.subspaces, after.regions, after.rectangular)}, `
+              + `${after.crossings} crossing bond${after.crossings === 1 ? '' : 's'} (were ${before.crossings}).${kept}`
+            : `No simpler layout found (complexity ${before.total.toFixed(0)}).`
+    } finally {
+        reorganising.value = false
+        canUndo.value = canUndoReorganise()
+    }
+}
+
+function undoLayout() {
+    if (undoReorganise()) layoutStatus.value = 'Layout restored.'
+    canUndo.value = false
+}
 
 async function apply(step: StepRow) {
     errors.value = {}
@@ -131,6 +191,9 @@ function toolbarEvent(event: Event) {
     if (detail?.type === 'state' && detail.source === props.toolId && detail.value) refresh()
 }
 
+// the swatches' colours follow location shading
+vue.watch(() => locationShadingState.on, () => refresh())
+
 vue.onMounted(() => {
     refresh()
     document.addEventListener('file-edited', diagramEdited)
@@ -143,15 +206,60 @@ vue.onUnmounted(() => {
 </script>
 
 <style scoped>
+.layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+.layout select {
+    flex-basis: 100%;
+    padding: 4px 6px;
+    border: 1px solid var(--p-content-border-color);
+    border-radius: 4px;
+    background: var(--p-content-background);
+    color: var(--p-text-color);
+}
+.layout button {
+    padding: 4px 10px;
+    border: 1px solid var(--p-content-border-color);
+    border-radius: 4px;
+    background: var(--p-content-background);
+    color: var(--p-text-color);
+    cursor: pointer;
+}
+.layout button.reorganise {
+    font-weight: 600;
+}
+.layout button:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+.layout .status {
+    flex-basis: 100%;
+    font-size: 0.8rem;
+    color: var(--p-text-muted-color);
+    margin: 0;
+}
 .region-group {
     margin-bottom: 8px;
 }
 .region-heading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--p-text-muted-color);
     margin: 10px 0 6px 0;
+}
+.swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    opacity: 0.8;
 }
 .hint {
     font-size: 0.8rem;

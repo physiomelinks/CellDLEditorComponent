@@ -6,8 +6,10 @@
 // google-chrome), then on its first reaction with a substrate: doubles that substrate's coefficient and adds a
 // product with no store (a new store), checks the equation, puts it back, adds a chemostat's species (a copy beside
 // the reaction) and removes it again (the copy goes); then adds a new reaction of two new species, and checks every
-// reaction's hover text is its equation. Prints what it checked and writes the edited document to OUT. Exits 1 if
-// a check fails.
+// reaction's hover text is its equation. Then, in the Annotations panel, gives the first reaction a Rhea ID and
+// the first species a ChEBI ID, checks they are saved as bqbiol triples (and removed when cleared) and shown in the
+// hovers, and that an ID of the wrong form is not saved. Prints what it checked, writes the edited document to OUT
+// and a screenshot of the Annotations panel to OUT.annotations.png. Exits 1 if a check fails.
 
 import { spawn } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -102,7 +104,11 @@ const scenario = (src: string) => `(async () => {
     const checks = []
     const check = (what, ok, detail) => checks.push({ what, ok: !!ok, detail })
 
-    if (${process.env.SAVE_ONLY === '1'}) return { checks, document: await diagram.serialise() }
+    // the variables' names as the document stands, before any edit (to compare with bgtool --list-variables)
+    const namingModule = await import('${src}/plugins/bondgraph/naming.ts')
+    const asOpened = Object.fromEntries([...namingModule.previewNames(plugin.namingElements(), [], new Map())]
+        .map(([key, name]) => [key.split('#').pop(), name]))
+    if (${process.env.SAVE_ONLY === '1'}) return { checks, document: await diagram.serialise(), asOpened }
 
     // the panel itself: opened with its button, a row per step; typing an equation and Enter edits the bond graph
     document.getElementById('reactions-panel').click()
@@ -110,19 +116,21 @@ const scenario = (src: string) => `(async () => {
     const rows = () => [...document.querySelectorAll('.reactions-step .equation')]
     check('the panel shows every step', rows().length === steps().length && rows().length > 0,
           rows().length + ' rows, ' + steps().length + ' steps')
-    const row = rows()[0]
-    const shown = steps()[0]
-    if (row && shown && shown.substrates.length) {
+    const shown = steps().find(e => e.substrates.length)
+    const rowOf = eq => rows().find(r => r.getAttribute('aria-label') === 'Equation of ' + eq.name)
+    const row = shown && rowOf(shown)
+    if (row && shown) {
         const typed = row.value.replace(term(shown.substrates[0]), term({ ...shown.substrates[0], count: 3 * shown.substrates[0].count }))
         row.value = typed
         row.dispatchEvent(new Event('input'))
         row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
         await wait(500)
-        check('typing an equation edits the bond graph', text(shown.id) === equationText(steps()[0]) && text(shown.id) !== equationText(shown)
-              && steps()[0].substrates[0].count === 3 * shown.substrates[0].count, text(shown.id))
+        const edited = steps().find(e => e.id === shown.id)
+        check('typing an equation edits the bond graph', text(shown.id) !== equationText(shown)
+              && edited.substrates[0].count === 3 * shown.substrates[0].count, text(shown.id))
         await applyEquation(shown.id, equationText(shown))
         await wait(300)
-        check('the panel follows the diagram', rows()[0].value === equationText(shown), rows()[0].value)
+        check('the panel follows the diagram', rowOf(shown).value === equationText(shown), rowOf(shown).value)
     }
     const step = steps().find(e => e.kind === 'reaction' && e.substrates.length && e.products.length)
     const original = text(step.id)
@@ -161,6 +169,185 @@ const scenario = (src: string) => `(async () => {
     const hovers = steps().filter(e => componentLibraryPlugin.hoverText(diagram.objectById(e.id.split('#').pop()))
                                        !== equationText(e))
     check('hover text is each reaction\\'s equation', hovers.length === 0, hovers.map(e => e.name))
+
+    // regions: drawn behind the diagram, one per location; the panel's groups; reorganising keeps bonds attached
+    const regions = await import('${src}/CellDL/editor/regions.ts')
+    const drawn = regions.drawRegions()
+    const locations = [...new Set(regions.diagramLayout().nodes.flatMap(n => n.labels))].sort()
+    const shaded = [...document.querySelectorAll('#celldl-region-layer path, #celldl-region-layer rect')].map(p => p.dataset.region).sort()
+    check('a shaded region per location', JSON.stringify(shaded) === JSON.stringify(locations) && locations.length > 0,
+          shaded)
+    const keys = new Set(steps().map(e => e.regions.join('|')))
+    check('the panel groups steps by region', document.querySelectorAll('.region-heading').length === keys.size,
+          [...document.querySelectorAll('.region-heading')].map(h => h.textContent))
+    const attached = () => {
+        const loose = []
+        for (const b of regions.diagramLayout().bonds) {
+            const bond = b.id && diagram.objectById(b.id.split('#').pop())
+            const path = bond?.celldlSvgElement?.svgElement
+            const line = path instanceof SVGPathElement ? path : path?.querySelector('path')
+            if (!line) continue
+            const ends = [line.getPointAtLength(0), line.getPointAtLength(line.getTotalLength())]
+            const near = (id, p) => {
+                const s = diagram.objectById(id.split('#').pop()).celldlSvgElement
+                return Math.abs(p.x - s.centroid.x) <= s.width / 2 + 15 && Math.abs(p.y - s.centroid.y) <= s.height / 2 + 15
+            }
+            if (!(near(b.a, ends[0]) || near(b.a, ends[1])) || !(near(b.b, ends[0]) || near(b.b, ends[1]))) loose.push(b.id)
+        }
+        return loose
+    }
+    const where = () => regions.diagramLayout().nodes.map(n => [n.id, Math.round(n.x), Math.round(n.y)].join())
+    const placed = where()
+    const result = await regions.reorganiseDiagram(undefined, { forceSteps: 150, steps: 600 })
+    check('reorganising lowers the complexity, or leaves the layout', result.after.total <= result.before.total
+          && (result.after.total < result.before.total) === (JSON.stringify(where()) !== JSON.stringify(placed)),
+          Math.round(result.before.total) + ' -> ' + Math.round(result.after.total) + ', '
+          + result.before.subspaces + ' -> ' + result.after.subspaces + ' pieces of ' + result.after.regions + ' regions')
+    check('bonds stay attached to their nodes', attached().length === 0, attached().slice(0, 3))
+    const counted = regions.diagramLayout().bonds.filter(b => b.count > 1).length
+    check('bond counts are redrawn', regions.drawBondCounts() === counted, counted)
+    if (regions.canUndoReorganise()) {
+        regions.undoReorganise()
+        await wait(300)
+        const differ = where().filter((p, k) => p !== placed[k])
+        check('undo reorganise puts the nodes back', differ.length === 0,
+              differ.slice(0, 3).map(p => p + ' was ' + placed[where().indexOf(p)]))
+    }
+    // an element's hover: its typeset law, and its symbols' CellML names with what the bonds make them
+    const naming = await import('${src}/plugins/bondgraph/naming.ts')
+    const named = () => { const n = plugin.naming(); return naming.previewNames(plugin.namingElements(), n.rules, n.overrides) }
+    const hoverOf = id => componentLibraryPlugin.hoverHtml(diagram.objectById(id.split('#').pop()))
+    const reactionStep = steps().find(e => e.kind === 'reaction' && e.substrates.some(p => p.node))
+    const reactionHover = hoverOf(reactionStep.id)
+    const substrateNames = reactionStep.substrates.filter(p => p.node).map(p => named().get(p.node + '|u'))
+    const forward = (reactionHover.match(/data-text="u_f = [^"]*/) ?? [''])[0]
+    check('a reaction\\'s hover shows its law and the potentials bonded to its forward side',
+          reactionHover.includes('<svg') && substrateNames.every(n => forward.includes(n)), forward)
+    const storeNode = plugin.speciesNodes().find(n => !n.isSource)
+    const storeHover = storeNode ? hoverOf(storeNode.id) : ''
+    const feeding = steps().filter(e => [...e.substrates, ...e.products].some(p => p.node === storeNode?.id))
+                           .map(e => named().get(e.id + '|v'))
+    const flowLine = (storeHover.match(/data-text="v = [^"]*/) ?? [''])[0]
+    check('a store\\'s hover shows its law and the flows of its reactions', storeHover.includes('<svg') && feeding.length > 0
+          && feeding.every(n => flowLine.includes(n)), flowLine)
+    const hoverLines = new DOMParser().parseFromString(reactionHover, 'text/html').querySelectorAll('.bg-law-line')
+    check('a reaction\\'s equation and symbols are typeset in the hover, as its law is',
+          hoverLines.length > 1 && [...hoverLines].every(l => l.querySelector('svg')), hoverLines.length)
+
+    // the Variables panel: choose a convention and apply it; it is saved with the document
+    document.getElementById('variables-panel').click()
+    await wait(500)
+    const shownElements = document.querySelectorAll('details.element').length
+    check('the Variables panel lists every bond element', shownElements === plugin.namingElements().length
+          && shownElements > 0, shownElements)
+    const convention = document.getElementById('naming-convention')
+    convention.value = 'chemistry'
+    convention.dispatchEvent(new Event('change'))
+    await wait(200)
+    document.querySelector('.actions button.apply').click()
+    await wait(300)
+    const saved = plugin.naming()
+    const chemistry = naming.NAMING_PRESETS.find(p => p.id === 'chemistry')
+    check('the chosen convention is saved with the document', naming.matchingPreset(saved.rules)?.id === 'chemistry'
+          && saved.rules.length === chemistry.rules.length, saved.rules.length)
+    const preview = naming.previewNames(plugin.namingElements(), saved.rules, saved.overrides)
+    const names = Object.fromEntries([...preview].map(([key, name]) => [key.split('#').pop(), name]))
+
+    // the Annotations panel: a Rhea ID and a ChEBI ID typed, applied, saved as bqbiol triples and shown in the hovers;
+    // the panel is left open for the screenshot
+    document.getElementById('annotations-panel').click()
+    await wait(500)
+    const reactionRows = () => [...document.querySelectorAll('.reaction-annotation')]
+    const speciesRows = () => [...document.querySelectorAll('.species-annotation')]
+    const reactionSteps = steps().filter(e => e.kind !== 'flow')
+    const speciesKeys = new Set(plugin.speciesNodes().map(n => n.species + '[' + (n.location ?? '') + ']'))
+    check('the Annotations panel lists every reaction and species', reactionRows().length === reactionSteps.length
+          && speciesRows().length === speciesKeys.size && reactionRows().length > 0,
+          reactionRows().length + ' reactions, ' + speciesRows().length + ' species')
+    check('each reaction\\'s equation is typeset', reactionRows().every(r => r.querySelector('.equation svg')),
+          reactionRows().filter(r => !r.querySelector('.equation svg')).map(r => r.dataset.element))
+    const type = (row, selector, value) => {
+        const input = row.querySelector(selector)
+        input.value = value
+        input.dispatchEvent(new Event('change'))
+    }
+    const applyAnnotations = async () => {
+        await wait(100)
+        document.querySelector('button.apply-annotations').click()
+        await wait(300)
+    }
+    const annotatedStep = reactionSteps[0]
+    const annotatedRow = () => reactionRows().find(r => r.dataset.element === annotatedStep.id)
+    const speciesRow = () => speciesRows()[0]
+    const speciesKey = speciesRow().dataset.species
+    const speciesElements = plugin.speciesNodes().filter(n => n.species + '[' + (n.location ?? '') + ']' === speciesKey)
+    type(annotatedRow(), 'input.rhea', '17825')
+    type(speciesRow(), 'input.chebi', 'CHEBI:4167')
+    type(speciesRow(), 'input.go', '5829')
+    await wait(100)
+    check('an ID of the wrong form is shown as an error', !!speciesRow().querySelector('.error'),
+          speciesRow().querySelector('.error')?.textContent)
+    await applyAnnotations()
+    const RHEA = '<http://biomodels.net/biology-qualifiers/isVersionOf> <https://identifiers.org/rhea:17825>'
+    const CHEBI = '<http://biomodels.net/biology-qualifiers/is> <https://identifiers.org/CHEBI:4167>'
+    const savedAnnotations = plugin.annotations()
+    check('the Rhea ID is saved on the reaction', savedAnnotations.get(annotatedStep.id)?.rhea === '17825',
+          savedAnnotations.get(annotatedStep.id))
+    check('the ChEBI ID is saved on every element of the species, the bad GO ID is not',
+          speciesElements.length > 0 && speciesElements.every(n => savedAnnotations.get(n.id)?.chebi === '4167'
+                                                                   && !savedAnnotations.get(n.id)?.go),
+          speciesKey + ': ' + speciesElements.map(n => n.id.split('#').pop()).join(', '))
+    const tripleRows = () => diagram.rdfStore.query(
+        'SELECT ?s ?p ?o WHERE { ?s ?p ?o . FILTER (STRSTARTS(STR(?o), "https://identifiers.org/")) }')
+        .map(r => '<' + r.get('s').value + '> <' + r.get('p').value + '> <' + r.get('o').value + '>')
+    const savedTriples = tripleRows()
+    check('they are the spec\\'s triples in the document', savedTriples.includes('<' + annotatedStep.id + '> ' + RHEA)
+          && speciesElements.every(n => savedTriples.includes('<' + n.id + '> ' + CHEBI)), savedTriples)
+    const serialised = await diagram.serialise()
+    check('and in the saved document', serialised.includes('identifiers.org/rhea:17825')
+          && serialised.includes('identifiers.org/CHEBI:4167'))
+    const reactionHoverNow = hoverOf(annotatedStep.id)
+    check('the reaction\\'s hover shows its Rhea ID', reactionHoverNow.includes('Rhea 17825'),
+          (reactionHoverNow.match(/bg-law-annotation">[^<]*/) ?? [''])[0])
+    const speciesHover = hoverOf(speciesElements[0].id)
+    check('the species\\' hover shows its ChEBI ID', speciesHover.includes('CHEBI:4167'),
+          (speciesHover.match(/bg-law-annotation">[^<]*/) ?? [''])[0])
+    type(annotatedRow(), 'input.rhea', '')
+    await applyAnnotations()
+    check('clearing an ID removes its triple', !tripleRows().some(t => t.includes('rhea:17825'))
+          && !hoverOf(annotatedStep.id).includes('Rhea 17825'))
+    type(annotatedRow(), 'input.rhea', '17825')
+    type(speciesRow(), 'input.go', '0005829')
+    await applyAnnotations()
+    // a lumped step: its Rhea parts (fetched live) in the direction and number the step uses them, what cancels struck
+    // through, under Rhea's net equation and the verdict; a step lumped in the document must agree with Rhea, as
+    // the module library's bondgraph_reactions_test finds it (H+ and H2O aside), else HK + PGI is typed on one
+    const lumpedAlready = reactionRows().find(r => r.querySelector('input.lumped')?.checked)
+    const lumpedRow = lumpedAlready ?? reactionRows()[1]
+    if (lumpedRow) {
+        if (!lumpedAlready) {
+            const lumpedBox = lumpedRow.querySelector('input.lumped')
+            lumpedBox.checked = true
+            lumpedBox.dispatchEvent(new Event('change'))
+            await wait(100)
+            type(lumpedRow, 'input.parts', '17825, 11816')
+        }
+        const shownParts = () => lumpedRow.querySelectorAll('.combination .part')
+        const verdict = () => lumpedRow.querySelector('.combination .verdict')
+        for (let i = 0; i < 300 && !verdict(); i += 1) await wait(100)
+        const struck = [...shownParts()].filter(p => p.querySelector('[data-mml-node="menclose"]')).length
+        const parts = lumpedRow.querySelector('input.parts').value.split(/[\\s,;+]+/).filter(Boolean).length
+        const laidOut = shownParts().length === parts + 1 && !!verdict()
+            && lumpedRow.querySelector('.equation').nextElementSibling?.classList.contains('combination')
+            && shownParts()[0].classList.contains('net')
+        check(lumpedAlready ? 'a lumped step agrees with Rhea, its parts as it uses them with what cancels struck through'
+                            : 'a lumped step\\'s parts are typeset under Rhea\\'s net equation and the verdict',
+              laidOut && (lumpedAlready ? struck > 0 && /\\b(match|warn)\\b/.test(verdict().className)
+                                        : struck === 0 || !/not needed/.test(lumpedRow.querySelector('.combination').textContent)),
+              shownParts().length + ' rows, ' + struck + ' struck; ' + (verdict()?.className ?? '') + ': '
+              + (lumpedRow.querySelector('.combination')?.textContent ?? 'no combination').slice(0, 300))
+        lumpedRow.scrollIntoView()      // typed, not applied: shown in the screenshot, not saved
+    }
     // the panel is widened by dragging its left edge, and every panel takes the width
     const openPanel = [...document.querySelectorAll('.panel')].find(p => !p.classList.contains('hidden'))
     const resizer = openPanel?.querySelector('.panel-resizer')
@@ -176,7 +363,8 @@ const scenario = (src: string) => `(async () => {
         check('dragging a panel\\'s left edge widens it, and every panel', Math.abs(after - before - 200) < 2
               && others.every(w => w === others[0]), before + ' -> ' + after + 'px')
     }
-    return { checks, document: await diagram.serialise() }
+    const annotationTriples = tripleRows()
+    return { checks, document: await diagram.serialise(), names, asOpened, annotationTriples }
 })()`
 
 let failed = false
@@ -191,7 +379,7 @@ try {
         console.error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text)
         failed = true
     } else {
-        const { checks, document: edited } = result.result.value
+        const { checks, document: edited, names, asOpened, annotationTriples } = result.result.value
         for (const c of checks) {
             console.log(`${c.ok ? 'ok  ' : 'FAIL'} ${c.what}${c.detail !== undefined ? `: ${JSON.stringify(c.detail)}` : ''}`)
             failed ||= !c.ok
@@ -204,9 +392,22 @@ try {
         console.log(`${both.length === 0 ? 'ok  ' : 'FAIL'} the saved document lists no component as both a bond`
                     + ` element and a junction${both.length ? `: ${both.join(', ')}` : ''}`)
         failed ||= both.length > 0
+        if (annotationTriples) {
+            console.log('annotation triples:')
+            for (const t of annotationTriples) console.log(`    ${t} .`)
+        }
         if (out) {
             writeFileSync(out, edited)
             console.log(`edited document: ${out}`)
+            const shot = await send(socket, 'Page.captureScreenshot', { format: 'png' })
+            writeFileSync(`${out}.annotations.png`, Buffer.from(shot.data, 'base64'))
+            console.log(`the Annotations panel: ${out}.annotations.png`)
+            if (names) {
+                // the Variables panel's names, element|variable -> name, to compare with bgtool --list-variables
+                writeFileSync(`${out}.names.json`, JSON.stringify(names, null, 1))
+                writeFileSync(`${out}.opened-names.json`, JSON.stringify(asOpened, null, 1))
+                console.log(`its variable names: ${out}.names.json`)
+            }
         }
     }
     socket.close()

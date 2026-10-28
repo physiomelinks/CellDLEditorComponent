@@ -31,6 +31,8 @@ export enum PANEL_ID {
     METADATA_PANEL = 'metadata-property-panel',
     PROPERTIES_PANEL = 'properties-property-panel',
     REACTIONS_PANEL = 'reactions-panel',
+    VARIABLES_PANEL = 'variables-panel',
+    ANNOTATIONS_PANEL = 'annotations-panel',
     STYLE_PANEL = 'style-property-panel'
 }
 
@@ -181,16 +183,17 @@ export type ViewInfo = {
 
 //==============================================================================
 
-// Component annotations and events, the same as `@celldl/viewer`'s
+// What a host tells the editor about its elements (its `elementInfo`), and the viewer events that carry it
 
-export type AnnotationValue = string | number | boolean | object
-export type Annotation = Record<string, AnnotationValue>
+export type ElementInfoValue = string | number | boolean | object
+/** A host's information about one element, such as its variables and its tooltip */
+export type ElementInfo = Record<string, ElementInfoValue>
 
-// Annotations keyed by the id of a diagram's component
-export type Annotations = Record<string, Annotation>
+/** A host's information about elements, keyed by the id of a diagram's component */
+export type ElementInfoById = Record<string, ElementInfo>
 
 export type SvgViewerOptions = {
-    tooltip?: string // The annotation field to show as a component's tooltip
+    tooltip?: string // The `elementInfo` field to show as a component's tooltip
     /** Emit `elements` with each `diagram-changed`, for a host that lists the diagram's elements */
     elementList?: boolean
 }
@@ -199,7 +202,8 @@ export type ViewerEvent = {
     type: 'select' | 'unselect' | 'active' | 'unactive'
     component?: {
         id: string
-        annotation?: Annotation
+        /** The host's `elementInfo` for the component, if it has any */
+        info?: ElementInfo
     }
 }
 

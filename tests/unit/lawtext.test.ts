@@ -32,6 +32,12 @@ describe('constitutive laws as LaTeX', () => {
             .toBe('v = \\kappa\\,\\left(e^{\\frac{u_{f}}{RT}} - e^{\\frac{u_{r}}{RT}}\\right)')
     })
 
+    test('the saturating reaction and store', () => {
+        const reaction = mathmlLatex(relation('chemical.ttl', 'bgf:SaturatingChemicalReaction'))
+        expect(reaction.startsWith('v = \\frac{')).toBe(true)
+        expect(reaction).toContain('\\sigma')
+        expect(mathmlLatex(relation('chemical.ttl', 'bgf:SaturatingChemicalConcentration'))).toContain('k_{\\mathrm{sat}}')
+    })
 
     test('the ideal store', () => {
         expect(mathmlEquations(relation('chemical.ttl', 'bgf:ChemicalConcentration')))

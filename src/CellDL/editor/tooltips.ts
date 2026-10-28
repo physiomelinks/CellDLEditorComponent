@@ -22,7 +22,7 @@ limitations under the License.
  * The editor's one tooltip: what it shows, and when.
  *
  * Errors show at once. Hover tooltips (a plugin's hover, e.g. an element's
- * law, and the host's annotation tooltip) show once the pointer has stayed on
+ * law, and the host's element-info tooltip) show once the pointer has stayed on
  * an object for `delay`, and none show while a bond is being drawn.
  */
 
@@ -38,20 +38,20 @@ export const FLASH_DURATION = 2500
 
 /**
  * What a tooltip shows, highest priority first: an error, a hint while drawing,
- * a plugin's hover (e.g. an element's law), and the host's annotation tooltip.
+ * a plugin's hover (e.g. an element's law), and the host's element-info tooltip.
  * A tooltip only replaces one of the same or lower priority, and hiding one
  * kind leaves the others shown.
  */
-export type TooltipKind = 'error' | 'hint' | 'hover' | 'annotation'
+export type TooltipKind = 'error' | 'hint' | 'hover' | 'info'
 
 const TOOLTIP_PRIORITY: Record<TooltipKind, number> = {
     error: 3,
     hint: 2,
     hover: 1,
-    annotation: 0
+    info: 0
 }
 
-const HOVER_KINDS: TooltipKind[] = ['hover', 'annotation']
+const HOVER_KINDS: TooltipKind[] = ['hover', 'info']
 
 export interface TooltipContent {
     text: string

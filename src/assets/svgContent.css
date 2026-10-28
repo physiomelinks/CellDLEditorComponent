@@ -205,8 +205,8 @@
     color: var(--editor-tooltip-error);
 }
 
-/* a host's annotation tooltip, above a plugin's hover */
-.tooltip-annotation {
+/* a host's element-info tooltip, above a plugin's hover */
+.tooltip-element-info {
     margin-bottom: 6px;
 }
 
@@ -216,6 +216,11 @@
     flex-direction: column;
     gap: 6px;
     padding: 2px 0;
+}
+.bg-law-annotation {
+    font-family: ui-monospace, monospace;
+    font-size: 0.8rem;
+    opacity: 0.85;
 }
 .bg-law-label {
     font-size: 0.75rem;
