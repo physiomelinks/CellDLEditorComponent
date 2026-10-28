@@ -262,8 +262,11 @@ export function scheduleRegions() {
     }
 }
 
-document.addEventListener('file-edited', () => scheduleRegions())
-document.addEventListener('diagram-opened', () => scheduleRegions())
+// Not where there is no document, as the library's entry imports this module, and hosts import that in Node too
+if (typeof document !== 'undefined') {
+    document.addEventListener('file-edited', () => scheduleRegions())
+    document.addEventListener('diagram-opened', () => scheduleRegions())
+}
 
 //==============================================================================
 
