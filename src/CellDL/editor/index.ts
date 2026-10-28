@@ -58,6 +58,7 @@ import { drawBondCounts } from './bondcounts'
 import { BondDrag } from './bonddrag'
 import { CompartmentHandles, compartmentMoveGroup, defaultBounds, placeSpatial } from './compartments'
 import { EditorFrame } from './editorframe'
+import { groupingState } from './grouping'
 import { CompartmentTracker } from './locations'
 import { DEFAULT_VIEW_STATE, editGuides, EDITOR_GRID_CLASS } from './editguides'
 import PanZoom, { DEFAULT_WHEEL_MODE, type WheelMode, wheelModeOrDefault, ZOOM_STEP } from './panzoom'
@@ -191,6 +192,11 @@ export enum CONTEXT_MENU {
     STRAIGHTEN = 'menu-straighten',
     UNGROUP_OBJECTS = 'menu-ungroup'
 }
+
+/** The context menu's grouping items, never enabled when grouping is off (`chrome.grouping`) */
+const GROUPING_MENU_ITEMS: ReadonlySet<CONTEXT_MENU> = new Set([
+    CONTEXT_MENU.GROUP_OBJECTS, CONTEXT_MENU.EDIT_GROUP, CONTEXT_MENU.UNGROUP_OBJECTS
+])
 
 //==============================================================================
 
@@ -518,7 +524,7 @@ export class CellDLEditor {
             } else if (targetId === CONTEXT_MENU.INFO) {
 // WIP               this.#showSelectedObjectInfo()
             } else if (targetId === CONTEXT_MENU.GROUP_OBJECTS) {
-                if (this.#boxMaker) {
+                if (this.#boxMaker && groupingState.enabled) {
                     this.#boxMaker.groupComponents()
                     this.#closeBoxMaker()
                 }
@@ -835,7 +841,7 @@ export class CellDLEditor {
     }
 
     enableContextMenuItem(itemId: CONTEXT_MENU, enable: boolean = true) {
-        if (enable) {
+        if (enable && !(GROUPING_MENU_ITEMS.has(itemId) && !groupingState.enabled)) {
             this.#contextMenuActiveItems.add(itemId)
         } else {
             this.#contextMenuActiveItems.delete(itemId)

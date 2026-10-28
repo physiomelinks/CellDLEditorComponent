@@ -90,6 +90,7 @@ import {
 } from '#editor/editor'
 import type { EditorMessage } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
+import { setGrouping } from '#editor/editor/grouping'
 import { compartmentsKey, setCompartmentLocations } from '#editor/editor/locations'
 import { setLocationShading } from '#editor/editor/regions'
 import {
@@ -369,6 +370,12 @@ export type EditorChrome = {
      * is then undone with the editor's Undo.
      */
     reorganise?: ReorganiseChrome
+    /**
+     * Group, Edit group and Ungroup in the context menu. Off, they aren't
+     * shown and can't be done; groups already in a diagram still show, move,
+     * select and delete. Default `true`.
+     */
+    grouping?: boolean
 }
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
@@ -508,6 +515,9 @@ vue.watch(() => props.chrome?.compartmentLocations === true, on => setCompartmen
 
 // Whether locations are shaded behind the diagram
 vue.watch(() => props.chrome?.locationShading !== false, on => setLocationShading(on), { immediate: true })
+
+// Whether the context menu offers grouping
+vue.watch(() => props.chrome?.grouping !== false, on => setGrouping(on), { immediate: true })
 
 // Whether the Reactions panel shows the Reorganise controls
 vue.watch(() => props.chrome?.reorganise, chrome => setReorganiseChrome(chrome), { immediate: true })
