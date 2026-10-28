@@ -182,7 +182,10 @@ describe('a compartment', () => {
         const diagram = await openFixture('enzyme.celldl')
         const compartment = placeSpatial(diagram, 'compartment', boundsRound(centreOf(diagram, STORE_E), 80))
         const layer = compartment.svgElement!.parentNode!
-        const order = [...layer.children].map(element => element.id)
+        // (the location shading, drawn over the boxes when it is next redrawn, isn't part of the diagram)
+        const ids = () => [...layer.children].filter(element => !element.classList.contains('editor-specific'))
+                                             .map(element => element.id)
+        const order = ids()
         editor.selectionSet.clear()
         editor.setSelectedObject(compartment)
         editor.selectionSet.deleteObjects()
@@ -190,7 +193,7 @@ describe('a compartment', () => {
         expect(diagram.objectById(STORE_E)).not.toBeNull()
         editor.undo()
         await settle()
-        expect([...layer.children].map(element => element.id)).toEqual(order)
+        expect(ids()).toEqual(order)
         expect(diagram.objectById(compartment.id)?.isCompartment).toBe(true)
     })
 

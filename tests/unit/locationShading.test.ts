@@ -1,6 +1,7 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: the fixture's objects are there */
 
-// Location shading (src/CellDL/editor/regions.ts): on by default, drawn under compartment and region boxes, and off
+// Location shading (src/CellDL/editor/regions.ts): on by default, drawn over compartment and region boxes and under
+// the diagram's other elements, and off
 // with `chrome.locationShading: false`, when nothing is drawn. Reorganise keeps boxes round their contents, as one
 // undo step with the layout (src/CellDL/editor/boxfit.ts).
 
@@ -9,11 +10,12 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { editor, openFixture, settle } from './support/editor'
 import { measureSvgRects } from './support/svgRects'
 
+import type { CellDLCompartment } from '#editor/celldlObjects'
 import type { CellDLDiagram } from '#editor/diagram'
 import { undoRedo } from '#editor/diagram/undoredo'
 import { Bounds } from '#editor/geometry'
 import { boxContents, boxMargins, fitBoxes, fittedBox, MIN_BOX_MARGIN, nestedBoxes } from '#editor/editor/boxfit'
-import { boxOf, placeSpatial } from '#editor/editor/compartments'
+import { boxOf, placeSpatial, resizeCompartment } from '#editor/editor/compartments'
 import { drawRegions, locationShadingEnabled, REGION_LAYER_ID, setLocationShading } from '#editor/editor/regions'
 
 measureSvgRects()
@@ -34,10 +36,21 @@ function moveBy(diagram: CellDLDiagram, id: string, dx: number, dy: number) {
     undoState.endMove(to)
 }
 
+/** The diagram layer's children: 'box' for a compartment or region box, 'shading', or the element's id */
+function layerOrder(diagram: CellDLDiagram): string[] {
+    const layer = diagram.svgDiagram.querySelector('svg > g.celldl-Layer')!
+    return [...layer.children].map(child => child.classList.contains('celldl-Compartment') ? 'box'
+                                           : child.id === REGION_LAYER_ID ? 'shading' : child.id)
+}
+
+function elementsAfter(diagram: CellDLDiagram): string[] {
+    return layerOrder(diagram).filter(id => id !== 'box' && id !== 'shading')
+}
+
 afterEach(() => setLocationShading(true))
 
 describe('location shading', () => {
-    test('is on by default, and draws the locations behind the diagram, under its boxes', async () => {
+    test('is on by default, and draws the locations over the diagram\'s boxes, under its other elements', async () => {
         const diagram = await openFixture('enzyme.celldl')
         expect(locationShadingEnabled()).toBe(true)
         const compartment = placeSpatial(diagram, 'compartment', new Bounds(0, 0, 400, 300))
@@ -45,8 +58,42 @@ describe('location shading', () => {
         expect(summary.regions.length).toBeGreaterThan(0)
         const layer = diagram.svgDiagram.getElementById(REGION_LAYER_ID)!
         expect(layer.querySelectorAll('[data-region]').length).toBeGreaterThan(0)
-        // the layer comes before the box in the document, so is drawn under it
-        expect(layer.compareDocumentPosition(compartment.svgElement!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        // boxes, then the shading, then everything else, in the diagram's layer
+        expect(layerOrder(diagram)).toEqual(['box', 'shading', ...elementsAfter(diagram)])
+        expect(compartment.svgElement!.nextElementSibling).toBe(layer)
+        // it takes no clicks and isn't saved
+        expect(layer.getAttribute('pointer-events')).toBe('none')
+        expect(layer.classList.contains('editor-specific')).toBe(true)
+    })
+
+    test('is first in a diagram without boxes', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        drawRegions()
+        const layer = diagram.svgDiagram.getElementById(REGION_LAYER_ID)!
+        expect(layer.parentElement!.firstElementChild).toBe(layer)
+        expect(layer.parentElement!.classList.contains('celldl-Layer')).toBe(true)
+    })
+
+    test('stays over boxes placed, nested, resized, deleted and undone after it was drawn', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        drawRegions()
+        const outer = placeSpatial(diagram, 'compartment', new Bounds(-200, -200, 600, 500))
+        placeSpatial(diagram, 'region', new Bounds(0, 0, 200, 150))
+        expect(layerOrder(diagram).slice(0, 3)).toEqual(['box', 'box', 'shading'])
+        // the inner one grown larger than the outer goes behind it, still under the shading
+        const inner = [...diagram.svgDiagram.querySelectorAll('.celldl-Compartment')][1]!
+        resizeCompartment(diagram.objectById(inner.id) as CellDLCompartment, { x: -300, y: -300, width: 1000, height: 900 })
+        expect(layerOrder(diagram).slice(0, 3)).toEqual(['box', 'box', 'shading'])
+        expect(diagram.svgDiagram.querySelector('.celldl-Compartment')!.id).toBe(inner.id)
+        editor.selectionSet.clear()
+        editor.setSelectedObject(outer)
+        editor.selectionSet.deleteObjects()
+        await settle()
+        expect(layerOrder(diagram).slice(0, 2)).toEqual(['box', 'shading'])
+        editor.undo()
+        await settle()
+        drawRegions()
+        expect(layerOrder(diagram).slice(0, 3)).toEqual(['box', 'box', 'shading'])
     })
 
     test('turned off removes the shading and draws nothing', async () => {

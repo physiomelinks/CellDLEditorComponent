@@ -509,6 +509,20 @@ export class CellDLDiagram {
     }
 
     #trimSVGDiagram(svgDiagram: SVGSVGElement): Extent | null {
+        // Editor-only elements in a layer (location shading) aren't saved, so take them out while measuring
+        const editorOnly = Array.from(svgDiagram.querySelectorAll(`svg > g.${CELLDL_STYLE_CLASS.Layer} > .editor-specific`))
+                                .map(element => ({ element, parent: element.parentNode as ParentNode, next: element.nextSibling }))
+        for (const { element } of editorOnly) {
+            element.remove()
+        }
+        const extent = this.#diagramExtent(svgDiagram)
+        for (const { element, parent, next } of editorOnly.reverse()) {
+            parent.insertBefore(element, next)
+        }
+        return extent
+    }
+
+    #diagramExtent(svgDiagram: SVGSVGElement): Extent | null {
         const bounds = (<SVGGraphicsElement[]>(
             Array.from(svgDiagram.children).filter(
                 (child) => 'getBBox' in child && !child.classList.contains('editor-specific')
@@ -748,6 +762,28 @@ export class CellDLDiagram {
         svgElement.remove()
         const before = this.#compartmentPlace(box.width * box.height)
         layer.insertBefore(svgElement, before)
+    }
+
+    /**
+     * Puts an editor-only element (never saved) in the diagram's layer, in front of its compartment and region boxes
+     * and behind everything else, as location shading is drawn. Boxes made or resized afterwards go behind it.
+     */
+    addOverBoxes(element: SVGElement) {
+        const layer = this.#currentLayer
+        if (!layer) {
+            return
+        }
+        element.classList.add('editor-specific')
+        let before: Element|null = null
+        for (const child of layer.children) {
+            if (child !== element && !child.classList.contains(CELLDL_STYLE_CLASS.Compartment)) {
+                before = child
+                break
+            }
+        }
+        if (element.parentNode !== layer || element.nextElementSibling !== before) {
+            layer.insertBefore(element, before)
+        }
     }
 
     groupComponents(bounds: Bounds, objects: CellDLObject[]): CellDLComponent {
