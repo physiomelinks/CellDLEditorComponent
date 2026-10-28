@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
-    type BondInfo, equationLatex, equationText, FARADAY, labelLatex, findSpeciesNode, type NodeInfo, parseEquation, planEquationEdit, stepEquation
+    type BondInfo, equationLatex, equationText, FARADAY, labelLatex, findSpeciesNode, type NodeInfo, parseEquation, planEquationEdit,
+    speciesNameError, startsWithDigit, stepEquation
 } from '../../src/plugins/bondgraph/equations'
 
 const nodes = (entries: [string, NodeInfo][]) => new Map<string, NodeInfo>(entries)
@@ -92,11 +93,11 @@ describe('reaction equations from bonds', () => {
 })
 
 describe('editing an equation', () => {
-    test('coefficients need a space, so names may start with a digit or end in +', () => {
-        const eq = parseEquation('2 3PG[c] + NAD+[c] <=> 13BPG[c] + H+[c]')
-        expect(eq.substrates).toEqual([{ species: '3PG', location: 'c', count: 2 },
+    test('a number before a species is its coefficient, and names may end in +', () => {
+        const eq = parseEquation('3PG[c] + NAD+[c] <=> 13BPG[c] + H+[c]')
+        expect(eq.substrates).toEqual([{ species: 'PG', location: 'c', count: 3 },
                                        { species: 'NAD+', location: 'c', count: 1 }])
-        expect(eq.products).toEqual([{ species: '13BPG', location: 'c', count: 1 },
+        expect(eq.products).toEqual([{ species: 'BPG', location: 'c', count: 13 },
                                      { species: 'H+', location: 'c', count: 1 }])
     })
 
@@ -123,25 +124,43 @@ describe('editing an equation', () => {
     })
 
     test('coefficients with or without spaces', () => {
-        const known = ['A', 'B', 'C', 'A2', 'G6P', '3PG']
-        expect(parseEquation('2A[c]+B[c]=>C[c]', known).substrates)
+        expect(parseEquation('2A[c]+B[c]<=>C[c]').substrates)
             .toEqual([{ species: 'A', location: 'c', count: 2 }, { species: 'B', location: 'c', count: 1 }])
-        expect(parseEquation('2 A[c] +B[c] -> C', known).substrates)
+        expect(parseEquation('2A[c]+B[c]=>C[c]').substrates)
             .toEqual([{ species: 'A', location: 'c', count: 2 }, { species: 'B', location: 'c', count: 1 }])
-        expect(parseEquation('A[c] +  2B[c] -> C', known).substrates)
+        expect(parseEquation('2 A[c] +B[c] -> C').substrates)
+            .toEqual([{ species: 'A', location: 'c', count: 2 }, { species: 'B', location: 'c', count: 1 }])
+        expect(parseEquation('A[c] +  2B[c] -> C').substrates)
             .toEqual([{ species: 'A', location: 'c', count: 1 }, { species: 'B', location: 'c', count: 2 }])
-        expect(parseEquation('2   A -> C', known).substrates).toEqual([{ species: 'A', location: undefined, count: 2 }])
-        // names with digits stay names: A2, G6P, and a known 3PG, while 2A2 is two A2
-        expect(parseEquation('A2[c]+G6P[c]->3PG[c]', known)).toEqual({
+        expect(parseEquation('2   A -> C').substrates).toEqual([{ species: 'A', location: undefined, count: 2 }])
+        // digits after the first character are part of the name: A2, G6P, while 2A2 is two A2
+        expect(parseEquation('A2[c]+G6P[c]->3PG[c]')).toEqual({
             substrates: [{ species: 'A2', location: 'c', count: 1 }, { species: 'G6P', location: 'c', count: 1 }],
-            products: [{ species: '3PG', location: 'c', count: 1 }]
+            products: [{ species: 'PG', location: 'c', count: 3 }]
         })
-        expect(parseEquation('2A2 -> C', known).substrates).toEqual([{ species: 'A2', location: undefined, count: 2 }])
-        // a glued number stays part of the name when the rest is not a known species, or the whole name is
-        expect(parseEquation('3PG -> C', known).substrates).toEqual([{ species: '3PG', location: undefined, count: 1 }])
-        expect(parseEquation('2A -> C').substrates).toEqual([{ species: '2A', location: undefined, count: 1 }])
-        expect(parseEquation('13BPG -> C', known).substrates)
-            .toEqual([{ species: '13BPG', location: undefined, count: 1 }])
+        expect(parseEquation('2A2 -> C').substrates).toEqual([{ species: 'A2', location: undefined, count: 2 }])
+        // a leading number is always a coefficient, whatever species the diagram has
+        expect(parseEquation('3PG -> C').substrates).toEqual([{ species: 'PG', location: undefined, count: 3 }])
+        expect(parseEquation('13BPG -> C').substrates).toEqual([{ species: 'BPG', location: undefined, count: 13 }])
+        expect(parseEquation('2 G6P[c] -> 2G6P[m]')).toEqual({
+            substrates: [{ species: 'G6P', location: 'c', count: 2 }],
+            products: [{ species: 'G6P', location: 'm', count: 2 }]
+        })
+    })
+
+    test('species names that start with a number are refused', () => {
+        expect(speciesNameError('3X')).toMatch(/^A species name can't start with a number/)
+        expect(speciesNameError(' 13BPG')).toMatch(/can't start with a number/)
+        expect(speciesNameError('.5A')).toMatch(/can't start with a number/)
+        for (const name of ['G6P', 'A2', 'H+', 'NAD+', '_x', '']) expect(speciesNameError(name)).toBe('')
+        expect(['3PG', 'G6P', '13BPG', 'A2'].filter(startsWithDigit)).toEqual(['3PG', '13BPG'])
+    })
+
+    test('a species name can\'t start with a number', () => {
+        expect(() => parseEquation('2 3PG -> C')).toThrow(/can't start with a number/)
+        expect(() => parseEquation('2.5A -> C')).toThrow(/can't start with a number/)
+        expect(() => parseEquation('A -> 2')).toThrow(/can't start with a number/)
+        expect(() => parseEquation('0A -> B')).toThrow(/at least 1/)
     })
 
     test('names ending in + without spaces', () => {

@@ -209,15 +209,25 @@ export function stepEquation(id: string, isResistance: boolean, bonds: BondInfo[
 //==============================================================================
 
 // Editing a step's equation. Spaces are optional around the arrow, around `+` and after a coefficient, and any
-// run of spaces or tabs is one space. Species names may start with a digit (3PG, 13BPG) and end in + (H+, NAD+), so:
+// run of spaces or tabs is one space. A species name can't start with a number, so a number before a name, glued
+// (`2ADP`, `13BPG`) or spaced (`2 ADP`), is always its coefficient. Names may end in + (H+, NAD+), so:
 // - a `+` joins two species when it has a space or `]` before it, or a species straight after it (`A+B`, `H++NAD+`);
-//   one with a space, `[` or another `+` after it, or the end of the side, ends a name (`H+ `, `NAD+[c]`);
-// - a coefficient is a whole number before the species, with a space (`2 ADP`), or glued to it (`2ADP`) only when
-//   the diagram has a species of the rest of the name (ADP) and none of the whole name (so 3PG stays 3PG).
+//   one with a space, `[` or another `+` after it, or the end of the side, ends a name (`H+ `, `NAD+[c]`).
 
 const ARROW_PATTERN = /<=>|<->|=>|->|⇌|⇄|↔|→|=/g
-const TERM_PATTERN = /^(?:(\d+) )?([^\s[\]]+?)(?:\[([^\]\s]+)\])?$/
-const GLUED_COEFFICIENT = /^(\d+)(.+)$/
+const TERM_PATTERN = /^(?:(\d+) ?)?([^\s[\]]+?)(?:\[([^\]\s]+)\])?$/
+
+export const SPECIES_LEADING_DIGIT = "A species name can't start with a number"
+
+/** True when `name` starts with a number, which an equation reads as its coefficient (3PG is 3 × PG). */
+export function startsWithDigit(name: string): boolean {
+    return /^\s*[\d.]/.test(name)
+}
+
+/** Why `name` can't be a species name, or `''`: one starting with a number would read as a coefficient. */
+export function speciesNameError(name: string): string {
+    return startsWithDigit(name) ? `${SPECIES_LEADING_DIGIT} ('${name.trim()}' reads as a coefficient)` : ''
+}
 
 export interface ParsedEquation {
     substrates: Participant[]
@@ -245,7 +255,7 @@ function sideTerms(text: string): string[] {
     return terms
 }
 
-function parseSide(text: string, known: Set<string>): Participant[] {
+function parseSide(text: string): Participant[] {
     const trimmed = text.trim()
     if (trimmed === '' || trimmed === '∅') return []
     const participants: Participant[] = []
@@ -258,12 +268,10 @@ function parseSide(text: string, known: Set<string>): Participant[] {
         if (!match) {
             throw new Error(`'${term}' is not a species: write it as 'n Species[location]', with + between species`)
         }
-        let count = match[1] ? Number(match[1]) : 1
-        let species = match[2] ?? ''
-        const glued = match[1] ? null : species.match(GLUED_COEFFICIENT)
-        if (glued && known.has(glued[2]!) && !known.has(species)) {
-            count = Number(glued[1])
-            species = glued[2]!
+        const count = match[1] ? Number(match[1]) : 1
+        const species = match[2] ?? ''
+        if (startsWithDigit(species)) {
+            throw new Error(`'${term}': a coefficient is a whole number, and ${SPECIES_LEADING_DIGIT.toLowerCase()}`)
         }
         if (count < 1) {
             throw new Error(`'${term}': a stoichiometric coefficient is a whole number of at least 1`)
@@ -277,17 +285,15 @@ function parseSide(text: string, known: Set<string>): Participant[] {
 
 /**
  * `2 ADP[m] + Pi[m] ⇌ ATP[m] + H2O[m]` as its two sides (any of ⇌ ⇄ ↔ → <=> <-> => -> = for the arrow), with or
- * without spaces; `knownSpecies` are the diagram's species names, which tell a glued coefficient (`2ADP`) from a
- * name starting with a digit (`3PG`).
+ * without spaces; a number before a species is its coefficient (`2ADP` is 2 × ADP).
  */
-export function parseEquation(text: string, knownSpecies: Iterable<string> = []): ParsedEquation {
+export function parseEquation(text: string): ParsedEquation {
     const sides = text.replace(/\(moves [^)]*\)\s*$/, '').split(ARROW_PATTERN)
     if (sides.length !== 2) {
         throw new Error(sides.length < 2 ? 'An equation needs one arrow (⇌, <=> or ->) between its two sides'
                                          : 'An equation has only one arrow (⇌, <=> or ->)')
     }
-    const known = new Set(knownSpecies)
-    const equation = { substrates: parseSide(sides[0] ?? '', known), products: parseSide(sides[1] ?? '', known) }
+    const equation = { substrates: parseSide(sides[0] ?? ''), products: parseSide(sides[1] ?? '') }
     if (equation.substrates.length + equation.products.length === 0) {
         throw new Error('An equation needs at least one species')
     }

@@ -45,6 +45,7 @@ import {
     type BondgraphPlugin,
     PLUGIN_ID
 } from './index'
+import { SPECIES_LEADING_DIGIT } from './equations'
 import { isUnitSystemId, type UnitSystemId } from './unitsystem'
 
 //==============================================================================
@@ -270,6 +271,17 @@ export function listElements(diagram: CellDLDiagram|null|undefined): DiagramElem
 }
 
 //==============================================================================
+
+/**
+ * A warning for a diagram whose species names start with a number (3PG), which its reaction equations would read as
+ * coefficients (3 × PG) when retyped, or `''`. Such diagrams still open, and nothing is renamed.
+ */
+export function leadingDigitSpeciesWarning(): string {
+    const names = bondgraphPlugin()?.leadingDigitSpecies() ?? []
+    if (!names.length) return ''
+    const listed = names.map(n => `'${n}'`).join(', ')
+    return `${SPECIES_LEADING_DIGIT}, as an equation reads it as a coefficient: rename ${listed}`
+}
 
 /**
  * Sets elements' fields, as the Properties panel would, in one undoable step.
