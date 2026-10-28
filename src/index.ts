@@ -49,6 +49,7 @@ export type {
     EditorExportCommand,
     EditorFileCommand,
     EditorPanelName,
+    EditorReorganiseCommand,
     EditorSetStateCommand,
     EditorToolName,
     EditorViewCommand,
@@ -59,6 +60,15 @@ export type {
 } from '#root/components/WrappedEditor.vue'
 
 export type { EditorMessage, EditorMessageLevel } from '#editor/editor'
+
+export {
+    DEFAULT_REORGANISE_MODE,
+    REORGANISE_MODES,
+    type ReorganiseChrome,
+    type ReorganiseMode,
+    type ReorganiseResult,
+    type ReorganiseState
+} from '#editor/editor/reorganise'
 
 export type { ValuesMode } from '#root/plugins/bondgraph/values'
 
