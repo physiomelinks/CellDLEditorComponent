@@ -92,6 +92,10 @@ import type { EditorMessage } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
 import { compartmentsKey, setCompartmentLocations } from '#editor/editor/locations'
 import { setLocationShading } from '#editor/editor/regions'
+import {
+    DEFAULT_REORGANISE_MODE, type ReorganiseChrome, type ReorganiseResult, type ReorganiseState, reorganiseProgress,
+    reorganiseState, runReorganise, setReorganiseChrome
+} from '#editor/editor/reorganise'
 import { HOVER_TOOLTIP_DELAY } from '#editor/editor/tooltips'
 import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
 import { isMacOs } from '#root/utils/common'
@@ -161,6 +165,22 @@ export type EditorEditCommand = {
     command: 'edit'
     options: {
         action: string
+    }
+}
+
+/**
+ * Reorganise the diagram by location, as the Reactions panel's Reorganise
+ * button does: `mode` is an id of the `reorganise-state` event's `modes`
+ * (default `'balanced'`). It is one undoable step, with Compartment and
+ * Region boxes moved with their contents, and replies with
+ * `reorganise-result`, `kind` returned in it.
+ */
+export type EditorReorganiseCommand = {
+    command: 'edit'
+    options: {
+        action: 'reorganise'
+        mode?: string
+        kind?: string
     }
 }
 
@@ -253,6 +273,7 @@ export type CellDLEditorCommand = EditorDocumentCommand
                                 | EditorElementCommand
                                 | EditorExportCommand
                                 | EditorFileCommand
+                                | EditorReorganiseCommand
                                 | EditorSetStateCommand
                                 | EditorViewCommand
 
@@ -340,6 +361,14 @@ export type EditorChrome = {
      * Default `true`.
      */
     locationShading?: boolean
+    /**
+     * Where the Reorganise button, its mode dropdown and its Undo button are:
+     * `'panel'` (the default) at the top of the Reactions panel, or `false`
+     * nowhere, for a host that shows its own from the `reorganise-state`
+     * event and runs it with the `edit` command's `reorganise`. Its reorganise
+     * is then undone with the editor's Undo.
+     */
+    reorganise?: ReorganiseChrome
 }
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
@@ -480,6 +509,21 @@ vue.watch(() => props.chrome?.compartmentLocations === true, on => setCompartmen
 // Whether locations are shaded behind the diagram
 vue.watch(() => props.chrome?.locationShading !== false, on => setLocationShading(on), { immediate: true })
 
+// Whether the Reactions panel shows the Reorganise controls
+vue.watch(() => props.chrome?.reorganise, chrome => setReorganiseChrome(chrome), { immediate: true })
+
+// Tell the host the Reorganise modes, and whether it can run, when they change
+let lastReorganiseState = ''
+function reportReorganiseState() {
+    const state = reorganiseState()
+    const key = JSON.stringify(state)
+    if (key !== lastReorganiseState) {
+        lastReorganiseState = key
+        emit('reorganise-state', state)
+    }
+}
+vue.watch(() => reorganiseProgress.busy, () => reportReorganiseState())
+
 // How the Properties panel shows values
 vue.provide(VALUES_CHROME_KEY, vue.computed<ValuesChrome>(() => ({
     mode: props.chrome?.values ?? 'editable',
@@ -496,6 +540,8 @@ const emit = defineEmits<{
     }],
     'event': [detail: ViewerEvent],
     'view-state': [state: ViewStateChange],
+    'reorganise-state': [state: ReorganiseState],
+    'reorganise-result': [result: ReorganiseResult],
     'message': [message: EditorMessage]
 }>()
 
@@ -653,9 +699,14 @@ async function setRdfBaseline() {
     lastCompartments = celldlDiagram ? compartmentsKey(celldlDiagram) : undefined
 }
 
-vue.onMounted(() => document.addEventListener('file-edited', diagramEdited))
+vue.onMounted(() => {
+    document.addEventListener('file-edited', diagramEdited)
+    document.addEventListener('file-edited', reportReorganiseState)
+    reportReorganiseState()
+})
 vue.onUnmounted(() => {
     document.removeEventListener('file-edited', diagramEdited)
+    document.removeEventListener('file-edited', reportReorganiseState)
     watchDragEnd(false)
 })
 
@@ -1010,6 +1061,7 @@ vue.watch(
                     await celldlEditor.editDiagram(celldlDiagram)
                     await setRdfBaseline()
                 })
+                reportReorganiseState()
             } else if (options.action === 'open') {
                 resetToolBars()
                 if (options.data !== undefined) {
@@ -1024,6 +1076,7 @@ vue.watch(
                             })
                         }
                     })
+                    reportReorganiseState()
                 }
             } else if (options.action === 'data') {
                 const celldl = await celldlDiagram?.serialise()
@@ -1051,6 +1104,12 @@ vue.watch(
                 // open the Annotations panel
                 const button = document.getElementById(PANEL_ID.ANNOTATIONS_PANEL)
                 if (button && !button.classList.contains('active')) button.click()
+            } else if (options.action === 'reorganise') {
+                const { mode, kind } = (props.editorCommand as EditorReorganiseCommand).options
+                await diagramOpened
+                const result = await runReorganise(mode ?? DEFAULT_REORGANISE_MODE)
+                emit('reorganise-result', kind === undefined ? result : { kind, ...result })
+                reportReorganiseState()
             }
         } else if (props.editorCommand?.command === 'element') {
             await elementCommand(props.editorCommand as EditorElementCommand)

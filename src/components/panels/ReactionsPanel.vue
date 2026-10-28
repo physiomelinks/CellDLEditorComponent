@@ -7,10 +7,10 @@
                 | Edit an equation and press Enter to change the bond graph:
                 | coefficients before a species (#[code 2 ADP[c]] or #[code 2ADP[c]]), species joined by #[code  + ].
                 | A species name can't start with a number. A new species gets a new store.
-            .layout
+            .layout(v-if="reorganiseChromeState.inPanel")
                 select#layout-preset(v-model="layoutPreset" aria-label="Reorganise option" :disabled="reorganising"
-                                     :title="LAYOUT_PRESETS.find(p => p.id === layoutPreset)?.description")
-                    option(v-for="p in LAYOUT_PRESETS" :key="p.id" :value="p.id") {{ p.name }}
+                                     :title="REORGANISE_MODES.find(m => m.id === layoutPreset)?.description")
+                    option(v-for="m in REORGANISE_MODES" :key="m.id" :value="m.id") {{ m.label }}
                 button.reorganise(type="button" :disabled="reorganising || steps.length === 0" @click="reorganiseLayout")
                     | {{ reorganising ? `Reorganising… ${progress}%` : 'Reorganise by location' }}
                 button.undo(v-if="canUndo && !reorganising" type="button" @click="undoLayout") Undo reorganise
@@ -55,10 +55,10 @@
 import * as vue from 'vue'
 
 import { addReaction, applyEquation, takeAddedElements } from '#editor/editor/reactions'
+import { canUndoReorganise, diagramLayout, locationShadingState, REGION_COLOURS, undoReorganise } from '#editor/editor/regions'
 import {
-    canUndoReorganise, diagramLayout, locationShadingState, REGION_COLOURS, reorganiseDiagram, undoReorganise
-} from '#editor/editor/regions'
-import { LAYOUT_PRESETS } from '#root/plugins/bondgraph/layout'
+    DEFAULT_REORGANISE_MODE, REORGANISE_MODES, reorganiseChromeState, reorganiseProgress, runReorganise
+} from '#editor/editor/reorganise'
 
 import { componentLibraryPlugin } from '#root/plugins'
 import {
@@ -132,36 +132,17 @@ const groups = vue.computed(() => {
     return [...byKey.values()].sort((a, b) => rank(a) - rank(b) || a.key.localeCompare(b.key))
 })
 
-const layoutPreset = vue.ref('balanced')
-const reorganising = vue.ref(false)
-const progress = vue.ref(0)
+const layoutPreset = vue.ref(DEFAULT_REORGANISE_MODE)
+const reorganising = vue.computed(() => reorganiseProgress.busy)
+const progress = vue.computed(() => reorganiseProgress.progress)
 const layoutStatus = vue.ref('')
 const canUndo = vue.ref(false)
 
-function describe(subspaces: number, regions: number, rectangular?: boolean): string {
-    if (rectangular && regions > 1) return `the ${regions} locations as rectangles`
-    return subspaces === regions ? `each of ${regions} location${regions === 1 ? '' : 's'} in one piece`
-                                 : `${regions} locations in ${subspaces} pieces`
-}
-
 async function reorganiseLayout() {
-    reorganising.value = true
-    progress.value = 0
     layoutStatus.value = ''
-    try {
-        const result = await reorganiseDiagram((done, of) => { progress.value = Math.round(100 * done / of) }, {},
-                                               layoutPreset.value)
-        if (!result) return
-        const { before, after, rings } = result
-        const kept = rings ? ` ${rings} cycle${rings === 1 ? '' : 's'} drawn as a circle.` : ''
-        layoutStatus.value = after.total < before.total
-            ? `Complexity ${before.total.toFixed(0)} → ${after.total.toFixed(0)}: ${describe(after.subspaces, after.regions, after.rectangular)}, `
-              + `${after.crossings} crossing bond${after.crossings === 1 ? '' : 's'} (were ${before.crossings}).${kept}`
-            : `No simpler layout found (complexity ${before.total.toFixed(0)}).`
-    } finally {
-        reorganising.value = false
-        canUndo.value = canUndoReorganise()
-    }
+    const result = await runReorganise(layoutPreset.value)
+    layoutStatus.value = result.ok ? result.status : result.error ?? ''
+    canUndo.value = canUndoReorganise()
 }
 
 function undoLayout() {
