@@ -38,7 +38,7 @@ import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 import { round } from '#editor/utils'
 
 import { isMacOs } from '#root/utils/common'
-import { type Annotations, PANEL_ID, type SvgViewerOptions, type ViewerEvent, type ViewInfo } from '#root/utils/editor-types'
+import { type ElementInfoById, PANEL_ID, type SvgViewerOptions, type ViewerEvent, type ViewInfo } from '#root/utils/editor-types'
 import { type Point, type PointLike, PointMath } from '#root/utils/points'
 import { imagesLoaded } from '#root/utils/svgUtils'
 import type { Styling } from '#root/utils/styling'
@@ -339,8 +339,8 @@ export class CellDLEditor {
 
     #tooltips = new Tooltips()
 
-    // Viewer compatible annotations and events
-    #annotations: Annotations = {}
+    // The host's information about elements, and viewer events
+    #elementInfo: ElementInfoById = {}
     #tooltipField: string | undefined = undefined
     #viewerEventHandler: ViewerEventHandler | null = null
     #messageHandler: EditorMessageHandler | null = null
@@ -569,8 +569,9 @@ export class CellDLEditor {
         }
     }
 
-    setAnnotations(annotations: Annotations | undefined, options: SvgViewerOptions | undefined) {
-        this.#annotations = annotations || {}
+    /** The host's information about elements, and which of its fields is an element's tooltip */
+    setElementInfo(elementInfo: ElementInfoById | undefined, options: SvgViewerOptions | undefined) {
+        this.#elementInfo = elementInfo || {}
         this.#tooltipField = options?.tooltip
     }
 
@@ -601,8 +602,8 @@ export class CellDLEditor {
             const event: ViewerEvent = { type }
             if (object) {
                 event.component = { id: object.id }
-                if (Object.hasOwn(this.#annotations, object.id)) {
-                    event.component.annotation = this.#annotations[object.id]
+                if (Object.hasOwn(this.#elementInfo, object.id)) {
+                    event.component.info = this.#elementInfo[object.id]
                 }
             }
             this.#viewerEventHandler(event)
@@ -1126,27 +1127,27 @@ export class CellDLEditor {
         }
     }
 
-    /** The host's annotation tooltip for an object, or `''`. */
-    #annotationTooltipText(object: CellDLObject): string {
-        const annotation = Object.hasOwn(this.#annotations, object.id) ? this.#annotations[object.id] : undefined
-        if (this.#tooltipField === undefined || !annotation || !Object.hasOwn(annotation, this.#tooltipField)) {
+    /** The host's tooltip for an object (its `elementInfo`'s `options.tooltip` field), or `''`. */
+    #infoTooltipText(object: CellDLObject): string {
+        const info = Object.hasOwn(this.#elementInfo, object.id) ? this.#elementInfo[object.id] : undefined
+        if (this.#tooltipField === undefined || !info || !Object.hasOwn(info, this.#tooltipField)) {
             return ''
         }
-        return String(annotation[this.#tooltipField])
+        return String(info[this.#tooltipField])
     }
 
     /**
      * Shows an object's hover tooltips once the pointer has stayed on it: a
      * plugin's hover (e.g. an element's law, else a reaction's equation) or,
-     * when there's none, the host's annotation tooltip.
+     * when there's none, the host's element-info tooltip.
      */
     #hoverTooltipAfterDelay(object: CellDLObject) {
         this.#tooltips.hoverAfterDelay(object, () => {
             this.#showHover(object)
             if (this.#editorMode === EDITOR_MODE.Selecting) {
-                const text = this.#annotationTooltipText(object)
+                const text = this.#infoTooltipText(object)
                 if (text !== '') {
-                    this.#tooltips.show('annotation', text, 'info')
+                    this.#tooltips.show('info', text, 'info')
                 }
             }
         })
@@ -1154,8 +1155,8 @@ export class CellDLEditor {
 
     /**
      * Shows a plugin's hover for an object (e.g. an element's law), with the
-     * host's annotation tooltip above it, so that is still seen. Without a
-     * hover, any hover shown is hidden and the annotation tooltip is left.
+     * host's element-info tooltip above it, so that is still seen. Without a
+     * hover, any hover shown is hidden and the element-info tooltip is left.
      */
     #showHover(object: CellDLObject) {
         const hoverHtml = componentLibraryPlugin.hoverHtml(object)
@@ -1164,11 +1165,11 @@ export class CellDLEditor {
             this.#tooltips.hideKind('hover')
             return
         }
-        const annotation = (this.#editorMode === EDITOR_MODE.Selecting) ? this.#annotationTooltipText(object) : ''
-        if (annotation === '' && hoverHtml === '') {
+        const info = (this.#editorMode === EDITOR_MODE.Selecting) ? this.#infoTooltipText(object) : ''
+        if (info === '' && hoverHtml === '') {
             this.#tooltips.show('hover', hoverText)
         } else {
-            const note = annotation ? `<div class="tooltip-annotation">${escapeHtml(annotation)}</div>` : ''
+            const note = info ? `<div class="tooltip-element-info">${escapeHtml(info)}</div>` : ''
             const body = hoverHtml || `<div>${escapeHtml(hoverText)}</div>`
             this.#tooltips.show('hover', `${note}${body}`, '', true)
         }

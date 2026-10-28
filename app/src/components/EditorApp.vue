@@ -56,7 +56,7 @@
                 :editorCommand="editorCommand"
                 :options="editorOptions"
                 :chrome="appChrome"
-                :annotations="devAnnotations"
+                :elementInfo="devElementInfo"
                 :arrowStyle="arrowStyle"
                 :wheelMode="wheelMode"
                 :theme="editorTheme"
@@ -136,7 +136,7 @@ import * as vueCommon from '../utils/vueCommon'
 import CellDLEditor from '../../../src'
 
 import type {
-    Annotations,
+    ElementInfoById,
     ArrowStyle,
     CellDLEditorCommand,
     EditorChrome,
@@ -376,7 +376,7 @@ function onDiagramChanged(change: DiagramChange) {
 const editorOptions: SvgViewerOptions = { elementList: import.meta.env.DEV }
 
 // and set the editor's `chrome` and `annotations` (with `options.tooltip`)
-// from `?chrome=<json>` and `?annotations=<json>`, as a host would
+// from `?chrome=<json>` and `?elementInfo=<json>`, as a host would
 
 function devParameter<T>(name: string): T|undefined {
     if (!import.meta.env.DEV) {
@@ -396,8 +396,8 @@ const devChrome = devParameter<EditorChrome>('chrome')
 const appChrome: EditorChrome = devChrome ?? {
     panels: ['properties', 'metadata', 'style', 'reactions', 'variables', 'annotations']
 }
-const devAnnotations = devParameter<Annotations>('annotations')
-if (devAnnotations) {
+const devElementInfo = devParameter<ElementInfoById>('elementInfo')
+if (devElementInfo) {
     editorOptions.tooltip = 'tooltip'
 }
 
