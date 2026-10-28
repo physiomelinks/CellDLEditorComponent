@@ -320,7 +320,7 @@ export type EditorChrome = {
     arrange?: boolean
     /**
      * How long, in milliseconds, the pointer stays on an element before its
-     * tooltip (its law, or the `options.tooltip` annotation) shows. No tooltips
+     * tooltip (its law, or its `elementInfo` `options.tooltip` field) shows. No tooltips
      * show while a bond is drawn. Default 600.
      */
     tooltipDelay?: number
