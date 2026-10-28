@@ -375,7 +375,7 @@ function onDiagramChanged(change: DiagramChange) {
 
 const editorOptions: SvgViewerOptions = { elementList: import.meta.env.DEV }
 
-// and set the editor's `chrome` and `annotations` (with `options.tooltip`)
+// and set the editor's `chrome` and `elementInfo` (with `options.tooltip`)
 // from `?chrome=<json>` and `?elementInfo=<json>`, as a host would
 
 function devParameter<T>(name: string): T|undefined {
