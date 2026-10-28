@@ -32,7 +32,8 @@ import type { CellDLConnectedObject, CellDLConnection, CellDLObject } from '#edi
 import { undoRedo } from '#editor/diagram/undoredo'
 
 import {
-    type EquationEdit, findSpeciesNode, parseEquation, planEquationEdit, type Side, type SpeciesNode, type StepEquation
+    type EquationEdit, findSpeciesNode, parseEquation, planEquationEdit, type Side, speciesNameError, type SpeciesNode,
+    type StepEquation
 } from '#root/plugins/bondgraph/equations'
 import { Point, type PointLike } from '#root/utils/points'
 
@@ -170,11 +171,6 @@ function stepLocation(step: CellDLObject): string|undefined {
 
 //==============================================================================
 
-// The diagram's species names, which tell a glued coefficient (2ADP) from a name starting with a digit (3PG)
-function knownSpecies(): string[] {
-    return bondgraphPlugin().speciesNodes().map(n => n.species)
-}
-
 /**
  * Make the step `stepUri` follow the equation `text`, as one undoable step; returns the number of bond changes.
  * Throws an Error with a message for the user when the equation cannot be read or placed.
@@ -187,7 +183,7 @@ async function followEquation(stepUri: string, text: string): Promise<number> {
     const current = bondgraphPlugin().reactionEquations().find(eq => eq.id === stepUri)
     const step = objectByUri(stepUri) as CellDLConnectedObject|null
     if (!current || !step) throw new Error('That step is no longer in the diagram')
-    const edits = planEquationEdit(current, parseEquation(text, knownSpecies()))
+    const edits = planEquationEdit(current, parseEquation(text))
     // check every added species can be placed before changing anything
     for (const edit of edits) {
         if (edit.op === 'add') findSpeciesNode(bondgraphPlugin().speciesNodes(), edit.species, edit.location)
@@ -205,7 +201,9 @@ async function followEquation(stepUri: string, text: string): Promise<number> {
  * components, as one undoable step; returns its URI.
  */
 export async function addReaction(text: string, name: string, location?: string): Promise<string> {
-    const parsed = parseEquation(text, knownSpecies())
+    const nameError = name ? speciesNameError(name) : ''
+    if (nameError) throw new Error(nameError)
+    const parsed = parseEquation(text)
     for (const p of [...parsed.substrates, ...parsed.products]) {
         findSpeciesNode(bondgraphPlugin().speciesNodes(), p.species, p.location)
     }

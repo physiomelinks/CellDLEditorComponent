@@ -44,7 +44,7 @@ import { imagesLoaded } from '#root/utils/svgUtils'
 import type { Styling } from '#root/utils/styling'
 import type { StringProperties } from '#root/utils/types'
 import { componentLibraryPlugin } from '#root/plugins'
-import { setElementField } from '#root/plugins/bondgraph/elements'
+import { leadingDigitSpeciesWarning, setElementField } from '#root/plugins/bondgraph/elements'
 import { paletteEntry, placeEntry } from '#root/plugins/bondgraph/palette'
 import { DRAWING_TOOLS, type SpatialKind, spatialEntry } from '#root/plugins/drawing/spatial'
 
@@ -697,6 +697,12 @@ export class CellDLEditor {
         this.#events.dispatchEvent(new CustomEvent('diagram-opened', { detail: { diagram: celldlDiagram } }))
         this.#scheduleBondCounts()
         drawSideLabels(celldlDiagram)
+
+        // Species named before a leading number became a coefficient (3PG): open the diagram, but say so
+        const warning = leadingDigitSpeciesWarning()
+        if (warning) {
+            this.showAlert(warning, 'warn')
+        }
     }
 
     #bondCountsTimer: ReturnType<typeof setTimeout> | undefined

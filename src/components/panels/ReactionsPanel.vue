@@ -5,8 +5,8 @@
         template(#content)
             p.hint
                 | Edit an equation and press Enter to change the bond graph:
-                | coefficients with a space (#[code 2 ADP[c]]), species joined by #[code  + ].
-                | A new species gets a new store.
+                | coefficients before a species (#[code 2 ADP[c]] or #[code 2ADP[c]]), species joined by #[code  + ].
+                | A species name can't start with a number. A new species gets a new store.
             .layout
                 select#layout-preset(v-model="layoutPreset" aria-label="Reorganise option" :disabled="reorganising"
                                      :title="LAYOUT_PRESETS.find(p => p.id === layoutPreset)?.description")
@@ -34,6 +34,7 @@
                         @keydown.enter.prevent="apply(step)"
                         @keydown.escape="refresh"
                     )
+                    .warning(v-if="step.warning") {{ step.warning }}
                     .error(v-if="errors[step.id]") {{ errors[step.id] }}
             .new-step
                 .heading
@@ -60,7 +61,9 @@ import {
 import { LAYOUT_PRESETS } from '#root/plugins/bondgraph/layout'
 
 import { componentLibraryPlugin } from '#root/plugins'
-import { equationText, type StepKind } from '#root/plugins/bondgraph/equations'
+import {
+    equationText, type Participant, SPECIES_LEADING_DIGIT, type StepEquation, type StepKind, startsWithDigit
+} from '#root/plugins/bondgraph/equations'
 
 import ToolPanel from './ToolPanel.vue'
 
@@ -71,7 +74,17 @@ const props = defineProps<{
     toolId: string
 }>()
 
-type StepRow = { id: string, name: string, kind: StepKind, text: string, regions: string[] }
+type StepRow = { id: string, name: string, kind: StepKind, text: string, regions: string[], warning: string }
+
+// A step with a species named before a leading number became a coefficient (3PG): retyping its equation reads 3 × PG
+function leadingDigitWarning(eq: StepEquation): string {
+    const names = [...new Set([...eq.substrates, ...eq.products].map((p: Participant) => p.species)
+                                                                 .filter(startsWithDigit))]
+    if (!names.length) return ''
+    const readAs = names.map(n => { const m = n.match(/^(\d+)(.*)$/); return m ? `${m[1]} × ${m[2]}` : n })
+    return `${SPECIES_LEADING_DIGIT}: retyping ${names.join(', ')} reads ${readAs.join(', ')}. `
+           + `Rename ${names.length === 1 ? 'it' : 'them'} in the Properties panel first.`
+}
 
 const steps = vue.ref<StepRow[]>([])
 const errors = vue.ref<Record<string, string>>({})
@@ -83,7 +96,8 @@ const locations = vue.ref<string[]>([])    // the diagram's locations, sorted, a
 function refresh() {
     needValues.value.push(...takeAddedElements())
     steps.value = componentLibraryPlugin.reactionEquations().map(eq => ({
-        id: eq.id, name: eq.name, kind: eq.kind, text: equationText(eq), regions: eq.regions
+        id: eq.id, name: eq.name, kind: eq.kind, text: equationText(eq), regions: eq.regions,
+        warning: leadingDigitWarning(eq)
     }))
     locations.value = locationShadingState.on ? [...new Set(diagramLayout().nodes.flatMap(n => n.labels))].sort() : []
     canUndo.value = canUndoReorganise()
@@ -311,6 +325,11 @@ input.name {
 .note {
     font-size: 0.8rem;
     color: #2e75b6;
+}
+.warning {
+    color: #b9770e;
+    font-size: 0.8rem;
+    margin-top: 2px;
 }
 .error {
     color: #c0392b;

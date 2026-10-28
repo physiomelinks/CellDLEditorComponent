@@ -159,4 +159,14 @@ describe('the Reactions panel\'s equations', () => {
             expect(values(store, `${BGF}hasValue`)).toEqual(['0 mol'])
         }
     })
+
+    test('a glued coefficient sets its bond count, and no species is made that starts with a number', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        expect(await applyEquation(REACTION_1, '2S[c]+E[c]<=>C[c]')).toBe(1)
+        expect(bondCount(S_TO_SIDE)).toBe('2')
+        const before = await diagram.rdf()
+        await expect(applyEquation(REACTION_1, 'S[c] + E[c] <=> 2 3PG[c]')).rejects.toThrow(/can't start with a number/)
+        await expect(addReaction('X <=> Y', '3PGK')).rejects.toThrow(/^A species name can't start with a number/)
+        expect(await diagram.rdf()).toBe(before)
+    })
 })
