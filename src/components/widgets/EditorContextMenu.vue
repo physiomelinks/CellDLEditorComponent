@@ -14,6 +14,9 @@ useThemeCssVariables('contextmenu')
 //==============================================================================
 
 import { CANVAS_PRESS_EVENT, CONTEXT_MENU } from '#editor/editor'
+import { groupingState } from '#editor/editor/grouping'
+
+import { contextMenuEntries } from './contextMenuEntries'
 
 export type ContextMenuProps = {
     state: Set<CONTEXT_MENU>,
@@ -70,45 +73,10 @@ function contextMenuEvent(id: string) {
 
 //==============================================================================
 
-const items = vue.computed(() => {
-  // Add element is only offered on empty canvas, so it isn't listed when an element was right clicked
-  const canAdd = !!props.contextMenuProps?.state.has(CONTEXT_MENU.ADD_ELEMENT)
-  return [
-    ...(canAdd
-        ? [{ command: () => contextMenuEvent(CONTEXT_MENU.ADD_ELEMENT), label: 'Add element…' }, { separator: true }]
-        : []),
-    {
-        command: () => contextMenuEvent(CONTEXT_MENU.DELETE),
-        disabled: !props.contextMenuProps?.state.has(CONTEXT_MENU.DELETE),
-        label: 'Delete'
-    },
-    // Only when a selected bond, or one between selected elements, has bends
-    ...(props.contextMenuProps?.state.has(CONTEXT_MENU.STRAIGHTEN)
-        ? [{ command: () => contextMenuEvent(CONTEXT_MENU.STRAIGHTEN), label: 'Straighten' }]
-        : []),
-    { separator: true },
-    {
-        command: () => contextMenuEvent(CONTEXT_MENU.GROUP_OBJECTS),
-        disabled: !props.contextMenuProps?.state.has(CONTEXT_MENU.GROUP_OBJECTS),
-        label: 'Group'
-    },
-    {
-        command: () => contextMenuEvent(CONTEXT_MENU.EDIT_GROUP),
-        disabled: !props.contextMenuProps?.state.has(CONTEXT_MENU.EDIT_GROUP),
-        label: 'Edit group'
-    },
-    {
-        command: () => contextMenuEvent(CONTEXT_MENU.UNGROUP_OBJECTS),
-        disabled: !props.contextMenuProps?.state.has(CONTEXT_MENU.UNGROUP_OBJECTS),
-        label: 'Ungroup'
-    },
-    { separator: true },
-    {
-        command: () => contextMenuEvent(CONTEXT_MENU.INFO),
-        disabled: true,
-        label: 'Info'
-    }
-  ]}
+const items = vue.computed(() =>
+    contextMenuEntries(props.contextMenuProps?.state, groupingState.enabled).map(entry =>
+        'id' in entry ? { command: () => contextMenuEvent(entry.id), disabled: entry.disabled, label: entry.label } : entry
+    )
 )
 
 //==============================================================================
