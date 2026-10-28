@@ -46,6 +46,9 @@ import {
 //==============================================================================
 
 const BGF = 'https://bg-rdf.org/ontologies/bondgraph-framework#'
+/** Why a step's equation can't be edited: its reaction or flow element has been deleted. */
+export const STEP_NOT_IN_DIAGRAM = 'That step is no longer in the diagram'
+
 export const NEW_STORE_TYPE = `${BGF}ChemicalStorageNode`
 export const NEW_REACTION_TYPE = `${BGF}ChemicalReactionNode`
 
@@ -182,7 +185,10 @@ export function applyEquation(stepUri: string, text: string): Promise<number> {
 async function followEquation(stepUri: string, text: string): Promise<number> {
     const current = bondgraphPlugin().reactionEquations().find(eq => eq.id === stepUri)
     const step = objectByUri(stepUri) as CellDLConnectedObject|null
-    if (!current || !step) throw new Error('That step is no longer in the diagram')
+    // refused before anything changes, so no bond goes to a deleted step
+    if (!current || !step || !editorParts().diagram.hasConnector(step.uri)) {
+        throw new Error(STEP_NOT_IN_DIAGRAM)
+    }
     const edits = planEquationEdit(current, parseEquation(text))
     // check every added species can be placed before changing anything
     for (const edit of edits) {

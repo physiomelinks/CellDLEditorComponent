@@ -22,7 +22,7 @@
                     template(v-if="locationShadingState.on")
                         span.swatch(v-for="r in group.regions" :key="r" :style="{ background: regionColour(r) }")
                     | {{ group.title }}
-                .step.reactions-step(v-for="step in group.steps" :key="step.id" :class="step.kind")
+                .step.reactions-step(v-for="step in group.steps" :key="step.id" :class="step.kind" :data-step="step.id")
                     .heading
                         span.name {{ step.name }}
                         span.kind {{ step.kind === 'reaction' ? 'reaction ⇌' : step.kind === 'transport' ? 'transport ⇄' : 'flow ⇄' }}
@@ -32,7 +32,7 @@
                         :aria-label="`Equation of ${step.name}`"
                         spellcheck="false"
                         @keydown.enter.prevent="apply(step)"
-                        @keydown.escape="refresh"
+                        @keydown.escape="refresh()"
                     )
                     .warning(v-if="step.warning") {{ step.warning }}
                     .error(v-if="errors[step.id]") {{ errors[step.id] }}
@@ -93,11 +93,13 @@ const newText = vue.ref('')
 const needValues = vue.ref<string[]>([])   // new elements, whose values start at the defaults
 const locations = vue.ref<string[]>([])    // the diagram's locations, sorted, as shaded behind it
 
-function refresh() {
+// Read the steps from the diagram, keeping the equation being typed in step `editing` while that step is there
+function refresh(editing?: string) {
     needValues.value.push(...takeAddedElements())
+    const typed = editing ? steps.value.find(s => s.id === editing)?.text : undefined
     steps.value = componentLibraryPlugin.reactionEquations().map(eq => ({
-        id: eq.id, name: eq.name, kind: eq.kind, text: equationText(eq), regions: eq.regions,
-        warning: leadingDigitWarning(eq)
+        id: eq.id, name: eq.name, kind: eq.kind, text: eq.id === editing && typed !== undefined ? typed : equationText(eq),
+        regions: eq.regions, warning: leadingDigitWarning(eq)
     }))
     locations.value = locationShadingState.on ? [...new Set(diagramLayout().nodes.flatMap(n => n.labels))].sort() : []
     canUndo.value = canUndoReorganise()
@@ -193,10 +195,11 @@ async function add() {
     refresh()
 }
 
-// follow edits made in the diagram, keeping an equation being typed
+// follow every change to the diagram (deletes and undo too), so no step stays listed once it is gone, keeping an
+// equation being typed
 function diagramEdited() {
-    const editing = document.activeElement?.closest?.('.reactions-step')
-    if (!editing) refresh()
+    const editing = document.activeElement?.closest?.<HTMLElement>('.reactions-step')?.dataset.step
+    refresh(editing)
 }
 
 // the panel is made with the editor, before a diagram is open: read the diagram whenever the panel opens
