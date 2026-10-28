@@ -20,8 +20,8 @@ limitations under the License.
 /** biome-ignore-all lint/style/noNonNullAssertion: <indices are within the palette and the grid> */
 
 // Location shading: a bond graph's locations (`bgf:hasLocation`) shaded behind it as regions, and reorganising its
-// layout around them (../../plugins/bondgraph/regions.ts). The shading is a background in the editor's frame, under
-// compartment and region boxes, redrawn whenever the diagram changes and never saved. It is on by default; a host
+// layout around them (../../plugins/bondgraph/regions.ts). The shading is drawn over compartment and region boxes and
+// under the diagram's other elements, redrawn whenever the diagram changes and never saved. It is on by default; a host
 // turns it off with the `chrome.locationShading` option (`setLocationShading()`), and then nothing is drawn or worked out.
 
 import * as vue from 'vue'
@@ -42,7 +42,6 @@ import { SVG_URI } from '#root/utils/svgUtils'
 import { CellDLEditor, notifyChanges } from '.'
 import { boxContents, fitBoxes } from './boxfit'
 import { drawBondCounts as drawDiagramBondCounts } from './bondcounts'
-import { EDITOR_BACKGROUND_ID } from './editorframe'
 
 //==============================================================================
 
@@ -88,18 +87,19 @@ export function diagramLayout(): { nodes: LayoutNode[], bonds: LayoutBond[], obj
 
 //==============================================================================
 
+// In the diagram's layer, over its compartment and region boxes and under everything else, so a box's fill doesn't
+// hide it; editor-only, so never saved, and it takes no clicks, so the boxes under it are still selected by them
 function regionLayer(): SVGGElement|null {
     const diagram = CellDLEditor.instance?.celldlDiagram
-    const background = diagram?.svgDiagram?.getElementById(EDITOR_BACKGROUND_ID) as SVGGElement|null
-    if (!background) return null
-    let layer = background.querySelector<SVGGElement>(`#${REGION_LAYER_ID}`)
+    if (!diagram?.svgDiagram) return null
+    let layer = diagram.svgDiagram.getElementById(REGION_LAYER_ID) as SVGGElement|null
     if (!layer) {
         layer = document.createElementNS(SVG_URI, 'g') as SVGGElement
         layer.id = REGION_LAYER_ID
         layer.setAttribute('pointer-events', 'none')
-        background.prepend(layer)
     }
-    return layer
+    diagram.addOverBoxes(layer)
+    return layer.parentNode ? layer : null
 }
 
 export interface RegionSummary {

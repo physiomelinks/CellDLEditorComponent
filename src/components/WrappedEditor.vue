@@ -356,7 +356,7 @@ export type EditorChrome = {
     compartmentLocations?: boolean
     /**
      * Location shading: each location (an element's `bgf:hasLocation`) shaded
-     * behind the diagram, under compartment and region boxes, with its name.
+     * behind the diagram, over compartment and region boxes, with its name.
      * It is redrawn on every change and never saved. Off, nothing is drawn and
      * the Reactions panel's location headings have no colour swatches.
      * Default `true`.
