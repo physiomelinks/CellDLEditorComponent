@@ -112,6 +112,59 @@ describe('editing an equation', () => {
         expect(() => parseEquation('2 A[c -> B')).toThrow(/not a species/)
     })
 
+    test('spaces are optional around the arrow and +, and runs of spaces and tabs are one', () => {
+        const ABC = [{ species: 'A', location: 'c', count: 1 }, { species: 'B', location: 'c', count: 1 }]
+        const C = [{ species: 'C', location: 'c', count: 1 }]
+        for (const text of ['A[c]+B[c]<=>C[c]', 'A[c] + B[c] <=> C[c]', 'A[c]+B[c]=>C[c]', 'A[c]+B[c]->C[c]',
+                            'A[c]+B[c]⇌C[c]', 'A[c]+B[c]→C[c]', 'A[c]+B[c]<->C[c]', 'A[c]+B[c]=C[c]',
+                            'A[c] +B[c]⇄ C[c]', '  A[c]\t+\t\tB[c]   <=>\tC[c]  ', 'A [c] + B[ c ] <=> C[c]']) {
+            expect(parseEquation(text)).toEqual({ substrates: ABC, products: C })
+        }
+    })
+
+    test('coefficients with or without spaces', () => {
+        const known = ['A', 'B', 'C', 'A2', 'G6P', '3PG']
+        expect(parseEquation('2A[c]+B[c]=>C[c]', known).substrates)
+            .toEqual([{ species: 'A', location: 'c', count: 2 }, { species: 'B', location: 'c', count: 1 }])
+        expect(parseEquation('2 A[c] +B[c] -> C', known).substrates)
+            .toEqual([{ species: 'A', location: 'c', count: 2 }, { species: 'B', location: 'c', count: 1 }])
+        expect(parseEquation('A[c] +  2B[c] -> C', known).substrates)
+            .toEqual([{ species: 'A', location: 'c', count: 1 }, { species: 'B', location: 'c', count: 2 }])
+        expect(parseEquation('2   A -> C', known).substrates).toEqual([{ species: 'A', location: undefined, count: 2 }])
+        // names with digits stay names: A2, G6P, and a known 3PG, while 2A2 is two A2
+        expect(parseEquation('A2[c]+G6P[c]->3PG[c]', known)).toEqual({
+            substrates: [{ species: 'A2', location: 'c', count: 1 }, { species: 'G6P', location: 'c', count: 1 }],
+            products: [{ species: '3PG', location: 'c', count: 1 }]
+        })
+        expect(parseEquation('2A2 -> C', known).substrates).toEqual([{ species: 'A2', location: undefined, count: 2 }])
+        // a glued number stays part of the name when the rest is not a known species, or the whole name is
+        expect(parseEquation('3PG -> C', known).substrates).toEqual([{ species: '3PG', location: undefined, count: 1 }])
+        expect(parseEquation('2A -> C').substrates).toEqual([{ species: '2A', location: undefined, count: 1 }])
+        expect(parseEquation('13BPG -> C', known).substrates)
+            .toEqual([{ species: '13BPG', location: undefined, count: 1 }])
+    })
+
+    test('names ending in + without spaces', () => {
+        expect(parseEquation('H++NAD+<=>NADH').substrates.map(p => p.species)).toEqual(['H+', 'NAD+'])
+        expect(parseEquation('H+[c]+NAD+[c]<=>NADH[c]').substrates.map(p => p.species)).toEqual(['H+', 'NAD+'])
+        expect(parseEquation('A+B->C').substrates.map(p => p.species)).toEqual(['A', 'B'])
+        expect(parseEquation('H+ + NAD+ -> NADH').substrates.map(p => p.species)).toEqual(['H+', 'NAD+'])
+    })
+
+    test('an empty side, written as nothing or ∅', () => {
+        expect(parseEquation('->A[c]')).toEqual({ substrates: [], products: [{ species: 'A', location: 'c', count: 1 }] })
+        expect(parseEquation('A[c]<=>∅').products).toEqual([])
+        expect(parseEquation('  A[c] =>  ').products).toEqual([])
+    })
+
+    test('invalid equations give a message', () => {
+        expect(() => parseEquation('A[c]+B[c]')).toThrow(/one arrow/)
+        expect(() => parseEquation('A->B->C')).toThrow(/only one arrow/)
+        expect(() => parseEquation('->')).toThrow(/at least one species/)
+        expect(() => parseEquation('A + + B -> C')).toThrow(/no species beside it/)
+        expect(() => parseEquation('A B -> C')).toThrow(/not a species/)
+    })
+
     test('the plan keeps matching bonds, changes counts, removes and adds the rest', () => {
         const bonds: BondInfo[] = [
             { id: 'b1', source: 'q_ADP', target: 'Re', count: 1 },
