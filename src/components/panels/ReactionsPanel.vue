@@ -12,14 +12,15 @@
                                      :title="LAYOUT_PRESETS.find(p => p.id === layoutPreset)?.description")
                     option(v-for="p in LAYOUT_PRESETS" :key="p.id" :value="p.id") {{ p.name }}
                 button.reorganise(type="button" :disabled="reorganising || steps.length === 0" @click="reorganiseLayout")
-                    | {{ reorganising ? `Reorganising… ${progress}%` : 'Reorganise by region' }}
+                    | {{ reorganising ? `Reorganising… ${progress}%` : 'Reorganise by location' }}
                 button.undo(v-if="canUndo && !reorganising" type="button" @click="undoLayout") Undo reorganise
                 p.status(v-if="layoutStatus") {{ layoutStatus }}
             p.note(v-if="needValues.length") New: {{ needValues.join(", ") }}, with parameters of 1 and initial values of 0.
             p(v-if="steps.length === 0") This diagram has no reactions yet.
             section.region-group(v-for="group in groups" :key="group.key")
                 h4.region-heading
-                    span.swatch(v-for="r in group.regions" :key="r" :style="{ background: regionColour(r) }")
+                    template(v-if="locationShadingState.on")
+                        span.swatch(v-for="r in group.regions" :key="r" :style="{ background: regionColour(r) }")
                     | {{ group.title }}
                 .step.reactions-step(v-for="step in group.steps" :key="step.id" :class="step.kind")
                     .heading
@@ -54,7 +55,7 @@ import * as vue from 'vue'
 
 import { addReaction, applyEquation, takeAddedElements } from '#editor/editor/reactions'
 import {
-    canUndoReorganise, diagramLayout, REGION_COLOURS, reorganiseDiagram, undoReorganise
+    canUndoReorganise, diagramLayout, locationShadingState, REGION_COLOURS, reorganiseDiagram, undoReorganise
 } from '#editor/editor/regions'
 import { LAYOUT_PRESETS } from '#root/plugins/bondgraph/layout'
 
@@ -77,14 +78,14 @@ const errors = vue.ref<Record<string, string>>({})
 const newName = vue.ref('')
 const newText = vue.ref('')
 const needValues = vue.ref<string[]>([])   // new elements, whose values start at the defaults
-const locations = vue.ref<string[]>([])    // the diagram's regions, sorted, as drawn behind it
+const locations = vue.ref<string[]>([])    // the diagram's locations, sorted, as shaded behind it
 
 function refresh() {
     needValues.value.push(...takeAddedElements())
     steps.value = componentLibraryPlugin.reactionEquations().map(eq => ({
         id: eq.id, name: eq.name, kind: eq.kind, text: equationText(eq), regions: eq.regions
     }))
-    locations.value = [...new Set(diagramLayout().nodes.flatMap(n => n.labels))].sort()
+    locations.value = locationShadingState.on ? [...new Set(diagramLayout().nodes.flatMap(n => n.labels))].sort() : []
     canUndo.value = canUndoReorganise()
 }
 
@@ -122,9 +123,9 @@ const layoutStatus = vue.ref('')
 const canUndo = vue.ref(false)
 
 function describe(subspaces: number, regions: number, rectangular?: boolean): string {
-    if (rectangular && regions > 1) return `the ${regions} regions as rectangles`
-    return subspaces === regions ? `each of ${regions} region${regions === 1 ? '' : 's'} in one piece`
-                                 : `${regions} regions in ${subspaces} pieces`
+    if (rectangular && regions > 1) return `the ${regions} locations as rectangles`
+    return subspaces === regions ? `each of ${regions} location${regions === 1 ? '' : 's'} in one piece`
+                                 : `${regions} locations in ${subspaces} pieces`
 }
 
 async function reorganiseLayout() {
@@ -148,9 +149,8 @@ async function reorganiseLayout() {
 }
 
 function undoLayout() {
-    undoReorganise()
+    if (undoReorganise()) layoutStatus.value = 'Layout restored.'
     canUndo.value = false
-    layoutStatus.value = 'Layout restored.'
 }
 
 async function apply(step: StepRow) {
@@ -190,6 +190,9 @@ function toolbarEvent(event: Event) {
     const detail = (<CustomEvent>event).detail
     if (detail?.type === 'state' && detail.source === props.toolId && detail.value) refresh()
 }
+
+// the swatches' colours follow location shading
+vue.watch(() => locationShadingState.on, () => refresh())
 
 vue.onMounted(() => {
     refresh()

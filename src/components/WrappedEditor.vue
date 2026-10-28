@@ -91,6 +91,7 @@ import {
 import type { EditorMessage } from '#editor/editor'
 import { editGuides } from '#editor/editor/editguides'
 import { compartmentsKey, setCompartmentLocations } from '#editor/editor/locations'
+import { setLocationShading } from '#editor/editor/regions'
 import { HOVER_TOOLTIP_DELAY } from '#editor/editor/tooltips'
 import { undoRedo, undoRedoState } from '#editor/diagram/undoredo'
 import { isMacOs } from '#root/utils/common'
@@ -98,7 +99,7 @@ import { type ArrowStyle, arrowStyleClass, arrowStyleOrDefault, displayArrowDefi
 import { DEFAULT_WHEEL_MODE, type WheelMode, wheelModeOrDefault } from '#editor/editor/panzoom'
 
 import {
-    type Annotations,
+    type ElementInfoById,
     type EditorToolAction,
     type EditorToolButton,
     PANEL_ID,
@@ -331,6 +332,14 @@ export type EditorChrome = {
      * about what is inside them. Default `false`.
      */
     compartmentLocations?: boolean
+    /**
+     * Location shading: each location (an element's `bgf:hasLocation`) shaded
+     * behind the diagram, under compartment and region boxes, with its name.
+     * It is redrawn on every change and never saved. Off, nothing is drawn and
+     * the Reactions panel's location headings have no colour swatches.
+     * Default `true`.
+     */
+    locationShading?: boolean
 }
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
@@ -340,7 +349,12 @@ export type EditorPanelName = PanelName
 //==============================================================================
 
 export interface CellDLEditorProps {
-    annotations?: Annotations
+    /**
+     * The host's information about the diagram's elements, by component id:
+     * the `options.tooltip` field is an element's tooltip, and an element's
+     * information comes with its viewer events (`component.info`).
+     */
+    elementInfo?: ElementInfoById
     /**
      * How bonds' arrowheads are drawn, in every diagram whatever marker it was
      * saved with: `'bond'`, the editor's notched head, or `'classic'`, PhLynx's
@@ -463,6 +477,9 @@ const arrowClass = vue.computed(() => arrowStyleClass(arrowStyleOrDefault(props.
 // Whether compartments give locations, before a diagram is opened
 vue.watch(() => props.chrome?.compartmentLocations === true, on => setCompartmentLocations(on), { immediate: true })
 
+// Whether locations are shaded behind the diagram
+vue.watch(() => props.chrome?.locationShading !== false, on => setLocationShading(on), { immediate: true })
+
 // How the Properties panel shows values
 vue.provide(VALUES_CHROME_KEY, vue.computed<ValuesChrome>(() => ({
     mode: props.chrome?.values ?? 'editable',
@@ -495,7 +512,7 @@ vue.watch(
 
 //==============================================================================
 
-// Annotate diagram components and report pointer events, as `@celldl/viewer` does
+// The host's information about elements, and pointer events reported as `@celldl/viewer` does
 
 celldlEditor.setViewerEventHandler((event: ViewerEvent) => {
     emit('event', event)
@@ -506,12 +523,12 @@ celldlEditor.setMessageHandler((message: EditorMessage) => {
     emit('message', message)
 })
 
-celldlEditor.setAnnotations(props.annotations, props.options)
+celldlEditor.setElementInfo(props.elementInfo, props.options)
 
 vue.watch(
-    () => [props.annotations, props.options],
+    () => [props.elementInfo, props.options],
     () => {
-        celldlEditor.setAnnotations(props.annotations, props.options)
+        celldlEditor.setElementInfo(props.elementInfo, props.options)
     }
 )
 

@@ -84,21 +84,21 @@ export interface LayoutPreset {
 }
 
 export const LAYOUT_PRESETS: LayoutPreset[] = [
-    { id: 'balanced', name: 'Balanced', description: 'Regions in one piece each, cycles as circles, short bonds and few crossings, weighed evenly.',
+    { id: 'balanced', name: 'Balanced', description: 'Locations in one piece each, cycles as circles, short bonds and few crossings, weighed evenly.',
       options: {} },
     { id: 'crossings', name: 'Fewer crossings', description: 'Crossing bonds cost four times as much, and the annealing runs longer.',
       options: { steps: 3000, weights: { crossing: 8 } } },
-    { id: 'compact', name: 'Short bonds', description: 'Bonds held near their natural length more strongly, and nodes pulled harder to their region.',
+    { id: 'compact', name: 'Short bonds', description: 'Bonds held near their natural length more strongly, and nodes pulled harder to their location.',
       options: { regionPull: 0.15, weights: { stretch: 2 } } },
-    { id: 'regions', name: 'Simple regions', description: 'Boundaries that turn and run long cost more: smoother, more compact regions.',
+    { id: 'regions', name: 'Simple locations', description: 'Boundaries that turn and run long cost more: smoother, more compact locations.',
       options: { regionPull: 0.12, weights: { length: 0.6, split: 20 } } },
     { id: 'cycles', name: 'Clear cycles', description: 'A node other than a cycle\'s own inside its circle costs three times as much: cleaner circles, a few more crossings.',
       options: { weights: { inside: 30 } } },
     { id: 'aligned', name: 'Lined up', description: 'Each column and row a kind of node takes costs more than twice as much: fewer, fuller lines.',
       options: { weights: { align: 4 } } },
-    { id: 'gentle', name: 'Stay close', description: 'The layout as drawn, tidied: no stress stage, regions left free-form, and moving nodes far costs more.',
+    { id: 'gentle', name: 'Stay close', description: 'The layout as drawn, tidied: no stress stage, locations left free-form, and moving nodes far costs more.',
       options: { regionsFirst: false, rectangles: false, sgdSweeps: 0, weights: { moved: 0.3 } } },
-    { id: 'freeform', name: 'Free-form regions', description: 'Regions shaped by their nodes rather than as rectangles, and no cost for columns and rows.',
+    { id: 'freeform', name: 'Free-form locations', description: 'Locations shaped by their nodes rather than as rectangles, and no cost for columns and rows.',
       options: { rectangles: false, weights: { align: 0 } } }
 ]
 
