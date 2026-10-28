@@ -121,6 +121,11 @@ type AddObjectOptions = {
 }
 //==============================================================================
 
+/** Why a bond can't be added: one of its ends isn't in the diagram. */
+export const MISSING_BOND_END = 'A bond needs both its ends in the diagram, and one of them is no longer there'
+
+//==============================================================================
+
 export class CellDLDiagram {
     #svgDiagram!: SVGSVGElement
     #defsElement: SVGDefsElement|null|undefined
@@ -673,7 +678,17 @@ export class CellDLDiagram {
         return object as CellDLConnectedObject
     }
 
+    /**
+     * Adds a bond drawn as `svgElement`. Throws (adding nothing) when an end isn't in the diagram, as when it has
+     * been deleted, so no bond goes to nothing.
+     */
     addNewConnection(svgElement: SVGGraphicsElement, template: ObjectTemplate): CellDLConnection {
+        const metadata = template.metadataProperties
+        const ends = [metadata.getProperty(CELLDL.uri('hasSource')), metadata.getProperty(CELLDL.uri('hasTarget'))]
+        if (!ends.every(end => this.hasConnector(end))) {
+            svgElement.remove()
+            throw new Error(MISSING_BOND_END)
+        }
         const connection = this.#addNewObject(svgElement, template) as CellDLConnection
         // let the plugins know
         componentLibraryPlugin.addConnection(connection)
@@ -1063,6 +1078,11 @@ export class CellDLDiagram {
         return null
     }
 
+    /** Whether `node` is a connector in the diagram and drawn in it (not deleted, nor inside a deleted group). */
+    hasConnector(node: MetadataPropertyValue | null): boolean {
+        return !!this.getConnector(node)?.celldlSvgElement?.svgElement.isConnected
+    }
+
     #loadConnections() {
         this.#loadObject(CELLDL.uri('Connection'), CellDLConnection)
     }
@@ -1132,6 +1152,8 @@ export class CellDLDiagram {
         if (celldlObject.isComponent) {
             editGuides.removeGuide(<CellDLComponent>celldlObject)
         }
+        // A group's members (and their bonds) are drawn inside it, so go with it
+        const members = celldlObject.isComponent ? this.#groupMembers(celldlObject) : []
         celldlObject.celldlSvgElement?.remove() // Will remove SVG element from DOM
         this.#kb.removeStatementsForSubject(celldlObject.uri)
         this.#objects.delete(celldlObject.id)
@@ -1151,6 +1173,21 @@ export class CellDLDiagram {
             }
             componentLibraryPlugin.connectionDeleted(connection)
         }
+        // after the group, so undo puts the group back before its members go back inside it
+        for (const member of members) {
+            if (this.#objects.has(member.id)) {
+                this.#removeObject(member, undoState)
+            }
+        }
+    }
+
+    // The objects drawn inside a component's SVG element: a group's members, their bonds and its interface ports
+    #groupMembers(component: CellDLObject): CellDLObject[] {
+        const svgElement = component.celldlSvgElement?.svgElement
+        if (!svgElement) return []
+        return [...svgElement.querySelectorAll('[id]')]
+            .map(element => this.#objects.get(element.id))
+            .filter((object): object is CellDLObject => object !== undefined && object !== component)
     }
 }
 
