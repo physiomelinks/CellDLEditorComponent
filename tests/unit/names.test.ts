@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 
-import { bondgraphName, type NamingElement, variableNames } from '../../src/plugins/bondgraph/names'
+import { bondgraphName, type NamingElement, previewNames } from '../../src/plugins/bondgraph/naming'
 
 const BGF = 'https://bg-rdf.org/ontologies/bondgraph-framework#'
+
+const variableNames = (elements: NamingElement[]) => previewNames(elements, [], new Map())
 
 const element = (identifier: string, label: string, variables: string[], extra: Partial<NamingElement> = {}): NamingElement =>
     ({ id: `m#${identifier}`, identifier, label, variables, ...extra })

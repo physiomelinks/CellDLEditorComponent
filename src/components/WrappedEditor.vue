@@ -134,6 +134,8 @@ import type { PopoverEventData, ViewInfo, ViewState } from '#root/utils/editor-t
 
 import PropertiesPanel from './panels/PropertiesPanel.vue'
 import ReactionsPanel from './panels/ReactionsPanel.vue'
+import VariablesPanel from './panels/VariablesPanel.vue'
+import AnnotationsPanel from './panels/AnnotationsPanel.vue'
 import StylingPanel from './panels/StylingPanel.vue'
 
 import AddElementPopover from './palette/AddElementPopover.vue'
@@ -144,6 +146,7 @@ import ArrangeBar from './controls/ArrangeBar.vue'
 import CanvasControls from './controls/CanvasControls.vue'
 import EditorToolbar from './toolbar/EditorToolbar.vue'
 import { closeSelectionPanels } from './toolbar/selectionPanels'
+import { isShownPanel, type PanelName } from './toolbar/shownPanels'
 import EditorContextMenu from './widgets/EditorContextMenu.vue'
 import type { ContextMenuProps } from './widgets/EditorContextMenu.vue'
 
@@ -287,8 +290,8 @@ export type EditorChrome = {
     /**
      * The right-hand panels: `false` hides the panel bar, a list shows just
      * those panels. When absent, or `true`, Properties, Metadata, Style and
-     * Reactions are shown. `variables` and `annotations` are accepted for panels
-     * still to come, which are only shown when listed.
+     * Reactions are shown; Variables and Annotations are shown only when
+     * listed.
      */
     panels?: boolean | EditorPanelName[]
     /**
@@ -332,7 +335,7 @@ export type EditorChrome = {
 
 export type EditorToolName = 'select' | 'bondgraph' | 'drawing'
 
-export type EditorPanelName = 'properties' | 'metadata' | 'style' | 'reactions' | 'variables' | 'annotations'
+export type EditorPanelName = PanelName
 
 //==============================================================================
 
@@ -911,26 +914,23 @@ const panelButtons = vue.ref<EditorToolButton[]>([
         prompt: 'Reactions',
         icon: 'lucide-FlaskConical',
         panel: vue.markRaw(ReactionsPanel)
+    },
+    {
+        toolId: PANEL_ID.VARIABLES_PANEL,
+        prompt: 'Variables',
+        icon: 'lucide-Tags',
+        panel: vue.markRaw(VariablesPanel)
+    },
+    {
+        toolId: PANEL_ID.ANNOTATIONS_PANEL,
+        prompt: 'Annotations',
+        icon: 'lucide-BookMarked',
+        panel: vue.markRaw(AnnotationsPanel)
     }
 ])
 
-// The panels shown when `chrome.panels` is absent or `true`
-const DEFAULT_EDITOR_PANELS: readonly EditorPanelName[] = ['properties', 'metadata', 'style', 'reactions']
-
-const PANEL_NAMES: Record<string, EditorPanelName> = {
-    [PANEL_ID.PROPERTIES_PANEL]: 'properties',
-    [PANEL_ID.METADATA_PANEL]: 'metadata',
-    [PANEL_ID.STYLE_PANEL]: 'style',
-    [PANEL_ID.REACTIONS_PANEL]: 'reactions'
-}
-
 const shownPanelButtons = vue.computed(() => {
-    const panels = props.chrome?.panels
-    if (panels === false) {
-        return []
-    }
-    const shown: readonly EditorPanelName[] = Array.isArray(panels) ? panels : DEFAULT_EDITOR_PANELS
-    return panelButtons.value.filter(button => shown.includes(PANEL_NAMES[button.toolId] as EditorPanelName))
+    return panelButtons.value.filter(button => isShownPanel(button.toolId, props.chrome?.panels))
 })
 
 // Close a panel whose button is hidden, as it could not be closed otherwise
@@ -1026,6 +1026,14 @@ vue.watch(
             const options = command.options
             if (options.action === 'clean') {
                 undoRedo.clean()
+            } else if (options.action === 'map-variables') {
+                // open the Variables panel
+                const button = document.getElementById(PANEL_ID.VARIABLES_PANEL)
+                if (button && !button.classList.contains('active')) button.click()
+            } else if (options.action === 'annotate') {
+                // open the Annotations panel
+                const button = document.getElementById(PANEL_ID.ANNOTATIONS_PANEL)
+                if (button && !button.classList.contains('active')) button.click()
             }
         } else if (props.editorCommand?.command === 'element') {
             await elementCommand(props.editorCommand as EditorElementCommand)

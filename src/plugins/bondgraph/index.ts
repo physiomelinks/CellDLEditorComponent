@@ -85,9 +85,13 @@ import {
     definitionToLibraryTemplate,
     svgImageData
 } from './definitions'
+import {
+    type Annotation, ANNOTATION_PREDICATES, annotationText, planAnnotationChanges, readAnnotations, type Triple
+} from './annotations'
 import { type BondInfo, equationLatex, equationText, type NodeInfo, type SpeciesNode, type StepEquation, stepEquation } from './equations'
+import { elementTemplatesQuery, styleOverrides, templateStyle } from './laws'
 import { type MathNode, mathmlLatex, type SignedTerm, whereLatex, whereText } from './lawtext'
-import { ELEMENT_CLASSES, type NamingElement, variableNames } from './names'
+import { ELEMENT_CLASSES, type NameOverrides, type NamingElement, type NamingRule, previewNames } from './naming'
 import { latexAsSvgString } from '#root/mathjax'
 import type {
     BGComponentLibrary,
@@ -213,7 +217,8 @@ type ElementTemplate = ElementTypeName & {
     parameters: IdVariableMap
     variables: IdVariableMap
     symbol: string
-    defaultStyle: BGElementStyle
+    defaultStyle: BGElementStyle            // the base component's, with the template's bgf:hasStyle in place
+    lawLabel?: string                       // the template's bgf:lawLabel: names its constitutive relation
     baseComponent: BGBaseComponent
     /** The template's declared ports (`bgf:hasPort`), by direction */
     ports?: BondPorts
@@ -637,9 +642,8 @@ export class BondgraphPlugin implements PluginInterface {
             statements.push(`<${this.#currentDocumentUri}> bgf:hasBondElement ${r.get('uri')!.toString()} .`)
         })
 
-        // Find the JunctionStructures in the diagram. Composite elements (e.g. a
-        // bgf:ZeroStorageNode) are both, but are listed only as BondElements, as
-        // in BG-RDF's own examples
+        // Find the JunctionStructures in the diagram; a composite (a reaction with its One Node, a store with its
+        // Zero Node) is a BondElement, whose junction bg2cellml makes from its template
 
         rdfStore.query(`${SPARQL_PREFIXES}
             PREFIX : <${this.#currentDocumentUri}#>
@@ -649,8 +653,8 @@ export class BondgraphPlugin implements PluginInterface {
                 ?uri a ?type .
                 ?type rdfs:subClassOf* bgf:JunctionStructure
                 FILTER NOT EXISTS {
-                    ?type rdfs:subClassOf* ?composite .
-                    ?composite a bgf:CompositeElement
+                    ?uri a ?elementType .
+                    ?elementType rdfs:subClassOf* bgf:BondElement
                 }
             }`, true)
         .forEach((r: Map<string, $rdf.Term>) => {
@@ -810,14 +814,14 @@ export class BondgraphPlugin implements PluginInterface {
     }
 
     /**
-     * The diagram's bond elements with the variables bg2cellml gives them (./names.ts): its flow and potential
+     * The diagram's bond elements with the variables bg2cellml gives them (./naming.ts): its flow and potential
      * (a reaction's u_f and u_r), its template's parameters and variables, then its own quantity.
      */
     namingElements(): NamingElement[] {
         const store = this.#documentStore
         if (!store) return []
         const prefix = `${this.#currentDocumentUri}#`
-        const classes = ELEMENT_CLASSES.map(uri => ({ uri, types: this.#subclassesOf(uri) }))
+        const classes = ELEMENT_CLASSES.map(c => ({ uri: c.uri, types: this.#subclassesOf(c.uri) }))
         const elements = new Map<string, NamingElement>()
         for (const r of store.query(`${SPARQL_PREFIXES}
             SELECT ?node ?type ?symbol ?species ?location WHERE {
@@ -847,6 +851,106 @@ export class BondgraphPlugin implements PluginInterface {
             })
         }
         return [...elements.values()]
+    }
+
+    /** The document's naming rules and explicit names (bgf:hasNamingRule, bgf:hasVariableName). */
+    naming(): { rules: NamingRule[], overrides: NameOverrides } {
+        const store = this.#documentStore
+        const rules: NamingRule[] = [], overrides: NameOverrides = new Map()
+        if (!store) return { rules, overrides }
+        for (const r of store.query(`${SPARQL_PREFIXES}
+            SELECT ?variable ?pattern ?class ?domain WHERE {
+                <${this.#currentDocumentUri}> bgf:hasNamingRule ?rule .
+                ?rule bgf:forVariable ?variable ; bgf:namePattern ?pattern .
+                OPTIONAL { ?rule bgf:forElementClass ?class }
+                OPTIONAL { ?rule bgf:forDomain ?domain }
+            }`) as Map<string, $rdf.Term>[]) {
+            rules.push({ variable: r.get('variable')!.value, pattern: r.get('pattern')!.value,
+                         elementClass: r.get('class')?.value, domain: r.get('domain')?.value })
+        }
+        for (const r of store.query(`${SPARQL_PREFIXES}
+            SELECT ?element ?variable ?name WHERE {
+                ?element bgf:hasVariableName ?given .
+                ?given bgf:forVariable ?variable ; bgf:cellmlName ?name .
+            }`) as Map<string, $rdf.Term>[]) {
+            overrides.set(`${r.get('element')!.value}|${r.get('variable')!.value}`, r.get('name')!.value)
+        }
+        return { rules, overrides }
+    }
+
+    /** Replace the document's naming rules and explicit names; they are saved with it. */
+    setNaming(rules: NamingRule[], overrides: NameOverrides) {
+        const store = this.#documentStore
+        if (!store) return
+        const literal = (s: string) => JSON.stringify(s)         // a quoted, escaped Turtle string
+        store.update(`${SPARQL_PREFIXES}
+            DELETE WHERE { <${this.#currentDocumentUri}> bgf:hasNamingRule ?rule . ?rule ?p ?o }`)
+        store.update(`${SPARQL_PREFIXES}
+            DELETE WHERE { ?element bgf:hasVariableName ?given . ?given ?p ?o }`)
+        const statements: string[] = []
+        rules.forEach((rule, k) => {
+            statements.push(`<${this.#currentDocumentUri}> bgf:hasNamingRule _:rule${k} .`,
+                            `_:rule${k} bgf:forVariable ${literal(rule.variable)} ; bgf:namePattern ${literal(rule.pattern)} .`)
+            if (rule.elementClass) statements.push(`_:rule${k} bgf:forElementClass <${rule.elementClass}> .`)
+            if (rule.domain) statements.push(`_:rule${k} bgf:forDomain <${rule.domain}> .`)
+        })
+        let k = 0
+        for (const [key, name] of overrides) {
+            if (name.trim() === '') continue
+            const [element, variable] = key.split('|')
+            statements.push(`<${element}> bgf:hasVariableName _:name${k} .`,
+                            `_:name${k} bgf:forVariable ${literal(variable!)} ; bgf:cellmlName ${literal(name.trim())} .`)
+            k += 1
+        }
+        if (statements.length) {
+            store.update(`${SPARQL_PREFIXES}
+                INSERT DATA { ${statements.join('\n')} }`)
+        }
+    }
+
+    /** The annotations of the diagram's elements (./annotations.ts), by element URI. */
+    annotations(): Map<string, Annotation> {
+        const store = this.#documentStore
+        if (!store) return new Map()
+        const prefix = `${this.#currentDocumentUri}#`
+        const triples: Triple[] = []
+        for (const r of store.query(`${SPARQL_PREFIXES}
+            SELECT ?s ?p ?o WHERE {
+                ?s ?p ?o .
+                FILTER (?p IN (${ANNOTATION_PREDICATES.map(p => `<${p}>`).join(', ')}))
+            }`) as Map<string, $rdf.Term>[]) {
+            const subject = r.get('s')!.value
+            if (subject.startsWith(prefix)) {
+                triples.push({ subject, predicate: r.get('p')!.value, object: r.get('o')!.value })
+            }
+        }
+        return readAnnotations(triples)
+    }
+
+    /** Give these elements these annotations (removing any they no longer have); they are saved with the document. */
+    setAnnotations(wanted: Map<string, Annotation>) {
+        const store = this.#documentStore
+        if (!store) return
+        const { remove, add } = planAnnotationChanges(this.annotations(), wanted)
+        const data = (triples: Triple[]) => triples.map(t => `<${t.subject}> <${t.predicate}> <${t.object}> .`).join('\n')
+        if (remove.length) store.update(`DELETE DATA { ${data(remove)} }`)
+        if (add.length) store.update(`INSERT DATA { ${data(add)} }`)
+    }
+
+    /**
+     * The diagram's regions (./regions.ts): each store's and source's location, each step's species' locations
+     * (several for a step between compartments), and the bonds between nodes.
+     */
+    regionLayout(): { regions: Map<string, string[]>, bonds: { a: string, b: string, id?: string, count: number }[] } {
+        const { bonds, nodes, steps, species } = this.#diagramGraph()
+        const regions = new Map<string, string[]>()
+        for (const n of species) {
+            if (n.location) regions.set(n.id, [n.location])
+        }
+        for (const [node, isResistance] of steps) {
+            regions.set(node, stepEquation(node, isResistance, bonds, nodes).regions)
+        }
+        return { regions, bonds: bonds.map(b => ({ a: b.source, b: b.target, id: b.id, count: b.count })) }
     }
 
     /**
@@ -1017,15 +1121,15 @@ export class BondgraphPlugin implements PluginInterface {
 
     /**
      * What an element's hover shows (./lawtext.ts): its constitutive law, typeset in its template's symbols, and
-     * each symbol's CellML name (./names.ts) with what the bonds make it: a reaction's u_f and u_r (the potentials
+     * each symbol's CellML name (./naming.ts) with what the bonds make it: a reaction's u_f and u_r (the potentials
      * bonded to each side, a transformer's scaled by its ratio), a store's flow (its reactions' flows), a
-     * resistance's potential (the difference across it). '' for an element without a law.
+     * resistance's potential (the difference across it), and its annotations (./annotations.ts). An element without
+     * a law shows only its annotations ('' when it has none).
      */
     hoverHtml(celldlObject: CellDLObject): string {
         if (celldlObject.isConnection) return ''
         const templateType = (<PluginData>celldlObject.pluginData(this.id)).elementTemplate?.type
         const law = templateType ? this.#law(templateType) : null
-        if (!law) return ''
         const id = celldlObject.uri.value
         const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
         // an equation typeset as the law is, its text kept in data-text; the text itself if MathJax rejects it
@@ -1034,10 +1138,14 @@ export class BondgraphPlugin implements PluginInterface {
             try { svg = latexAsSvgString(latex, true) } catch { svg = escape(text) }
             return `<div class="bg-law-line" data-text="${escape(text)}">${svg}</div>`
         }
+        const annotated = annotationText(this.annotations().get(id))
+        const annotation = annotated ? `<div class="bg-law-annotation">${escape(annotated)}</div>` : ''
+        if (!law) return annotation ? `<div class="bg-law">${annotation}</div>` : ''
         const elements = this.namingElements()
         const element = elements.find(e => e.id === id)
         if (!element) return ''
-        const names = variableNames(elements)
+        const { rules, overrides } = this.naming()
+        const names = previewNames(elements, rules, overrides)
         const { bonds, nodes } = this.#diagramGraph()
         const byId = new Map(elements.map(e => [e.id, e]))
         const portName = (node: string, port: 'flow'|'potential') => {
@@ -1080,6 +1188,7 @@ export class BondgraphPlugin implements PluginInterface {
         const step = this.reactionEquations().find(eq => eq.id === id)
         return '<div class="bg-law">'
             + (step ? `<div class="bg-law-equation">${typeset(equationLatex(step), equationText(step))}</div>` : '')
+            + annotation
             + (law.label ? `<div class="bg-law-label">${escape(law.label)}</div>` : '')
             + (law.svg ? `<div class="bg-law-math">${law.svg}</div>` : '')
             + `<div class="bg-law-where">${whereText(where).map((text, k) => typeset(whereLatexLines[k]!, text)).join('')}</div>`
@@ -1690,7 +1799,8 @@ export class BondgraphPlugin implements PluginInterface {
         let imageData = ''
         try {
             imageData = svgImageData(symbol, species, location,
-                                     baseComponent.style, pluginData.fillString)
+                                     pluginData.elementTemplate?.defaultStyle ?? baseComponent.style,
+                                     pluginData.fillString, pluginData.elementTemplate?.lawLabel)
         // biome-ignore lint/suspicious/noExplicitAny: <>
         } catch (error: any) {
             return (error as Error).message
@@ -2065,21 +2175,7 @@ export class BondgraphPlugin implements PluginInterface {
                 this.#baseComponentToElementTemplates.get(component.type)!.push(elementTemplate)
                 continue
             }
-            this.#query(`
-                SELECT ?element ?label ?symbol ?domain ?relation WHERE {
-                    ?element
-                        rdfs:subClassOf* ?subType ;
-                        rdfs:subClassOf* <${base}> .
-                    ?subType bgf:hasDomain ?domain .
-                    OPTIONAL { ?element rdfs:label ?label }
-                    OPTIONAL { ?element bgf:hasSymbol ?symbol }
-                    OPTIONAL { ?subType bgf:constitutiveRelation ?relation }
-                    FILTER (
-                        exists { ?element a bgf:ElementTemplate }
-                     || exists {<${base}> a bgf:CompositeElement}
-                    )
-                  } order by ?label`
-            ).forEach((r: Map<string, $rdf.Term>) => {
+            this.#query(elementTemplatesQuery(base)).forEach((r: Map<string, $rdf.Term>) => {
                 const element = r.get('element')!
                 const domainId = r.get('domain')!.value
                 const label = r.get('label')
@@ -2093,7 +2189,8 @@ export class BondgraphPlugin implements PluginInterface {
                     name: label ? label.value : nameFromType(element.value),
                     parameters: new Map(),
                     variables: new Map(),
-                    defaultStyle: component.style,
+                    defaultStyle: templateStyle(component.style, styleOverrides(r)),
+                    lawLabel: r.get('lawLabel')?.value,
                     symbol: symbol ? symbol.value : component.symbol,
                     baseComponent: component,
                 }
