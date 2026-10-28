@@ -1,42 +1,44 @@
 <template lang="pug">
-    .add-element-popover(
-        ref="root"
-        role="dialog"
-        aria-label="Add element"
-        :style="position"
-        @keydown="keyDown"
-    )
-        select.popover-filter(
-            ref="filter"
-            v-model="shownDomain"
-            aria-label="Which domain's elements"
-            @change="search?.focus()"
+    //- In the body, as the context menu is, so that a host dialog's transform doesn't move it from the click
+    Teleport(to="body")
+        .add-element-popover(
+            ref="root"
+            role="dialog"
+            aria-label="Add element"
+            :style="position"
+            @keydown="keyDown"
         )
-            option(v-for="option in domainOptions" :key="option.domain" :value="option.domain") {{ option.label }}
-        input.popover-search(
-            ref="search"
-            type="search"
-            placeholder="Search elements"
-            aria-label="Search elements"
-            :aria-activedescendant="current ? `add-element-${index}` : undefined"
-            v-model="query"
-        )
-        ul.popover-list(role="listbox" aria-label="Elements")
-            li.popover-item(
-                v-for="(entry, k) in matches"
-                :key="entry.id"
-                :id="`add-element-${k}`"
-                :data-entry-id="entry.id"
-                role="option"
-                :aria-selected="k === index"
-                :class="{ current: k === index }"
-                :title="entry.name"
-                @pointerenter="index = k"
-                @click="pick(entry)"
+            select.popover-filter(
+                ref="filter"
+                v-model="shownDomain"
+                aria-label="Which domain's elements"
+                @change="search?.focus()"
             )
-                img.popover-glyph(:src="entry.imageData" alt="")
-                span {{ entry.label }}
-            li.popover-empty(v-if="matches.length === 0") No element matches
+                option(v-for="option in domainOptions" :key="option.domain" :value="option.domain") {{ option.label }}
+            input.popover-search(
+                ref="search"
+                type="search"
+                placeholder="Search elements"
+                aria-label="Search elements"
+                :aria-activedescendant="current ? `add-element-${index}` : undefined"
+                v-model="query"
+            )
+            ul.popover-list(role="listbox" aria-label="Elements")
+                li.popover-item(
+                    v-for="(entry, k) in matches"
+                    :key="entry.id"
+                    :id="`add-element-${k}`"
+                    :data-entry-id="entry.id"
+                    role="option"
+                    :aria-selected="k === index"
+                    :class="{ current: k === index }"
+                    :title="entry.name"
+                    @pointerenter="index = k"
+                    @click="pick(entry)"
+                )
+                    img.popover-glyph(:src="entry.imageData" alt="")
+                    span {{ entry.label }}
+                li.popover-empty(v-if="matches.length === 0") No element matches
 </template>
 
 <script setup lang="ts">
@@ -49,6 +51,7 @@ import { paletteDomains, searchEntries } from '#root/plugins/bondgraph/palette'
 import { searchSpatialEntries } from '#root/plugins/drawing/spatial'
 
 import { shownDomain } from './paletteState'
+import { popoverPosition, topZIndex } from './popoverPosition'
 
 //==============================================================================
 
@@ -78,12 +81,12 @@ vue.watch(matches, () => {
     index.value = 0
 })
 
-// Kept inside the window
+// Kept inside the window, and above whatever the host has open
 const size = vue.ref({ width: 0, height: 0 })
+const zIndex = vue.ref(topZIndex([...document.body.children].map((child) => getComputedStyle(child).zIndex)))
 const position = vue.computed(() => {
-    const left = Math.max(4, Math.min(props.at.x, window.innerWidth - size.value.width - 4))
-    const top = Math.max(4, Math.min(props.at.y, window.innerHeight - size.value.height - 4))
-    return { left: `${left}px`, top: `${top}px` }
+    const { left, top } = popoverPosition(props.at, size.value, { width: window.innerWidth, height: window.innerHeight })
+    return { left: `${left}px`, top: `${top}px`, zIndex: zIndex.value }
 })
 
 function pick(entry: { id: string }) {
@@ -137,7 +140,6 @@ vue.onUnmounted(() => {
 <style scoped>
 .add-element-popover {
     position: fixed;
-    z-index: 1100;
     display: flex;
     flex-direction: column;
     gap: 4px;
