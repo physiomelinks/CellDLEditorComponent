@@ -103,6 +103,19 @@ import type {
 } from './utils'
 import { DomainGraph } from './domainGraph'
 import {
+    defaultSignalUse,
+    drawSignalBonds,
+    freeUnitsLabel,
+    isSignalConnection,
+    parseSignalUse,
+    SIGNAL_BOND_CLASS,
+    type SignalTarget,
+    type SignalUse,
+    signalUseOptions,
+    signalUseValue,
+    valueWithUnits
+} from './signals'
+import {
     effectiveUnits,
     IMPLICIT_UNIT_SYSTEM,
     NEW_DIAGRAM_UNIT_SYSTEM,
@@ -163,6 +176,10 @@ export class BGBaseComponent {
         return this.#bgClass === BGF.uri('JunctionStructure').value
     }
 
+    get isSignalBlock() {
+        return this.#bgClass === BGF.uri('SignalBlock').value
+    }
+
     get junctionType() {
         return this.#junctionType
     }
@@ -196,8 +213,14 @@ export class BGBaseComponent {
 
 interface Variable {
     name: string
-    units: string
+    units: string           // '' when the variable has no fixed units
     value?: string
+    unitsOf?: string        // the template variable whose units it has (bgf:unitsOf)
+}
+
+/** Whether a variable has no fixed units, so takes those of its value or of what it is connected to */
+function hasFreeUnits(variable: Variable): boolean {
+    return !variable.units
 }
 
 type IdVariableMap = Map<string, Variable>
@@ -225,6 +248,12 @@ type ElementTemplate = ElementTypeName & {
     baseComponent: BGBaseComponent
     /** The template's declared ports (`bgf:hasPort`), by direction */
     ports?: BondPorts
+    /** Its constitutive relation, as content MathML */
+    relation?: string
+    /** The signal inputs (`bgf:hasSignalInput`) a signal bond can set, in order */
+    signalInputs: Variable[]
+    /** A signal block's output (`bgf:hasSignalOutput`) */
+    signalOutput?: Variable
 }
 
 //==============================================================================
@@ -263,7 +292,8 @@ export enum BG_PROPERTY_GROUP_ID {
     ElementProperties = 'bg-element-properties',
     ElementInitialValue = 'bg-element-initial-value',
     ElementParameters = 'bg-element-parameters',
-    ElementVariables = 'bg-element-variables'
+    ElementVariables = 'bg-element-variables',
+    SignalBond = 'bg-signal-bond'
 }
 
 const BG_PROPERTY_GROUP_IDS = Object.entries(BG_PROPERTY_GROUP_ID).map(([_, value]) => value as string)
@@ -271,8 +301,26 @@ const BG_PROPERTY_GROUP_IDS = Object.entries(BG_PROPERTY_GROUP_ID).map(([_, valu
 export const BG_ELEMENT_TYPE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-type`
 export const BG_ELEMENT_SPECIES_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-species`
 export const BG_ELEMENT_LOCATION_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-location`
+export const BG_ELEMENT_PORT_TYPE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-port-type`
+export const BG_ELEMENT_PORT_VARIABLES_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-port-variables`
+export const BG_ELEMENT_PORT_DIRECTION_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-port-direction`
+export const BG_ELEMENT_PORT_ORDER_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-port-order`
+export const BG_ELEMENT_MULTI_PORT_ITEM = `${BG_PROPERTY_GROUP_ID.ElementProperties}/bg-element-multi-port`
+// a module port's other properties, shown with its port type
+const BG_PORT_DETAIL_ITEMS = [BG_ELEMENT_PORT_VARIABLES_ITEM, BG_ELEMENT_PORT_DIRECTION_ITEM,
+                              BG_ELEMENT_PORT_ORDER_ITEM, BG_ELEMENT_MULTI_PORT_ITEM]
 
 export const BG_ELEMENT_VALUE_ITEM = `${BG_PROPERTY_GROUP_ID.ElementInitialValue}/bg-element-value`
+
+// A connection's kind, and a signal bond's source variable, use of its target and exponent
+export const BG_BOND_KIND_ITEM = `${BG_PROPERTY_GROUP_ID.SignalBond}/kind`
+export const BG_SIGNAL_VARIABLE_ITEM = `${BG_PROPERTY_GROUP_ID.SignalBond}/variable`
+export const BG_SIGNAL_USE_ITEM = `${BG_PROPERTY_GROUP_ID.SignalBond}/use`
+export const BG_SIGNAL_EXPONENT_ITEM = `${BG_PROPERTY_GROUP_ID.SignalBond}/exponent`
+
+const POWER_BOND = 'power'
+const SIGNAL_BOND = 'signal'
+const DEFAULT_SIGNAL_VARIABLE = 'default'
 
 //==============================================================================
 
@@ -307,6 +355,36 @@ function elementPropertiesTemplate(): IndexedPropertyGroup[] {
                 property: BGF.uri('hasLocation').value,
                 name: 'Location',
                 defaultValue: ''
+            },
+            {
+                itemId: BG_ELEMENT_PORT_TYPE_ITEM,
+                property: BGF.uri('portType').value,
+                name: 'Port type (as a module port)',
+                defaultValue: ''
+            },
+            {
+                itemId: BG_ELEMENT_PORT_VARIABLES_ITEM,
+                property: BGF.uri('portVariables').value,
+                name: 'Port variables (e.g. "v", "q", "u v"; default by element)',
+                defaultValue: ''
+            },
+            {
+                itemId: BG_ELEMENT_PORT_DIRECTION_ITEM,
+                property: BGF.uri('portDirection').value,
+                name: 'Port direction (entrance, exit, general)',
+                defaultValue: ''
+            },
+            {
+                itemId: BG_ELEMENT_PORT_ORDER_ITEM,
+                property: BGF.uri('portOrder').value,
+                name: 'Place in a port of several variables',
+                defaultValue: ''
+            },
+            {
+                itemId: BG_ELEMENT_MULTI_PORT_ITEM,
+                property: BGF.uri('multiPort').value,
+                name: 'Multi port (True, sum)',
+                defaultValue: ''
             }
         ]
     }, {
@@ -332,6 +410,11 @@ function elementPropertiesTemplate(): IndexedPropertyGroup[] {
         groupId: BG_PROPERTY_GROUP_ID.ElementVariables,
         title: 'Variables',
         index: 3,
+        items: []
+    }, {
+        groupId: BG_PROPERTY_GROUP_ID.SignalBond,
+        title: 'Bond',
+        index: 4,
         items: []
     }]
 }
@@ -386,6 +469,9 @@ const TRANSFORM_NODE_PROMPT = 'Ratio'
 /** The base classes of the elements that a compartment gives a location (`isLocatedElement()`) */
 const LOCATED_CLASSES = ['QuantityStore', 'FlowStore', 'PotentialSource', 'FlowSource']
 
+/** The junctions that are not bond elements, which a signal bond can start at but not end at */
+const JUNCTION_TYPES = ['ZeroNode', 'OneNode', 'TransformNode'].map(t => `${BGF_URI}${t}`)
+
 //==============================================================================
 //==============================================================================
 
@@ -410,6 +496,8 @@ export class BondgraphPlugin implements PluginInterface {
     #transformNodeType = BGF.uri('TransformNode').value
     #locatedTypes: Set<string>|undefined
     #newDiagramUnitSystem: UnitSystemId = NEW_DIAGRAM_UNIT_SYSTEM
+    // the object a path being drawn would reach by a signal bond, which then may take one more connection
+    #pendingSignalTarget: string|undefined
 
     constructor() {
         for (const group of elementPropertiesTemplate()) {
@@ -422,6 +510,7 @@ export class BondgraphPlugin implements PluginInterface {
         this.#assignTemplates()
         this.#loadTemplatePorts()
         this.#loadTemplateParameters()
+        this.#loadSignalVariables()
     }
 
     //==========================================================================
@@ -629,8 +718,29 @@ export class BondgraphPlugin implements PluginInterface {
             WHERE {
                 <${this.#currentDocumentUri}> bgf:hasJunctionStructure ?uri
             }`)
+        for (const predicate of ['bgf:hasSignalBlock', 'bgf:hasSignalBond']) {
+            rdfStore.update(`${SPARQL_PREFIXES}
+                DELETE WHERE { <${this.#currentDocumentUri}> ${predicate} ?uri }`)
+        }
 
         const statements: string[] = []
+
+        // The signal blocks and signal bonds, which bg2cellml reads from bgf:hasSignalBlock and bgf:hasSignalBond
+
+        rdfStore.query(`${SPARQL_PREFIXES}
+            SELECT DISTINCT ?uri
+            WHERE {
+                ?uri a ?type .
+                ?type rdfs:subClassOf* bgf:SignalBlock
+            }`, true)
+        .forEach((r: Map<string, $rdf.Term>) => {
+            statements.push(`<${this.#currentDocumentUri}> bgf:hasSignalBlock ${r.get('uri')!.toString()} .`)
+        })
+        rdfStore.query(`${SPARQL_PREFIXES}
+            SELECT ?uri WHERE { ?uri a bgf:SignalBond }`, true)
+        .forEach((r: Map<string, $rdf.Term>) => {
+            statements.push(`<${this.#currentDocumentUri}> bgf:hasSignalBond ${r.get('uri')!.toString()} .`)
+        })
 
         // Find the BondElements in the diagram
 
@@ -752,6 +862,7 @@ export class BondgraphPlugin implements PluginInterface {
             SELECT ?bond ?source ?target ?count WHERE {
                 ?bond bgf:hasSource ?source ; bgf:hasTarget ?target .
                 OPTIONAL { ?bond bgf:bondCount ?count }
+                FILTER NOT EXISTS { ?bond a bgf:SignalBond }
             }`) as Map<string, $rdf.Term>[]) {
             if (!r.get('bond')!.value.startsWith(prefix)) continue
             bonds.push({
@@ -850,6 +961,16 @@ export class BondgraphPlugin implements PluginInterface {
             const node = r.get('node')!.value
             const template = this.#elementTemplates.get(r.get('type')!.value)
             if (!node.startsWith(prefix) || !template || elements.has(node)) continue
+            if (template.baseComponent.isSignalBlock) {
+                // a block's own variables: its output and parameters
+                elements.set(node, {
+                    id: node, identifier: node.slice(prefix.length), elementClass: undefined, domain: template.domain,
+                    label: r.get('symbol')?.value, species: undefined, location: undefined,
+                    variables: [...new Set([template.signalOutput?.name ?? 'y', ...template.parameters.keys()])],
+                    intrinsic: undefined
+                })
+                continue
+            }
             const elementClass = classes.find(c => c.types.has(template.type))?.uri
             const domain = this.#physicalDomains.get(template.domain)
             const flow = domain?.flow.name ?? 'v', potential = domain?.potential.name ?? 'u'
@@ -1012,6 +1133,12 @@ export class BondgraphPlugin implements PluginInterface {
         return [...this.#physicalDomains.keys()]
     }
 
+    /** The domains of the signal blocks' templates (BG-RDF's bgf:Signal), which have no power. */
+    signalDomains(): string[] {
+        return [...new Set((this.#baseComponentToElementTemplates.get(BGF.uri('SignalBlock').value) ?? [])
+                                .map(et => et.domain).filter(Boolean))]
+    }
+
     /** The element templates of base component `baseType`, with their domains (`''` for none). */
     baseElementTemplates(baseType: string): { type: string, name: string, domain: string }[] {
         return (this.#baseComponentToElementTemplates.get(baseType) ?? [])
@@ -1088,7 +1215,7 @@ export class BondgraphPlugin implements PluginInterface {
             if (stored.length === 0) {
                 celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
                     PREFIX : <${this.#currentDocumentUri}#>
-                    INSERT DATA { ${objectUri} bgf:hasValue "0 ${this.#units(value.units)}"^^cdt:ucum }`)
+                    INSERT DATA { ${objectUri} bgf:hasValue "0 ${hasFreeUnits(value) ? '1' : this.#units(value.units)}"^^cdt:ucum }`)
             }
         }
     }
@@ -1226,7 +1353,7 @@ export class BondgraphPlugin implements PluginInterface {
     statusText(celldlObject: CellDLObject): string {
         const pluginData = <PluginData>celldlObject.pluginData(this.id)
         let domain: string|undefined
-        if (pluginData.baseComponent?.isBondElement) {
+        if (pluginData.baseComponent?.isBondElement || pluginData.baseComponent?.isSignalBlock) {
             domain = pluginData.elementTemplate?.domain
         } else {
             domain = this.#domainGraph.getDomain(celldlObject.uri.value)
@@ -1239,6 +1366,9 @@ export class BondgraphPlugin implements PluginInterface {
 
     addComponent(component: CellDLObject) {
         const pluginData = <PluginData>component.pluginData(this.id)
+        if (pluginData.baseComponent?.isSignalBlock) {
+            return      // no power, so no physical domain
+        }
         this.#domainGraph.addNode(component.uri.value,
             pluginData.elementTemplate?.domain,
             pluginData.baseComponent.type === this.#transformNodeType)
@@ -1252,8 +1382,15 @@ export class BondgraphPlugin implements PluginInterface {
     //==========================================================================
 
     addConnection(connection: CellDLConnection) {
-        this.#domainGraph.addEdge(connection.uri.value, [connection.source!.uri.value, connection.target!.uri.value])
         const uri = connection.uri.toString()
+        // A connection already in the document (opened, or put back by undo) keeps its kind; a new one is a signal
+        // bond when either end is a signal block or signal bonds are being drawn
+        const isNew = this.#bondQuery(connection, 'bgf:hasSource ?value').length === 0
+        const signal = isNew ? this.#isSignalPair(connection.source!, connection.target!) : this.isSignalBond(connection)
+        this.#pendingSignalTarget = undefined
+        if (!signal) {
+            this.#domainGraph.addEdge(connection.uri.value, [connection.source!.uri.value, connection.target!.uri.value])
+        }
         connection.rdfStore.update(`${SPARQL_PREFIXES}
             PREFIX : <${this.#currentDocumentUri}#>
             INSERT DATA {
@@ -1261,6 +1398,205 @@ export class BondgraphPlugin implements PluginInterface {
                 ${uri} bgf:hasTarget ${connection.target!.uri.toString()} .
             }
         `)
+        if (signal && isNew) {
+            this.#makeSignalBond(connection)
+        }
+        this.#markSignalBond(connection, signal)
+    }
+
+    //======================================
+
+    /** Whether a connection is a signal bond (`a bgf:SignalBond`). */
+    isSignalBond(connection: CellDLObject): boolean {
+        return connection.rdfStore.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT ?bond WHERE { ${connection.uri.toString()} a bgf:SignalBond . BIND(1 AS ?bond) }`).length > 0
+    }
+
+    // Whether a new connection between these objects would be a signal bond
+    #isSignalPair(source: CellDLObject, target: CellDLObject): boolean {
+        return isSignalConnection({
+            sourceIsBlock: !!(<PluginData>source.pluginData(this.id)).baseComponent?.isSignalBlock,
+            targetIsBlock: !!(<PluginData>target.pluginData(this.id)).baseComponent?.isSignalBlock,
+            drawingSignals: drawSignalBonds.value
+        })
+    }
+
+    // The values of a predicate of a bond (`pattern` binds ?value)
+    #bondQuery(connection: CellDLObject, pattern: string): string[] {
+        return connection.rdfStore.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT ?value WHERE { ${connection.uri.toString()} ${pattern} }`)
+            .map((r: Map<string, $rdf.Term>) => r.get('value')!.value)
+    }
+
+    // Draws a signal bond dashed, with an arrowhead at its target (or a power bond as one)
+    #markSignalBond(connection: CellDLConnection, signal: boolean) {
+        const svgElement = connection.celldlSvgElement?.svgElement
+        if (svgElement) {
+            for (const element of [svgElement, ...Array.from(svgElement.querySelectorAll('path'))]) {
+                element.classList.toggle(SIGNAL_BOND_CLASS, signal)
+            }
+        }
+    }
+
+    // Types a connection as a signal bond, setting what it does to its target by default
+    #makeSignalBond(connection: CellDLConnection) {
+        connection.rdfStore.update(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            INSERT DATA { ${connection.uri.toString()} a bgf:SignalBond }`)
+        const connected = this.#connectedSignalInputs(connection.target!, connection)
+        this.#setSignalUse(connection, defaultSignalUse(this.#signalTarget(connection.target!), connected))
+    }
+
+    // Removes what makes a connection a signal bond
+    #clearSignalBond(connection: CellDLObject) {
+        const uri = connection.uri.toString()
+        for (const pattern of [`${uri} a bgf:SignalBond`, `${uri} bgf:signalVariable ?v`, `${uri} bgf:signalInput ?v`,
+                               `${uri} bgf:modulates ?v`, `${uri} bgf:modulationExponent ?v`]) {
+            connection.rdfStore.update(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+                DELETE WHERE { ${pattern} }`)
+        }
+    }
+
+    /** What a signal bond's target offers it: its template's signal inputs and parameters, and a source's value. */
+    #signalTarget(target: CellDLObject): SignalTarget {
+        const pluginData = <PluginData>target.pluginData(this.id)
+        const template = pluginData.elementTemplate
+        const domain = template ? this.#physicalDomains.get(template.domain) : undefined
+        const baseType = pluginData.baseComponent?.type
+        const sourceValue = baseType === BGF.uri('FlowSource').value ? (domain?.flow.name ?? 'v')
+                          : baseType === BGF.uri('PotentialSource').value ? (domain?.potential.name ?? 'u')
+                          : undefined
+        return {
+            inputs: template?.signalInputs.map(v => v.name) ?? [],
+            parameters: [...(template?.parameters.keys() ?? [])],
+            sourceValue
+        }
+    }
+
+    // The signal inputs of `target` that signal bonds other than `except` set
+    #connectedSignalInputs(target: CellDLObject, except?: CellDLObject): string[] {
+        return target.rdfStore.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT ?bond ?input WHERE {
+                ?bond a bgf:SignalBond ; bgf:hasTarget ${target.uri.toString()} ; bgf:signalInput ?input
+            }`)
+            .filter((r: Map<string, $rdf.Term>) => r.get('bond')!.value !== except?.uri.value)
+            .map((r: Map<string, $rdf.Term>) => r.get('input')!.value)
+    }
+
+    /** What a signal bond does to its target, as its RDF has it. */
+    signalUse(connection: CellDLObject): SignalUse {
+        const input = this.#bondQuery(connection, 'bgf:signalInput ?value')[0]
+        if (input !== undefined) {
+            return { signalInput: input }
+        }
+        const modulates = this.#bondQuery(connection, 'bgf:modulates ?value')[0]
+        if (modulates !== undefined) {
+            const exponent = Number(this.#bondQuery(connection, 'bgf:modulationExponent ?value')[0] ?? 1)
+            return { modulates, exponent: exponent === -1 ? -1 : 1 }
+        }
+        return {}
+    }
+
+    /** Sets what a signal bond does to its target; an exponent of 1, the default, is left implicit. */
+    setSignalUse(connection: CellDLObject, use: SignalUse) {
+        this.#setSignalUse(connection, use)
+    }
+
+    #setSignalUse(connection: CellDLObject, use: SignalUse) {
+        const uri = connection.uri.toString()
+        for (const predicate of ['bgf:signalInput', 'bgf:modulates', 'bgf:modulationExponent']) {
+            connection.rdfStore.update(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+                DELETE WHERE { ${uri} ${predicate} ?value }`)
+        }
+        const statements: string[] = []
+        if ('signalInput' in use) {
+            statements.push(`${uri} bgf:signalInput ${JSON.stringify(use.signalInput)} .`)
+        } else if ('modulates' in use) {
+            statements.push(`${uri} bgf:modulates ${JSON.stringify(use.modulates)} .`)
+            if (use.exponent !== 1) {
+                statements.push(`${uri} bgf:modulationExponent ${Math.round(use.exponent)} .`)
+            }
+        }
+        if (statements.length) {
+            connection.rdfStore.update(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+                INSERT DATA { ${statements.join('\n')} }`)
+        }
+    }
+
+    /** The variable of its source a signal bond carries (bgf:signalVariable), if it names one. */
+    signalVariable(connection: CellDLObject): string|undefined {
+        return this.#bondQuery(connection, 'bgf:signalVariable ?value')[0]
+    }
+
+    /** Sets the variable of its source a signal bond carries; `undefined` for the source's default. */
+    setSignalVariable(connection: CellDLObject, variable: string|undefined) {
+        const uri = connection.uri.toString()
+        connection.rdfStore.update(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            DELETE WHERE { ${uri} bgf:signalVariable ?value }`)
+        if (variable) {
+            connection.rdfStore.update(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+                INSERT DATA { ${uri} bgf:signalVariable ${JSON.stringify(variable)} }`)
+        }
+    }
+
+    /**
+     * Makes a connection a signal bond (with its default use) or a power bond, returning why it can't be, or ''.
+     * A power bond follows the power-bond rules; a signal bond can't end at a junction.
+     */
+    setBondKind(connection: CellDLConnection, signal: boolean): string {
+        if (signal === this.isSignalBond(connection)) {
+            return ''
+        }
+        const source = connection.source!, target = connection.target!
+        if (signal) {
+            const refusal = this.#signalBondStatus(target)
+            if (refusal) {
+                return refusal.alert!
+            }
+            this.#domainGraph.deleteEdge([source.uri.value, target.uri.value])
+            this.#makeSignalBond(connection)
+        } else {
+            const sourceData = <PluginData>source.pluginData(this.id)
+            const targetData = <PluginData>target.pluginData(this.id)
+            if (sourceData.baseComponent?.isSignalBlock || targetData.baseComponent?.isSignalBlock) {
+                return 'A signal block is connected by signal bonds only'
+            }
+            for (const end of [source, target]) {
+                const limit = this.#powerPortLimit(end)
+                if (this.#powerConnections(end).length >= limit) {
+                    return 'Component has maximum number of connections'
+                }
+            }
+            const status = this.#powerBondStatus(source, target)
+            if (status?.alert) {
+                return status.alert
+            }
+            this.#clearSignalBond(connection)
+            this.#domainGraph.addEdge(connection.uri.value, [source.uri.value, target.uri.value])
+        }
+        this.#markSignalBond(connection, signal)
+        return ''
+    }
+
+    // Why a signal bond can't end at `target`, if it can't
+    #signalBondStatus(target: CellDLObject): ConnectionStatus|undefined {
+        const baseType = (<PluginData>target.pluginData(this.id)).baseComponent?.type
+        if (baseType && JUNCTION_TYPES.includes(baseType)) {
+            return { alert: 'A signal bond ends at a bond element or a signal block, not a junction' }
+        }
+    }
+
+    // An object's power bonds
+    #powerConnections(celldlObject: CellDLObject): CellDLConnection[] {
+        return celldlObject.connections.filter(c => !this.isSignalBond(c))
     }
 
     checkConnectionValid(sourceObject: CellDLObject, targetObject: CellDLObject): ConnectionStatus|undefined {
@@ -1287,6 +1623,20 @@ export class BondgraphPlugin implements PluginInterface {
                 undefined <---> Any
                 Same <---> Same
         */
+        // A signal bond crosses domains and follows none of the power-bond rules
+        const managed = (<PluginData>sourceObject.pluginData(this.id)).managed
+                     && (<PluginData>targetObject.pluginData(this.id)).managed
+        if (managed && this.#isSignalPair(sourceObject, targetObject)) {
+            const refusal = this.#signalBondStatus(targetObject)
+            this.#pendingSignalTarget = refusal ? undefined : targetObject.id
+            return refusal
+        }
+        this.#pendingSignalTarget = undefined
+        return this.#powerBondStatus(sourceObject, targetObject)
+    }
+
+    // Why a power bond can't join two objects, if it can't
+    #powerBondStatus(sourceObject: CellDLObject, targetObject: CellDLObject): ConnectionStatus|undefined {
         if (this.#domainGraph.hasEdge([sourceObject.uri.value, targetObject.uri.value])
          || this.#domainGraph.hasEdge([targetObject.uri.value, sourceObject.uri.value])
         ) {
@@ -1311,7 +1661,7 @@ export class BondgraphPlugin implements PluginInterface {
         }
         // Which way the bond points
         const bonds = [...new Set([...sourceObject.connections, ...targetObject.connections])]
-            .filter(bond => bond.source && bond.target)
+            .filter(bond => bond.source && bond.target && !this.isSignalBond(bond))
             .map(bond => ({ source: this.bondEnd(bond.source!), target: this.bondEnd(bond.target!) }))
         const status = bondRule(this.bondEnd(sourceObject), this.bondEnd(targetObject), { bonds })
         if ('alert' in status) {
@@ -1329,7 +1679,11 @@ export class BondgraphPlugin implements PluginInterface {
     }
 
     connectionDeleted(connection: CellDLConnection) {
-        this.#domainGraph.deleteEdge([connection.source!.uri.value, connection.target!.uri.value])
+        if (this.isSignalBond(connection)) {
+            this.#clearSignalBond(connection)
+        } else {
+            this.#domainGraph.deleteEdge([connection.source!.uri.value, connection.target!.uri.value])
+        }
         const uri = connection.uri.toString()
         connection.rdfStore.update(`${SPARQL_PREFIXES}
             PREFIX : <${this.#currentDocumentUri}#>
@@ -1340,9 +1694,43 @@ export class BondgraphPlugin implements PluginInterface {
         `)
     }
 
-    /** An element's bond limit: its template's declared ports, if it has them, else its base component's. */
+    /**
+     * An element's connection limit: its power bonds' (its template's declared ports, if it has them, else its base
+     * component's), its signal bonds, and one more when a signal bond is being drawn to or from it.
+     */
     getMaxConnections(celldlObject: CellDLObject): number {
+        const limit = this.#powerPortLimit(celldlObject)
+        if (limit === Infinity || celldlObject.isConnection) {
+            return limit
+        }
+        // from the RDF, which has an opened document's signal bonds before their connections are added
+        const signals = celldlObject.rdfStore.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT DISTINCT ?bond WHERE {
+                ?bond a bgf:SignalBond .
+                { ?bond bgf:hasSource ${celldlObject.uri.toString()} } UNION { ?bond bgf:hasTarget ${celldlObject.uri.toString()} }
+            }`).length
+        const drawing = (drawSignalBonds.value || this.#pendingSignalTarget === celldlObject.id) ? 1 : 0
+        return limit + signals + drawing
+    }
+
+    /** A signal bond (one already typed, or a new one joining a signal block, or drawn as one) carries no power. */
+    countsTowardsLimit(_celldlObject: CellDLObject, connection: CellDLConnection): boolean {
+        const [source, target] = [connection.source, connection.target]
+        return !(this.isSignalBond(connection)
+              || (source && target && this.#bondQuery(connection, 'bgf:hasSource ?value').length === 0
+                  && this.#isSignalPair(source, target)))
+    }
+
+    // How many power bonds an element can have
+    #powerPortLimit(celldlObject: CellDLObject): number {
         const pluginData = (<PluginData>celldlObject.pluginData(this.id))
+        // a source joins its bonds as bg2cellml does (a potential source's share its potential, a flow source's its
+        // flow), e.g. a plasma chemostat that blood flows take Na from and return it to
+        const types = [pluginData.baseComponent?.type, pluginData.elementTemplate?.type]
+        if (['FlowSource', 'PotentialSource'].some(name => types.includes(BGF.uri(name).value))) {
+            return Infinity
+        }
         const ports = pluginData.elementTemplate?.ports
         if (ports && ports.inward + ports.outward > 0) {
             return ports.inward + ports.outward
@@ -1355,7 +1743,12 @@ export class BondgraphPlugin implements PluginInterface {
     loadComponentProperties(componentProperties: PropertyGroup[], panelId: PANEL_ID, celldlObject: CellDLObject) {
         alert.clear()
         if (panelId === PANEL_ID.PROPERTIES_PANEL) {
-            if (!celldlObject.isConnection) {
+            if (celldlObject.isConnection) {
+                const group = componentProperties.find(g => g.groupId === BG_PROPERTY_GROUP_ID.SignalBond)
+                if (group && (<PluginData>celldlObject.pluginData(this.id)).managed) {
+                    this.#loadBondItems(<CellDLConnection>celldlObject, group)
+                }
+            } else {
                 const pluginData = (<PluginData>celldlObject.pluginData(this.id))
                 componentProperties.forEach(group => {
                    if (BG_PROPERTY_GROUP_IDS.includes(group.groupId)) {
@@ -1387,6 +1780,84 @@ export class BondgraphPlugin implements PluginInterface {
         }
     }
 
+    // A connection's items: its kind, and for a signal bond the variable it carries, what it does to its target
+    // and, when it scales a parameter, the signal's power
+    #loadBondItems(connection: CellDLConnection, group: PropertyGroup) {
+        group.items.length = 0
+        const signal = this.isSignalBond(connection)
+        const kinds = [{ name: 'Power bond', value: POWER_BOND }, { name: 'Signal bond', value: SIGNAL_BOND }]
+        group.items.push({
+            itemId: BG_BOND_KIND_ITEM, property: $rdf.RDF.uri('type').value, name: 'Bond kind',
+            possibleValues: kinds, value: kinds[signal ? 1 : 0]
+        } as ItemDetails)
+        if (!signal || !connection.source || !connection.target) {
+            return
+        }
+        const sourceData = <PluginData>connection.source.pluginData(this.id)
+        if (!sourceData.baseComponent?.isSignalBlock) {
+            const domainId = sourceData.elementTemplate?.domain || this.#domainGraph.getDomain(connection.source.uri.value)
+            const domain = domainId ? this.#physicalDomains.get(domainId) : undefined
+            const names = [domain?.quantity.name ?? 'q', domain?.potential.name ?? 'u', domain?.flow.name ?? 'v']
+            const options = [{ name: 'The source\'s default', value: DEFAULT_SIGNAL_VARIABLE },
+                             ...names.map(name => ({ name: `The source's ${name}`, value: name }))]
+            const chosen = this.signalVariable(connection) ?? DEFAULT_SIGNAL_VARIABLE
+            group.items.push({
+                itemId: BG_SIGNAL_VARIABLE_ITEM, property: BGF.uri('signalVariable').value, name: 'Carries',
+                possibleValues: options, value: options.find(o => o.value === chosen) ?? options[0]
+            } as ItemDetails)
+        }
+        const use = this.signalUse(connection)
+        const uses = signalUseOptions(this.#signalTarget(connection.target))
+        if (uses.length) {
+            group.items.push({
+                itemId: BG_SIGNAL_USE_ITEM, property: BGF.uri('modulates').value, name: 'Acts on the target as',
+                possibleValues: uses, value: uses.find(o => o.value === signalUseValue(use))
+            } as ItemDetails)
+        }
+        if ('modulates' in use) {
+            const powers = [{ name: 'Multiplied by the signal (exponent 1)', value: '1' },
+                            { name: 'Divided by the signal (exponent -1)', value: '-1' }]
+            group.items.push({
+                itemId: BG_SIGNAL_EXPONENT_ITEM, property: BGF.uri('modulationExponent').value, name: 'Scaled',
+                possibleValues: powers, value: powers[use.exponent === -1 ? 1 : 0]
+            } as ItemDetails)
+        }
+    }
+
+    // Stores a change to a connection's items, and reloads them (a kind's change shows or hides its signal items)
+    #updateBondItems(connection: CellDLConnection, itemId: string, value: ValueChange,
+                     componentProperties: PropertyGroup[]): string {
+        let errorMsg = ''
+        const newValue = String(value.newValue)
+        if (itemId === BG_BOND_KIND_ITEM) {
+            errorMsg = this.setBondKind(connection, newValue === SIGNAL_BOND)
+        } else if (itemId === BG_SIGNAL_VARIABLE_ITEM) {
+            this.setSignalVariable(connection, newValue === DEFAULT_SIGNAL_VARIABLE ? undefined : newValue)
+        } else if (itemId === BG_SIGNAL_USE_ITEM) {
+            const old = this.signalUse(connection)
+            this.#setSignalUse(connection, parseSignalUse(newValue, 'modulates' in old ? old.exponent : 1))
+        } else if (itemId === BG_SIGNAL_EXPONENT_ITEM) {
+            const use = this.signalUse(connection)
+            if ('modulates' in use) {
+                this.#setSignalUse(connection, { modulates: use.modulates, exponent: Number(newValue) })
+            }
+        }
+        if (errorMsg) {
+            alert.error(errorMsg)
+        }
+        const group = componentProperties.find(g => g.groupId === BG_PROPERTY_GROUP_ID.SignalBond)
+        if (group) {
+            this.#loadBondItems(connection, group)
+        }
+        return errorMsg
+    }
+
+    // Whether an element can be a module's port (bgf:portType): any bond element or signal block (a source of its flow
+    // and potential, a port block of its output, another element of the variables bgf:portVariables names)
+    #hasPortType(pluginData: PluginData): boolean {
+        return !!(pluginData.baseComponent || pluginData.elementTemplate)
+    }
+
     #loadElementProperties(celldlObject: CellDLObject, componentGroup: PropertyGroup, groupTemplate: IndexedPropertyGroup) {
         const pluginData = <PluginData>celldlObject.pluginData(this.id)
         groupTemplate.items.forEach((itemDetails: ItemDetails) => {
@@ -1394,6 +1865,17 @@ export class BondgraphPlugin implements PluginInterface {
             if (itemDetails.itemId === BG_ELEMENT_TYPE_ITEM) {
                 const discreteItem = this.#getElementTypeItem(celldlObject, itemDetails, pluginData)
                 items.push(discreteItem)
+            } else if (itemDetails.itemId === BG_ELEMENT_PORT_TYPE_ITEM
+                    || BG_PORT_DETAIL_ITEMS.includes(itemDetails.itemId)) {
+                if (this.#hasPortType(pluginData)) {
+                    const item = getItemProperty(celldlObject, itemDetails)
+                    if (item) {
+                        items.push(item)
+                    }
+                }
+            } else if ((itemDetails.itemId === BG_ELEMENT_SPECIES_ITEM ||
+                        itemDetails.itemId === BG_ELEMENT_LOCATION_ITEM) && pluginData.baseComponent?.isSignalBlock) {
+                // a signal block has no species or location
             } else if (itemDetails.itemId === BG_ELEMENT_SPECIES_ITEM ||
                        itemDetails.itemId === BG_ELEMENT_LOCATION_ITEM) {
                 const item = getItemProperty(celldlObject, itemDetails)
@@ -1406,12 +1888,16 @@ export class BondgraphPlugin implements PluginInterface {
                     items.push(item)
                 }
             } else if (itemDetails.itemId === BG_ELEMENT_VALUE_ITEM) {
-                const item = getItemProperty(celldlObject, itemDetails)
+                const variable = pluginData.elementTemplate?.value
+                const free = !!variable && hasFreeUnits(variable)
+                const item = getItemProperty(celldlObject, free ? { ...itemDetails, numeric: false } : itemDetails)
                 if (item) {
                     items.push(item)
                     item.optional = false
                     if (pluginData.baseComponent.type === this.#transformNodeType) {
                         item.name = TRANSFORM_NODE_PROMPT
+                    } else if (free) {
+                        item.name = `${this.#valueName(pluginData.elementTemplate)} (${freeUnitsLabel(variable.unitsOf)})`
                     }
                 }
             }
@@ -1473,8 +1959,12 @@ export class BondgraphPlugin implements PluginInterface {
             const varName = itemVariable[1]!
             if (values.has(varName)) {
                 const valueUnits = values.get(varName)!.split(' ')
-                item.value = valueUnits[0]
-                item.units = valueUnits[1]
+                if (item.numeric === false) {       // shown with its units, which it has no fixed ones
+                    item.value = values.get(varName)!
+                } else {
+                    item.value = valueUnits[0]
+                    item.units = valueUnits[1]
+                }
                 item.stored = true
             } else {
                 item.stored = false
@@ -1519,10 +2009,15 @@ export class BondgraphPlugin implements PluginInterface {
         const groupTemplate = this.#elementPropertiesTemplate.get(BG_PROPERTY_GROUP_ID.ElementInitialValue)
         const itemDefn = groupTemplate?.items.at(0)
         if (itemDefn) {
+            const elementTemplate = (<PluginData>celldlObject.pluginData(this.id)).elementTemplate
+            const free = !!variable && hasFreeUnits(variable)
+            const name = variable ? `${this.#valueName(elementTemplate)} (${free ? freeUnitsLabel(variable.unitsOf)
+                                                                              : this.#units(variable.units)})`
+                                  : itemDefn.name
             let item = group.items[0]
             if (item) {
                 if (variable) {
-                    item.name = `${itemDefn.name} (${this.#units(variable.units)})`
+                    item.name = name
                     item.optional = false
                 } else {
                     item.optional = false
@@ -1530,28 +2025,46 @@ export class BondgraphPlugin implements PluginInterface {
                 }
             } else if (variable) {
                 item = Object.assign({}, itemDefn, {
-                    name: `${itemDefn.name} (${this.#units(variable.units)})`,
+                    name,
                     optional: false,
-                    value: itemDefn.defaultValue
+                    value: free ? `${itemDefn.defaultValue} 1` : itemDefn.defaultValue,
+                    numeric: !free
                 })
                 group.items.push(item)
             }
             if (item) {
-                const elementTemplate = (<PluginData>celldlObject.pluginData(this.id)).elementTemplate
                 const newValue = String(item.value).trim()
-                if (newValue && elementTemplate) {
+                if (newValue && elementTemplate?.value) {
                     const objectUri = celldlObject.uri.toString()
-                    const variable = elementTemplate!.value
-                    celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
-                        PREFIX : <${this.#currentDocumentUri}#>
+                    const stored = this.#valueText(newValue, elementTemplate.value)
+                    if (stored) {
+                        celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
+                            PREFIX : <${this.#currentDocumentUri}#>
 
-                        INSERT DATA {
-                           ${objectUri} bgf:hasValue "${newValue} ${this.#units(variable!.units)}"^^cdt:ucum .
-                        }
-                    `)
+                            INSERT DATA {
+                               ${objectUri} bgf:hasValue "${stored}"^^cdt:ucum .
+                            }
+                        `)
+                    }
                 }
             }
         }
+    }
+
+    // A value as stored, "<number> <units>": a variable with fixed units keeps `storedUnits` or takes its own, one
+    // without takes the units typed with it (./signals.ts); undefined when the text isn't such a value
+    #valueText(text: string, variable: Variable, storedUnits?: string): string|undefined {
+        if (hasFreeUnits(variable)) {
+            return valueWithUnits(text, storedUnits)
+        }
+        const number = text.trim()
+        return number ? `${number} ${storedUnits ?? this.#units(variable.units)}` : undefined
+    }
+
+    // What an element's value is called: a constant for a signal block with no equation (an input port)
+    #valueName(elementTemplate?: ElementTemplate): string {
+        return (elementTemplate?.baseComponent.isSignalBlock && !elementTemplate.relation?.includes('<diff'))
+             ? 'Value' : 'Initial value'
     }
 
     #setVariableItems(variables: IdVariableMap, group: PropertyGroup, reset: boolean=false) {
@@ -1563,6 +2076,17 @@ export class BondgraphPlugin implements PluginInterface {
                             ? BGF.uri('parameterValue').value
                             : BGF.uri('variableValue').value
             for (const variable of variables.values()) {
+                if (hasFreeUnits(variable)) {
+                    group.items.push({
+                        itemId: `${group.groupId}/${variable.name}`,
+                        property: property,
+                        name: `${variable.name} (${freeUnitsLabel(variable.unitsOf)})`,
+                        defaultValue: '1 1',
+                        value: '1 1',
+                        numeric: false
+                    })
+                    continue
+                }
                 group.items.push({
                     itemId: `${group.groupId}/${variable.name}`,
                     property: property,
@@ -1604,6 +2128,11 @@ export class BondgraphPlugin implements PluginInterface {
             if (!itemGroupId) {
                 return ''
             }
+            if (itemGroupId === BG_PROPERTY_GROUP_ID.SignalBond) {
+                return celldlObject.isConnection
+                     ? this.#updateBondItems(<CellDLConnection>celldlObject, itemId, value, componentProperties)
+                     : ''
+            }
             const groupTemplate = this.#elementPropertiesTemplate.get(itemGroupId) as IndexedPropertyGroup
 
             // Store the item's new value
@@ -1626,6 +2155,9 @@ export class BondgraphPlugin implements PluginInterface {
                 }
                 const elementTemplate = pluginData.elementTemplate
                 for (const groupTemplate of this.#elementPropertiesTemplate.values()) {
+                    if (groupTemplate.groupId === BG_PROPERTY_GROUP_ID.SignalBond) {
+                        continue
+                    }
                     const componentGroup = componentProperties[groupTemplate.index] as PropertyGroup
                     if (groupTemplate.groupId === BG_PROPERTY_GROUP_ID.ElementInitialValue) {
                         // Remove any existing initial value
@@ -1711,6 +2243,8 @@ export class BondgraphPlugin implements PluginInterface {
                         } else {
                             alert.error(errorMsg)
                         }
+                    } else if (itemId === BG_ELEMENT_PORT_TYPE_ITEM || BG_PORT_DETAIL_ITEMS.includes(itemId)) {
+                        updateItemProperty(item.property, value, celldlObject)
                     } else if (itemId === BG_ELEMENT_LOCATION_ITEM) {
                         //pluginData.location = value.newValue
                         errorMsg = await this.#updateSvgElement(celldlObject, pluginData.species, value.newValue)
@@ -1754,14 +2288,17 @@ export class BondgraphPlugin implements PluginInterface {
             }`)
         const newValue = String(value.newValue).trim()
         const elementTemplate = (<PluginData>celldlObject.pluginData(this.id)).elementTemplate
-        const variable = elementTemplate!.value
-        if (newValue) {
-            const units = storedUnits ?? this.#units(variable!.units)
+        const variable = elementTemplate?.value
+        const stored = (newValue && variable) ? this.#valueText(newValue, variable, storedUnits) : undefined
+        if (newValue && variable && !stored) {
+            alert.error(`'${newValue}' is not a number with units, such as 12 kPa`)
+        }
+        if (stored) {
             celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
                 PREFIX : <${this.#currentDocumentUri}#>
 
                 INSERT DATA {
-                   ${objectUri} bgf:hasValue "${newValue} ${units}"^^cdt:ucum .
+                   ${objectUri} bgf:hasValue "${stored}"^^cdt:ucum .
                 }
             `)
         }
@@ -1781,18 +2318,38 @@ export class BondgraphPlugin implements PluginInterface {
                         : VARIABLE_VALUE
         // An edit keeps the value's units
         const storedUnits = this.#storedUnits(objectUri, { predicate, varName })
-        celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
-            PREFIX : <${this.#currentDocumentUri}#>
-
-            DELETE WHERE {
-                ${objectUri} ${predicate} ?pv .
-                ?pv bgf:varName "${varName}" ;
-                    bgf:hasValue ?value .
-            }`)
         const variable = (groupId === BG_PROPERTY_GROUP_ID.ElementParameters)
                        ? elementTemplate.parameters.get(varName)
                        : elementTemplate.variables.get(varName)
-        if (!variable) {
+        const stored = variable ? this.#valueText(String(value.newValue), variable, storedUnits) : undefined
+        if (variable && !stored) {
+            alert.error(`'${value.newValue}' is not a number with units, such as 12 kPa`)
+            return
+        }
+        const hasNode = celldlObject.rdfStore.query(`${SPARQL_PREFIXES}
+            PREFIX : <${this.#currentDocumentUri}#>
+            SELECT ?pv WHERE { ${objectUri} ${predicate} ?pv . ?pv bgf:varName "${varName}" }`).length > 0
+        if (!variable || !stored) {
+            celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+
+                DELETE WHERE {
+                    ${objectUri} ${predicate} ?pv .
+                    ?pv bgf:varName "${varName}" ;
+                        bgf:hasValue ?value .
+                }`)
+            return
+        }
+        if (hasNode) {
+            // its node keeps its other properties, e.g. a bgf:hasSymbol naming the parameter
+            celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+                DELETE { ?pv bgf:hasValue ?value }
+                WHERE { ${objectUri} ${predicate} ?pv . ?pv bgf:varName "${varName}" ; bgf:hasValue ?value }`)
+            celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
+                PREFIX : <${this.#currentDocumentUri}#>
+                INSERT { ?pv bgf:hasValue "${stored}"^^cdt:ucum }
+                WHERE { ${objectUri} ${predicate} ?pv . ?pv bgf:varName "${varName}" }`)
             return
         }
         celldlObject.rdfStore.update(`${SPARQL_PREFIXES}
@@ -1801,7 +2358,7 @@ export class BondgraphPlugin implements PluginInterface {
             INSERT DATA {
                 ${objectUri} ${predicate} _:pv .
                 _:pv bgf:varName "${varName}" ;
-                     bgf:hasValue "${value.newValue} ${storedUnits ?? this.#units(variable.units)}"^^cdt:ucum .
+                     bgf:hasValue "${stored}"^^cdt:ucum .
             }
         `)
 // Check units...
@@ -1914,8 +2471,11 @@ export class BondgraphPlugin implements PluginInterface {
 
     //==========================================================================
 
+    // A signal bond is dashed, with the closed arrowhead at its target
     styleRules(): string {
-        return '.celldl-Connection.bondgraph.arrow { marker-end:url(#connection-end-arrow-bondgraph) }'
+        return '.celldl-Connection.bondgraph.arrow:not(.signal) { marker-end:url(#connection-end-arrow-bondgraph) }'
+             + ` .celldl-Connection.bondgraph.${SIGNAL_BOND_CLASS} { stroke-dasharray: 6 4 }`
+             + ` .celldl-Connection.bondgraph.${SIGNAL_BOND_CLASS}.arrow { marker-end:url(#connection-end-arrow-bondgraph) }`
     }
 
     svgDefinitions(): string {
@@ -1932,7 +2492,7 @@ export class BondgraphPlugin implements PluginInterface {
             value: baseComponent.type,
             emphasise: true
         })
-        if (baseComponent.isBondElement) {
+        if (baseComponent.isBondElement || baseComponent.isSignalBlock) {
             const domain = this.#domainGraph.getDomain(celldlObject.uri.value)
             possibleValues.push(
                 ...elementTemplates
@@ -2080,6 +2640,9 @@ export class BondgraphPlugin implements PluginInterface {
             const element = r.get('element')!
             elements.add(element.value)
         })
+        if (this.#query(`SELECT ?block WHERE { ?block rdfs:subClassOf bgf:SignalBlock }`).length) {
+            elements.add(BGF.uri('SignalBlock').value)
+        }
         for (const defn of BONDGRAPH_COMPONENT_DEFINITIONS) {
             const template = definitionToLibraryTemplate(defn)
             if (elements.has(template.type)) {
@@ -2093,6 +2656,15 @@ export class BondgraphPlugin implements PluginInterface {
     }
 
     #loadBaseComponents() {
+        // A signal block is no bond element or junction: it has no power ports
+        const signalBlockType = BGF.uri('SignalBlock').value
+        for (const componentTemplate of this.#componentTemplates.values()) {
+            if (componentTemplate.type === signalBlockType) {
+                const component = new BGBaseComponent(componentTemplate, componentTemplate.name, signalBlockType)
+                this.#baseComponents.set(signalBlockType, component)
+                componentTemplate.component = component
+            }
+        }
         // Get information about the components in the add component tool
         let lastElement: $rdf.Term|undefined
         this.#query(`
@@ -2193,6 +2765,7 @@ export class BondgraphPlugin implements PluginInterface {
                     symbol: component.symbol,
                     baseComponent: component,
                     value: { name: 'k', units: '', value: '1' },
+                    signalInputs: []
                 }
                 this.#elementTemplates.set(elementTemplate.type, elementTemplate)
                 this.#baseComponentToElementTemplates.get(component.type)!.push(elementTemplate)
@@ -2216,6 +2789,8 @@ export class BondgraphPlugin implements PluginInterface {
                     lawLabel: r.get('lawLabel')?.value,
                     symbol: symbol ? symbol.value : component.symbol,
                     baseComponent: component,
+                    relation: r.get('relation')?.value,
+                    signalInputs: []
                 }
                 const domain = this.#physicalDomains.get(domainId)
                 if (domain) {
@@ -2276,7 +2851,8 @@ export class BondgraphPlugin implements PluginInterface {
             const name = r.get('parameterName')!.value
             template.parameters.set(name, {
                 name: name,
-                units: r.get('parameterUnits')!.value
+                units: r.get('parameterUnits')?.value ?? '',
+                unitsOf: r.get('parameterUnitsOf')?.value
             })
         }
         if (r.has('variableName')) {
@@ -2288,18 +2864,60 @@ export class BondgraphPlugin implements PluginInterface {
         }
     }
 
+    // Templates' signal inputs and a signal block's output, with their units: fixed, another variable's, or none.
+    // A block whose relation is an ODE in its output, or empty (an input port), has a value: the output's initial
+    // or constant value.
+    #loadSignalVariables() {
+        const variable = (r: Map<string, $rdf.Term>): Variable => ({
+            name: r.get('name')!.value,
+            units: r.get('units')?.value ?? '',
+            unitsOf: r.get('unitsOf')?.value
+        })
+        for (const [predicate, input] of [['bgf:hasSignalInput', true], ['bgf:hasSignalOutput', false]] as const) {
+            this.#query(`
+                SELECT DISTINCT ?element ?name ?units ?unitsOf WHERE {
+                    ?element rdfs:subClassOf* ?template .
+                    ?template ${predicate} ?variable .
+                    ?variable bgf:varName ?name .
+                    OPTIONAL { ?variable bgf:hasUnits ?units }
+                    OPTIONAL { ?variable bgf:unitsOf ?unitsOf }
+                } ORDER BY ?element ?name`
+            ).forEach((r: Map<string, $rdf.Term>) => {
+                const template = this.#elementTemplates.get(r.get('element')!.value)
+                if (!template) {
+                    return
+                } else if (!input) {
+                    template.signalOutput = variable(r)
+                } else if (!template.signalInputs.some(v => v.name === r.get('name')!.value)) {
+                    template.signalInputs.push(variable(r))
+                }
+            })
+        }
+        for (const template of this.#elementTemplates.values()) {
+            const output = template.signalOutput
+            if (output && template.baseComponent.isSignalBlock) {
+                const relation = (template.relation ?? '').replace(/\s+/g, '')
+                const hasEquation = relation.includes('<apply>')
+                if (!hasEquation || relation.includes(`<diff/><bvar><ci>t</ci></bvar><ci>${output.name}</ci>`)) {
+                    template.value = output
+                    template.units = output.units
+                }
+            }
+        }
+    }
+
     #loadTemplateParameters() {
         // Find parameters and variables for Element templates
         this.#query(`
-            SELECT ?element ?parameterName ?parameterUnits
+            SELECT ?element ?parameterName ?parameterUnits ?parameterUnitsOf
                             ?variableName ?variableUnits
             WHERE {
                 ?element a bgf:ElementTemplate .
                 {
-                    ?element bgf:hasParameter [
-                        bgf:varName ?parameterName ;
-                        bgf:hasUnits ?parameterUnits
-                    ]
+                    ?element bgf:hasParameter ?parameter .
+                    ?parameter bgf:varName ?parameterName .
+                    OPTIONAL { ?parameter bgf:hasUnits ?parameterUnits }
+                    OPTIONAL { ?parameter bgf:unitsOf ?parameterUnitsOf }
                 }
                 UNION
                 {
@@ -2314,17 +2932,17 @@ export class BondgraphPlugin implements PluginInterface {
         })
         // Find parameters and variables for Composite templates
         this.#query(`
-            SELECT ?element ?parameterName ?parameterUnits
+            SELECT ?element ?parameterName ?parameterUnits ?parameterUnitsOf
                             ?variableName ?variableUnits
             WHERE {
                 ?element a bgf:CompositeTemplate ;
                     rdfs:subClassOf ?base .
                 ?base a bgf:ElementTemplate .
                 {
-                    ?base bgf:hasParameter [
-                        bgf:varName ?parameterName ;
-                        bgf:hasUnits ?parameterUnits
-                    ]
+                    ?base bgf:hasParameter ?parameter .
+                    ?parameter bgf:varName ?parameterName .
+                    OPTIONAL { ?parameter bgf:hasUnits ?parameterUnits }
+                    OPTIONAL { ?parameter bgf:unitsOf ?parameterUnitsOf }
                 }
                 UNION
                 {

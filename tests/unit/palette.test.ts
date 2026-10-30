@@ -70,9 +70,9 @@ describe('the palette\'s entries', () => {
             .toEqual(['Zero storage node (q)', 'Zero storage node (u)'])
     })
 
-    test('the filter offers Chemical, every other template domain, then All domains', () => {
-        expect(paletteDomains().map(o => o.domain)).toEqual(['chemical', 'electrical', 'hydraulic', 'mechanical', 'all'])
-        expect(paletteDomains().map(o => o.label)).toEqual(['Chemical', 'Electrical', 'Hydraulic', 'Mechanical', 'All domains'])
+    test('the filter offers Chemical, every other template domain, Signals, then All domains', () => {
+        expect(paletteDomains().map(o => o.domain)).toEqual(['chemical', 'electrical', 'hydraulic', 'mechanical', 'signal', 'all'])
+        expect(paletteDomains().map(o => o.label)).toEqual(['Chemical', 'Electrical', 'Hydraulic', 'Mechanical', 'Signals', 'All domains'])
         expect(knownDomain('Electrical')).toBe('electrical')
         expect(knownDomain('all')).toBe('all')
         expect(knownDomain('optical')).toBe('chemical')

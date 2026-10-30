@@ -106,6 +106,13 @@ const ZERO_STORAGE_STYLE: BGElementStyle = {
     border: 'red'
 }
 
+// A signal block: white with a blue border, unlike any bond element; its template's bgf:hasStyle refines it
+const SIGNAL_BLOCK_STYLE: BGElementStyle = {
+    text: '#1F4E79',
+    background: '#FFFFFF',
+    border: '#1F4E79'
+}
+
 //==============================================================================
 
 export const BONDGRAPH_COMPONENT_DEFINITIONS: BGComponentDefinition[] = [
@@ -221,6 +228,15 @@ export const BONDGRAPH_COMPONENT_DEFINITIONS: BGComponentDefinition[] = [
         numPorts: 1,
         symbol: 'S',
         style: FLOW_STYLE,
+    },
+    {
+        id: 'SignalBlock',
+        type: 'https://bg-rdf.org/ontologies/bondgraph-framework#SignalBlock',
+        name: 'Signal block',
+        numPorts: Infinity,     // connected by signal bonds only
+        symbol: 'y',
+        style: SIGNAL_BLOCK_STYLE,
+        noSpeciesLocation: true
     }
 ]
 

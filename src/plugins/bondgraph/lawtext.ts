@@ -89,6 +89,9 @@ function convert(node: MathNode): { latex: string, precedence: number } {
         case 'exp': return { latex: `e^{${convert(args[0]!).latex}}`, precedence: 9 }
         case 'ln': return { latex: `\\ln\\left(${convert(args[0]!).latex}\\right)`, precedence: 9 }
         case 'abs': return { latex: `\\left|${convert(args[0]!).latex}\\right|`, precedence: 9 }
+        case 'max':
+        case 'min':
+            return { latex: `\\${op}\\left(${args.map(a => convert(a).latex).join(', ')}\\right)`, precedence: 9 }
         case 'root': {
             const degree = args.find(a => name(a) === 'degree')
             const body = args.find(a => name(a) !== 'degree')!

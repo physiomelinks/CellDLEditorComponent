@@ -22,8 +22,9 @@ limitations under the License.
 // template chosen, so a new element needs no dropdown step, and store their defaults (parameters 1, an initial value
 // 0), a species name not yet used (S1, S2, ...) and the diagram's most used location. "Reaction with sides" is a
 // macro: a chemical reaction between a reactants and a products 1-junction, bonded through its f and r ports.
-// Every other domain lists its own element templates, with junctions and other domain-free elements, and "All
-// domains" adds every library template, its domain's template then chosen in Properties.
+// Every other domain lists its own element templates, with junctions and other domain-free elements, "Signals"
+// lists the signal blocks (which have no power, so no junctions), and "All domains" adds every library template,
+// its domain's template then chosen in Properties.
 
 import type { CellDLConnectedObject, CellDLObject } from '#editor/celldlObjects'
 import { notifyChanges } from '#editor/editor'
@@ -146,13 +147,18 @@ function distinctLabels(entries: { label: string, symbol: string }[]): string[] 
     })
 }
 
-/** A domain's own entries: its element templates, and every element with no domain (junctions, ...). */
+/**
+ * A domain's own entries: its element templates, and every element with no domain (junctions, ...), except in the
+ * signal blocks' domain.
+ */
 function domainEntries(domain: string, templates: Map<string, BGLibraryComponentTemplate>): ResolvedEntry[] {
     const plugin = bondgraphPlugin()
+    const signalDomains = plugin.signalDomains().map(domainId)
     const found: { template: BGLibraryComponentTemplate, label: string, elementType?: string }[] = []
     for (const template of templates.values()) {
         const elementTemplates = plugin.baseElementTemplates(template.type)
         if (elementTemplates.every(et => !et.domain)) {
+            if (signalDomains.includes(domain)) continue
             found.push({ template, label: template.name })
             continue
         }
@@ -228,11 +234,14 @@ function resolveEntries(): ResolvedEntry[] {
     return entries
 }
 
-/** The filter's options: Chemical, the templates' other domains, then All domains. */
+/** The filter's options: Chemical, the templates' other domains, Signals, then All domains. */
 export function paletteDomains(): PaletteDomainOption[] {
     if (domainOptions) return domainOptions
-    const others = bondgraphPlugin().physicalDomains().map(domainId).filter(d => d !== 'chemical').sort()
-    const label = (d: string) => d.charAt(0).toUpperCase() + d.slice(1)
+    const plugin = bondgraphPlugin()
+    const signals = plugin.signalDomains().map(domainId)
+    const others = [...plugin.physicalDomains().map(domainId).filter(d => d !== 'chemical').sort(), ...signals]
+    const label = (d: string) => signals.includes(d) ? `${d.charAt(0).toUpperCase() + d.slice(1)}s`
+                                                     : d.charAt(0).toUpperCase() + d.slice(1)
     const options: PaletteDomainOption[] = [
         { domain: 'chemical', label: 'Chemical' },
         ...others.map(domain => ({ domain, label: label(domain) })),
