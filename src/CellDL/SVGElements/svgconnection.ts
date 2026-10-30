@@ -217,14 +217,15 @@ export class SvgConnection extends CellDLSVGElement {
     }
 
     /**
-     * Removes the control points of the connection's straight-line paths.
+     * Runs the connection's straight-line paths straight between their ends, squared
+     * up when within `square` pixels of horizontal or vertical.
      *
-     * @returns Whether any path had control points to remove.
+     * @returns Whether any path changed.
      */
-    straighten(): boolean {
+    straighten(square: number = 0): boolean {
         let straightened = false
         for (const pathElement of this.#pathElements) {
-            straightened = pathElement.straighten() || straightened
+            straightened = pathElement.straighten(square) || straightened
         }
         return straightened
     }

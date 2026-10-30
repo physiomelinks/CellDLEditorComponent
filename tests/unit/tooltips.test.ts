@@ -97,7 +97,7 @@ describe('Hover tooltips', () => {
         expect(display.visible).toBe(false)
         hover(tips, 'B')
         expect(tips.hoverPending).toBe(false)
-        expect(tips.show('annotation', 'note')).toBe(false)
+        expect(tips.show('info', 'note')).toBe(false)
         expect(tips.show('hover', 'law')).toBe(false)
         await wait(DELAY + 20)
         expect(display.visible).toBe(false)

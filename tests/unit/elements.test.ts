@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 
-import { countEdits, editor, openFixture, settle, viewerEvents } from './support/editor'
+import { countEdits, editor, fixture, openFixture, settle, viewerEvents } from './support/editor'
 
-import type { CellDLDiagram } from '#editor/diagram'
-import { type DiagramElement, listElements, setElements } from '#root/plugins/bondgraph/elements'
+import { CellDLDiagram } from '#editor/diagram'
+import type { EditorMessage } from '#editor/editor'
+import {
+    type DiagramElement, leadingDigitSpeciesWarning, listElements, setElements
+} from '#root/plugins/bondgraph/elements'
 import { PANEL_ID } from '#root/utils/editor-types'
 import { updateItemProperty } from '#editor/components/properties'
 import { DCT } from '@celldl/rdf'
@@ -261,6 +264,34 @@ describe('set', () => {
         expect(edits.count).toBe(0)
     })
 
+    test('refuses a species that starts with a number, and leaves the RDF unchanged', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        const before = await diagram.rdf()
+        for (const value of ['3X', '13BPG', '2 A']) {
+            const result = await setElements(editor, diagram, [{ id: STORE_S, field: 'species', value }])
+            expect(result.ok).toBe(false)
+            expect(result.errors?.[0]).toMatchObject({ id: STORE_S, field: 'species' })
+            expect(result.errors?.[0]?.message).toMatch(/^A species name can't start with a number/)
+        }
+        expect(await diagram.rdf()).toBe(before)
+        // digits later in a name are fine
+        expect((await setElements(editor, diagram, [{ id: STORE_S, field: 'species', value: 'G6P' }])).ok).toBe(true)
+        expect(element(listElements(diagram), STORE_S).species).toBe('G6P')
+    })
+
+    test('the Properties panel refuses a species that starts with a number', async () => {
+        const diagram = await openFixture('enzyme.celldl')
+        const messages: EditorMessage[] = []
+        editor.setMessageHandler(message => messages.push(message))
+        try {
+            await panelEdit(diagram, STORE_S, 'bg-element-properties/bg-element-species', 'S', '3X')
+        } finally {
+            editor.setMessageHandler(null)
+        }
+        expect(element(listElements(diagram), STORE_S).species).toBe('S')
+        expect(messages.some(m => m.level === 'error' && /can't start with a number/.test(m.text))).toBe(true)
+    })
+
     test('skips a bad edit but makes the others', async () => {
         const diagram = await openFixture('enzyme.celldl')
         const result = await setElements(editor, diagram, [
@@ -332,6 +363,15 @@ describe('select', () => {
         expect(viewerEvents).toEqual([{ type: 'unselect', component: { id: STORE_E } }])
     })
 
+    test('carries the host\'s elementInfo for the element', async () => {
+        await openFixture('enzyme.celldl')
+        editor.setElementInfo({ [STORE_S]: { tooltip: 'q_S', primary: 'q_S' } }, { tooltip: 'tooltip' })
+        expect(editor.selectObjectById(STORE_S)).toBe(true)
+        expect(viewerEvents).toEqual([{ type: 'select', component: { id: STORE_S, info: { tooltip: 'q_S', primary: 'q_S' } } }])
+        editor.selectObjectById(null)
+        editor.setElementInfo(undefined, undefined)
+    })
+
     test('reports an unknown id', async () => {
         await openFixture('enzyme.celldl')
         expect(editor.selectObjectById('ID-99999999')).toBe(false)
@@ -368,3 +408,27 @@ describe('select', () => {
 
 //==============================================================================
 //==============================================================================
+
+//==============================================================================
+
+describe('species starting with a number', () => {
+    test('a diagram that has them opens, unchanged, with a warning', async () => {
+        const text = fixture('enzyme.celldl').replaceAll('bgf:hasSpecies "S"', 'bgf:hasSpecies "3PG"')
+        const messages: EditorMessage[] = []
+        editor.setMessageHandler(message => messages.push(message))
+        const diagram = new CellDLDiagram('digits.celldl', text, editor)
+        try {
+            await editor.editDiagram(diagram)
+        } finally {
+            editor.setMessageHandler(null)
+        }
+        expect(element(listElements(diagram), STORE_S).species).toBe('3PG')
+        expect(leadingDigitSpeciesWarning()).toMatch(/can't start with a number.*'3PG'/)
+        expect(messages.some(m => m.level === 'warn' && /'3PG'/.test(m.text))).toBe(true)
+    })
+
+    test('a diagram without them has no warning', async () => {
+        await openFixture('enzyme.celldl')
+        expect(leadingDigitSpeciesWarning()).toBe('')
+    })
+})

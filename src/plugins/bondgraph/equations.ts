@@ -208,42 +208,90 @@ export function stepEquation(id: string, isResistance: boolean, bonds: BondInfo[
 
 //==============================================================================
 
-// Editing a step's equation. Coefficients are written with a space, `2 ADP[c]`, as species names may start with a
-// digit (3PG, 13BPG); sides are joined by ` + ` with spaces, as names may end in + (H+, NAD+).
+// Editing a step's equation. Spaces are optional around the arrow, around `+` and after a coefficient, and any
+// run of spaces or tabs is one space. A species name can't start with a number, so a number before a name, glued
+// (`2ADP`, `13BPG`) or spaced (`2 ADP`), is always its coefficient. Names may end in + (H+, NAD+), so:
+// - a `+` joins two species when it has a space or `]` before it, or a species straight after it (`A+B`, `H++NAD+`);
+//   one with a space, `[` or another `+` after it, or the end of the side, ends a name (`H+ `, `NAD+[c]`).
 
-const ARROW_PATTERN = /\s(?:⇌|⇄|↔|→|<=>|<->|->|=)\s/
-const TERM_PATTERN = /^(?:(\d+)\s+)?([^\s[\]]+?)(?:\[([^\]\s]+)\])?$/
+const ARROW_PATTERN = /<=>|<->|=>|->|⇌|⇄|↔|→|=/g
+const TERM_PATTERN = /^(?:(\d+) ?)?([^\s[\]]+?)(?:\[([^\]\s]+)\])?$/
+
+export const SPECIES_LEADING_DIGIT = "A species name can't start with a number"
+
+/** True when `name` starts with a number, which an equation reads as its coefficient (3PG is 3 × PG). */
+export function startsWithDigit(name: string): boolean {
+    return /^\s*[\d.]/.test(name)
+}
+
+/** Why `name` can't be a species name, or `''`: one starting with a number would read as a coefficient. */
+export function speciesNameError(name: string): string {
+    return startsWithDigit(name) ? `${SPECIES_LEADING_DIGIT} ('${name.trim()}' reads as a coefficient)` : ''
+}
 
 export interface ParsedEquation {
     substrates: Participant[]
     products: Participant[]
 }
 
+// The terms of one side, split at each `+` that joins two species
+function sideTerms(text: string): string[] {
+    const terms: string[] = []
+    let term = ''
+    for (let i = 0; i < text.length; i += 1) {
+        const c = text[i]!
+        if (c === '+') {
+            const before = text[i - 1]
+            const after = text[i + 1]
+            if (before === undefined || /[\s\]]/.test(before) || (after !== undefined && !/[\s+[]/.test(after))) {
+                terms.push(term)
+                term = ''
+                continue
+            }
+        }
+        term += c
+    }
+    terms.push(term)
+    return terms
+}
+
 function parseSide(text: string): Participant[] {
     const trimmed = text.trim()
     if (trimmed === '' || trimmed === '∅') return []
     const participants: Participant[] = []
-    for (const term of trimmed.split(/\s\+\s/)) {
-        const match = term.trim().match(TERM_PATTERN)
+    for (const raw of sideTerms(trimmed)) {
+        const term = raw.trim().replace(/\s+/g, ' ').replace(/ ?\[ ?/g, '[').replace(/ ?\]/g, ']')
+        if (term === '') {
+            throw new Error(`'${trimmed}' has a '+' with no species beside it`)
+        }
+        const match = term.match(TERM_PATTERN)
         if (!match) {
-            throw new Error(`'${term.trim()}' is not a species: write it as 'n Species[location]'`)
+            throw new Error(`'${term}' is not a species: write it as 'n Species[location]', with + between species`)
         }
         const count = match[1] ? Number(match[1]) : 1
-        if (count < 1) {
-            throw new Error(`'${term.trim()}': a stoichiometric coefficient is a whole number of at least 1`)
+        const species = match[2] ?? ''
+        if (startsWithDigit(species)) {
+            throw new Error(`'${term}': a coefficient is a whole number, and ${SPECIES_LEADING_DIGIT.toLowerCase()}`)
         }
-        const same = participants.find(p => p.species === match[2] && p.location === match[3])
+        if (count < 1) {
+            throw new Error(`'${term}': a stoichiometric coefficient is a whole number of at least 1`)
+        }
+        const same = participants.find(p => p.species === species && p.location === match[3])
         if (same) same.count += count
-        else participants.push({ species: match[2] ?? '', location: match[3], count })
+        else participants.push({ species, location: match[3], count })
     }
     return participants
 }
 
-/** `2 ADP[m] + Pi[m] ⇌ ATP[m] + H2O[m]` as its two sides (any of ⇌ ⇄ ↔ → <=> <-> -> = for the arrow). */
+/**
+ * `2 ADP[m] + Pi[m] ⇌ ATP[m] + H2O[m]` as its two sides (any of ⇌ ⇄ ↔ → <=> <-> => -> = for the arrow), with or
+ * without spaces; a number before a species is its coefficient (`2ADP` is 2 × ADP).
+ */
 export function parseEquation(text: string): ParsedEquation {
     const sides = text.replace(/\(moves [^)]*\)\s*$/, '').split(ARROW_PATTERN)
     if (sides.length !== 2) {
-        throw new Error('An equation has one arrow (⇌, <=> or ->) with spaces around it')
+        throw new Error(sides.length < 2 ? 'An equation needs one arrow (⇌, <=> or ->) between its two sides'
+                                         : 'An equation has only one arrow (⇌, <=> or ->)')
     }
     const equation = { substrates: parseSide(sides[0] ?? ''), products: parseSide(sides[1] ?? '') }
     if (equation.substrates.length + equation.products.length === 0) {

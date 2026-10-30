@@ -234,6 +234,10 @@ export class DomainGraph {
     }
 
     deleteEdge(edgeNodeUris: [string, string]) {
+        // a bond to something that isn't a bond element, such as a group's interface port, was never added
+        if (!this.hasEdge(edgeNodeUris)) {
+            return
+        }
         this.#graph.dropEdge(edgeNodeUris[0], edgeNodeUris[1])
         const domainNode0 = this.#graph.getNodeAttribute(edgeNodeUris[0], 'domain')
         const domainNode1 = this.#graph.getNodeAttribute(edgeNodeUris[1], 'domain')

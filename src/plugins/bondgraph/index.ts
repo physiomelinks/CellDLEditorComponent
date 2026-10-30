@@ -88,7 +88,10 @@ import {
 import {
     type Annotation, ANNOTATION_PREDICATES, annotationText, planAnnotationChanges, readAnnotations, type Triple
 } from './annotations'
-import { type BondInfo, equationLatex, equationText, type NodeInfo, type SpeciesNode, type StepEquation, stepEquation } from './equations'
+import {
+    type BondInfo, equationLatex, equationText, type NodeInfo, speciesNameError, type SpeciesNode, type StepEquation,
+    startsWithDigit, stepEquation
+} from './equations'
 import { elementTemplatesQuery, styleOverrides, templateStyle } from './laws'
 import { type MathNode, mathmlLatex, type SignedTerm, whereLatex, whereText } from './lawtext'
 import { ELEMENT_CLASSES, type NameOverrides, type NamingElement, type NamingRule, previewNames } from './naming'
@@ -919,6 +922,20 @@ export class BondgraphPlugin implements PluginInterface {
         }
     }
 
+    /** The diagram's elements' species names that start with a number, which an equation reads as a coefficient. */
+    leadingDigitSpecies(): string[] {
+        const store = this.#documentStore
+        if (!store) return []
+        const prefix = `${this.#currentDocumentUri}#`
+        const names = new Set<string>()
+        for (const r of store.query(`${SPARQL_PREFIXES}
+            SELECT ?node ?species WHERE { ?node bgf:hasSpecies ?species }`) as Map<string, $rdf.Term>[]) {
+            const species = r.get('species')!.value
+            if (r.get('node')!.value.startsWith(prefix) && startsWithDigit(species)) names.add(species)
+        }
+        return [...names].sort()
+    }
+
     /** The diagram's species stores and sources. */
     speciesNodes(): SpeciesNode[] {
         return this.#diagramGraph().species
@@ -1060,7 +1077,7 @@ export class BondgraphPlugin implements PluginInterface {
 
     /**
      * The diagram's regions (./regions.ts): each store's and source's location, each step's species' locations
-     * (several for a step between compartments), and the bonds between nodes.
+     * (several for a step between compartments, its own location while it has none), and the bonds between nodes.
      */
     regionLayout(): { regions: Map<string, string[]>, bonds: { a: string, b: string, id?: string, count: number }[] } {
         const { bonds, nodes, steps, species } = this.#diagramGraph()
@@ -1069,7 +1086,10 @@ export class BondgraphPlugin implements PluginInterface {
             if (n.location) regions.set(n.id, [n.location])
         }
         for (const [node, isResistance] of steps) {
-            regions.set(node, stepEquation(node, isResistance, bonds, nodes).regions)
+            // a step not yet bonded to located species is in its own location, if it has one
+            const joined = stepEquation(node, isResistance, bonds, nodes).regions
+            const own = nodes.get(node)?.location
+            regions.set(node, joined.length ? joined : own ? [own] : [])
         }
         return { regions, bonds: bonds.map(b => ({ a: b.source, b: b.target, id: b.id, count: b.count })) }
     }
@@ -1146,6 +1166,8 @@ export class BondgraphPlugin implements PluginInterface {
                                           celldlObject)
         }
         if (species !== undefined) {
+            const error = speciesNameError(species)
+            if (error) throw new Error(error)
             updateItemProperty(BGF.uri('hasSpecies').value, { oldValue: pluginData.species ?? '', newValue: species },
                                celldlObject)
             pluginData.species = species
@@ -2213,7 +2235,8 @@ export class BondgraphPlugin implements PluginInterface {
                     if (itemId === BG_ELEMENT_TYPE_ITEM) {
                         await this.#updateElementType(item, value, celldlObject)
                     } else if (itemId === BG_ELEMENT_SPECIES_ITEM) {
-                        errorMsg = await this.#updateSvgElement(celldlObject, value.newValue, pluginData.location)
+                        errorMsg = speciesNameError(String(value.newValue ?? ''))
+                                || await this.#updateSvgElement(celldlObject, value.newValue, pluginData.location)
                         if (errorMsg === '') {
                             updateItemProperty(item.property, value, celldlObject)
                             pluginData.species = value.newValue

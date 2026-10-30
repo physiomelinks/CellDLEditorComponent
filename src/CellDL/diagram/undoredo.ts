@@ -680,6 +680,11 @@ class UndoRedo {
         return this.#activeUndoState
     }
 
+    /** The step that Undo would undo next, if any */
+    get lastStep(): UndoState|undefined {
+        return this.#undoStack.at(-1)
+    }
+
     /** Listens to the undo stack, until the returned function is called */
     listen(listener: UndoListener): () => void {
         this.#listeners.add(listener)

@@ -19,10 +19,15 @@ limitations under the License.
 ******************************************************************************/
 /** biome-ignore-all lint/style/noNonNullAssertion: <indices are within the palette and the grid> */
 
-// A bond graph's regions drawn behind it, and reorganising its layout around them (../../plugins/bondgraph/regions.ts).
-// The regions are a background in the editor's frame, redrawn whenever the diagram changes and never saved.
+// Location shading: a bond graph's locations (`bgf:hasLocation`) shaded behind it as regions, and reorganising its
+// layout around them (../../plugins/bondgraph/regions.ts). The shading is drawn over compartment and region boxes and
+// under the diagram's other elements, redrawn whenever the diagram changes and never saved. It is on by default; a host
+// turns it off with the `chrome.locationShading` option (`setLocationShading()`), and then nothing is drawn or worked out.
+
+import * as vue from 'vue'
 
 import type { CellDLObject } from '#editor/celldlObjects'
+import { type UndoState, undoRedo } from '#editor/diagram/undoredo'
 
 import { componentLibraryPlugin } from '#root/plugins'
 import type { BondgraphPlugin } from '#root/plugins/bondgraph'
@@ -33,9 +38,10 @@ import {
 import { type LayoutOptions, presetOptions, reorganiseLayout } from '#root/plugins/bondgraph/layout'
 import { SVG_URI } from '#root/utils/svgUtils'
 
+
 import { CellDLEditor, notifyChanges } from '.'
+import { boxContents, fitBoxes } from './boxfit'
 import { drawBondCounts as drawDiagramBondCounts } from './bondcounts'
-import { EDITOR_BACKGROUND_ID } from './editorframe'
 
 //==============================================================================
 
@@ -81,18 +87,19 @@ export function diagramLayout(): { nodes: LayoutNode[], bonds: LayoutBond[], obj
 
 //==============================================================================
 
+// In the diagram's layer, over its compartment and region boxes and under everything else, so a box's fill doesn't
+// hide it; editor-only, so never saved, and it takes no clicks, so the boxes under it are still selected by them
 function regionLayer(): SVGGElement|null {
     const diagram = CellDLEditor.instance?.celldlDiagram
-    const background = diagram?.svgDiagram?.getElementById(EDITOR_BACKGROUND_ID) as SVGGElement|null
-    if (!background) return null
-    let layer = background.querySelector<SVGGElement>(`#${REGION_LAYER_ID}`)
+    if (!diagram?.svgDiagram) return null
+    let layer = diagram.svgDiagram.getElementById(REGION_LAYER_ID) as SVGGElement|null
     if (!layer) {
         layer = document.createElementNS(SVG_URI, 'g') as SVGGElement
         layer.id = REGION_LAYER_ID
         layer.setAttribute('pointer-events', 'none')
-        background.prepend(layer)
     }
-    return layer
+    diagram.addOverBoxes(layer)
+    return layer.parentNode ? layer : null
 }
 
 export interface RegionSummary {
@@ -101,18 +108,42 @@ export interface RegionSummary {
     rectangular?: boolean                   // drawn as rectangles
 }
 
-let showing = true
+let shading = true
 
-/** Draw (or, with `show` false, remove) the regions behind the diagram; returns what was drawn. */
-export function drawRegions(show: boolean = showing): RegionSummary {
-    showing = show
-    const layer = regionLayer()
+/** Whether location shading is on, for panels that show its colours */
+export const locationShadingState = vue.reactive({ on: true })
+
+/** Turn location shading on or off (the `chrome.locationShading` option), redrawing or removing it. */
+export function setLocationShading(on: boolean) {
+    if (on === shading) return
+    shading = on
+    locationShadingState.on = on
+    if (on) {
+        scheduleRegions()
+    } else {
+        cancelScheduled()
+        CellDLEditor.instance?.celldlDiagram?.svgDiagram?.getElementById(REGION_LAYER_ID)?.remove()
+    }
+}
+
+/** Whether location shading is on. */
+export function locationShadingEnabled(): boolean {
+    return shading
+}
+
+/** Draw the locations' shading behind the diagram (or remove it when location shading is off); returns what was drawn. */
+export function drawRegions(): RegionSummary {
     const summary: RegionSummary = { regions: [], subspaces: new Map() }
+    if (!shading) {
+        CellDLEditor.instance?.celldlDiagram?.svgDiagram?.getElementById(REGION_LAYER_ID)?.remove()
+        return summary
+    }
+    const layer = regionLayer()
     if (!layer) return summary
     layer.replaceChildren()
     const { nodes, bonds } = diagramLayout()
     const regions = sortedLabels(nodes)
-    if (!show || regions.length === 0) return summary
+    if (regions.length === 0) return summary
     const { sigma, bondLength } = complexityOptions(nodes, bonds)
     const label = (text: string, x: number, y: number, colour: string, anchor: string) => {
         const t = document.createElementNS(SVG_URI, 'text')
@@ -197,35 +228,66 @@ export function drawBondCounts(): number {
     return diagram ? drawDiagramBondCounts(diagram) : 0
 }
 
-let scheduled: ReturnType<typeof setTimeout>|undefined
+let scheduled: (() => void)|undefined     // cancels the scheduled redraw
+let lastDrawCost = 0            // ms the last redraw took
 
-/** Redraw the regions and bond counts shortly: after a diagram opens and whenever it changes. */
-export function scheduleRegions(delay: number = 150) {
-    if (scheduled) clearTimeout(scheduled)
-    scheduled = setTimeout(() => { scheduled = undefined; drawRegions(); drawBondCounts() }, delay)
+// A redraw within a frame's budget is in the next frame; a slower one (a large diagram's free-form regions) waits
+// four times as long as it took, so redrawing takes at most a fifth of the time while a change is dragged
+const FRAME_BUDGET = 8
+
+function cancelScheduled() {
+    scheduled?.()
+    scheduled = undefined
 }
 
-document.addEventListener('file-edited', () => scheduleRegions())
-document.addEventListener('diagram-opened', () => scheduleRegions(50))
+/**
+ * Redraw the location shading after a diagram opens and after every change to it (an element placed, moved,
+ * deleted or relocated, a bond drawn, an undo or redo), in the next frame so it follows a drag; a burst of changes
+ * redraws once, with what the diagram is then. Nothing when it is off.
+ */
+export function scheduleRegions() {
+    if (!shading || scheduled !== undefined) return
+    const draw = () => {
+        scheduled = undefined
+        const start = performance.now()
+        drawRegions()
+        lastDrawCost = performance.now() - start
+    }
+    if (lastDrawCost <= FRAME_BUDGET && typeof requestAnimationFrame === 'function') {
+        const frame = requestAnimationFrame(draw)
+        scheduled = () => cancelAnimationFrame(frame)
+    } else {
+        const timer = setTimeout(draw, Math.max(16, 4 * lastDrawCost))
+        scheduled = () => clearTimeout(timer)
+    }
+}
+
+// Not where there is no document, as the library's entry imports this module, and hosts import that in Node too
+if (typeof document !== 'undefined') {
+    document.addEventListener('file-edited', () => scheduleRegions())
+    document.addEventListener('diagram-opened', () => scheduleRegions())
+}
 
 //==============================================================================
 
-let lastPositions: Map<string, Point2>|undefined
+// The undo step of the last reorganise, while it is the editor's last step
+let reorganiseStep: UndoState|undefined
 
-// exactly (an undo), or snapped to the editor's grid as a drag is
-function moveTo(objects: Map<string, CellDLObject>, positions: Map<string, Point2>, exactly: boolean = false) {
+// Move each component to its new place (rounded, then snapped to the grid as a drag is), each move kept for undo
+function moveTo(objects: Map<string, CellDLObject>, positions: Map<string, Point2>) {
     for (const [id, to] of positions) {
         const object = objects.get(id)
         const svg = object?.celldlSvgElement
         if (!object || !svg) continue
         const from = svg.centroid
         if (Math.hypot(to.x - from.x, to.y - from.y) < 0.5) continue
+        const target = { x: Math.round(to.x), y: Math.round(to.y) }
+        const undoState = undoRedo.setMoveUndoState(object, from)
         object.initialiseMove(svg.svgElement)
-        object.reposition(from, exactly ? to : { x: Math.round(to.x), y: Math.round(to.y) },
-                          exactly ? { snapGrid: false, noAlign: true } : {})
+        object.reposition(from, target)
         object.finaliseMove()
+        undoState.endMove(target)
     }
-    notifyChanges()
 }
 
 /** The complexity of the diagram's current layout. */
@@ -237,13 +299,15 @@ export function currentComplexity(): Complexity|undefined {
 
 /**
  * Move the diagram's nodes to a layout of lower complexity (../../plugins/bondgraph/layout.ts), by one of its
- * presets, adjusted by `options`. Returns its measures before and after (after equals before when no simpler
- * layout was found, and nothing moves) and the cycles drawn as circles. undoReorganise() puts the nodes back.
+ * presets, adjusted by `options`. Compartment and region boxes go with what they contain (./boxfit.ts). Returns its
+ * measures before and after (after equals before when no simpler layout was found, and nothing moves) and the cycles
+ * drawn as circles. The reorganise is one undo step; undoReorganise() undoes it while it is the last.
  */
 export async function reorganiseDiagram(onProgress?: (done: number, of: number) => void,
                                         options: Partial<LayoutOptions> = {}, preset: string = 'balanced') {
     const { nodes, bonds, objects } = diagramLayout()
-    if (nodes.length === 0) return
+    const diagram = CellDLEditor.instance?.celldlDiagram
+    if (nodes.length === 0 || !diagram) return
     const chosen = presetOptions(preset)
     const result = await reorganiseLayout(nodes, bonds,
         { ...chosen, ...options, weights: { ...chosen.weights, ...options.weights } },
@@ -251,27 +315,32 @@ export async function reorganiseDiagram(onProgress?: (done: number, of: number) 
             onProgress?.(done, of)
             await new Promise(resolve => setTimeout(resolve, 0))      // keep the editor responsive
         })
-    if (result.improved) {
-        lastPositions = new Map(nodes.map(n => [n.id, { x: n.x, y: n.y }]))
+    if (result.improved && CellDLEditor.instance?.celldlDiagram === diagram) {
+        const boxes = boxContents(diagram)
+        undoRedo.beginGroup()
         moveTo(objects, result.positions)
+        fitBoxes(boxes)
+        if (undoRedo.endGroup()) {
+            reorganiseStep = undoRedo.lastStep
+            CellDLEditor.instance?.setDirty()
+            notifyChanges()
+        }
     }
     drawRegions()
-    drawBondCounts()
     return { before: result.before.complexity, after: result.after.complexity, measures: result,
              rings: result.cycles.length }
 }
 
+/** Whether the last reorganise is the editor's last undo step. */
 export function canUndoReorganise(): boolean {
-    return lastPositions !== undefined
+    return reorganiseStep !== undefined && reorganiseStep === undoRedo.lastStep
 }
 
-/** Put the nodes back where they were before the last reorganise. */
+/** Undo the last reorganise, as the editor's Undo would, while it is the last undo step. */
 export function undoReorganise(): boolean {
-    if (!lastPositions) return false
-    moveTo(diagramLayout().objects, lastPositions, true)
-    lastPositions = undefined
-    drawRegions()
-    drawBondCounts()
+    if (!canUndoReorganise()) return false
+    reorganiseStep = undefined
+    CellDLEditor.instance?.undo()
     return true
 }
 

@@ -25,7 +25,7 @@ import { useTippy } from "vue-tippy"
 
 import '#root/assets/svgContent.css'
 
-import type { CellDLCompartment, CellDLObject } from '#editor/celldlObjects'
+import type { CellDLCompartment, CellDLConnection, CellDLObject } from '#editor/celldlObjects'
 import { ConnectionStyle } from '#editor/connections'
 import { PathMaker, type PathNode } from '#editor/connections/pathmaker'
 import type { TemplateEventDetails } from '#editor/components'
@@ -38,26 +38,30 @@ import type { SvgConnection } from '#editor/SVGElements/svgconnection'
 import { round } from '#editor/utils'
 
 import { isMacOs } from '#root/utils/common'
-import { type Annotations, PANEL_ID, type SvgViewerOptions, type ViewerEvent, type ViewInfo } from '#root/utils/editor-types'
+import { type ElementInfoById, PANEL_ID, type SvgViewerOptions, type ViewerEvent, type ViewInfo } from '#root/utils/editor-types'
 import { type Point, type PointLike, PointMath } from '#root/utils/points'
 import { imagesLoaded } from '#root/utils/svgUtils'
 import type { Styling } from '#root/utils/styling'
 import type { StringProperties } from '#root/utils/types'
 import { componentLibraryPlugin } from '#root/plugins'
-import { setElementField } from '#root/plugins/bondgraph/elements'
+import { leadingDigitSpeciesWarning, setElementField } from '#root/plugins/bondgraph/elements'
 import { paletteEntry, placeEntry } from '#root/plugins/bondgraph/palette'
 import { DRAWING_TOOLS, type SpatialKind, spatialEntry } from '#root/plugins/drawing/spatial'
 
 //==============================================================================
 
-import { type ArrangeBounds, type ArrangeOp, arrangeTargets, bondsWithin, minimumForArrange } from './arrange'
+import {
+    type ArrangeBounds, type ArrangeOp, arrangeTargets, bondsLeaving, bondsWithin, centreLine, minimumForArrange,
+    SQUARE_UP_TOLERANCE
+} from './arrange'
 import { drawBondCounts } from './bondcounts'
 import { BondDrag } from './bonddrag'
 import { CompartmentHandles, compartmentMoveGroup, defaultBounds, placeSpatial } from './compartments'
 import { EditorFrame } from './editorframe'
+import { groupingState } from './grouping'
 import { CompartmentTracker } from './locations'
 import { DEFAULT_VIEW_STATE, editGuides, EDITOR_GRID_CLASS } from './editguides'
-import PanZoom, { ZOOM_STEP } from './panzoom'
+import PanZoom, { DEFAULT_WHEEL_MODE, type WheelMode, wheelModeOrDefault, ZOOM_STEP } from './panzoom'
 import { BoxMaker } from './boxmaker'
 import { drawSideLabels } from './sidelabels'
 import { type TooltipContent, type TooltipDisplay, Tooltips } from './tooltips'
@@ -185,8 +189,14 @@ export enum CONTEXT_MENU {
     EDIT_GROUP = 'menu-edit-group',
     INFO = 'menu-info',
     GROUP_OBJECTS = 'menu-group',
+    STRAIGHTEN = 'menu-straighten',
     UNGROUP_OBJECTS = 'menu-ungroup'
 }
+
+/** The context menu's grouping items, never enabled when grouping is off (`chrome.grouping`) */
+const GROUPING_MENU_ITEMS: ReadonlySet<CONTEXT_MENU> = new Set([
+    CONTEXT_MENU.GROUP_OBJECTS, CONTEXT_MENU.EDIT_GROUP, CONTEXT_MENU.UNGROUP_OBJECTS
+])
 
 //==============================================================================
 
@@ -255,6 +265,7 @@ export class CellDLEditor {
 
     #panning: boolean = false
     #panzoom: PanZoom | null = null
+    #wheelMode: WheelMode = DEFAULT_WHEEL_MODE
     protected pointerMoved: boolean = false
     protected moving: boolean = false
     protected moved: boolean = false
@@ -334,8 +345,8 @@ export class CellDLEditor {
 
     #tooltips = new Tooltips()
 
-    // Viewer compatible annotations and events
-    #annotations: Annotations = {}
+    // The host's information about elements, and viewer events
+    #elementInfo: ElementInfoById = {}
     #tooltipField: string | undefined = undefined
     #viewerEventHandler: ViewerEventHandler | null = null
     #messageHandler: EditorMessageHandler | null = null
@@ -409,7 +420,8 @@ export class CellDLEditor {
         // Handle click events on control points
         document.addEventListener('select-object', this.#objectClickEvent.bind(this))
 
-        // An edit that moves elements into another compartment gives them its location, as part of its undo step
+        // An edit that moves elements into another compartment gives them its location, as part of its undo step,
+        // when compartments give locations (../editor/locations.ts)
         undoRedo.listen({
             stepAdded: (undoState) => this.#followCompartments(undoState),
             stepRestored: () => this.#compartments.note(this.#celldlDiagram)
@@ -425,6 +437,7 @@ export class CellDLEditor {
         this.#panzoom = new PanZoom(this.#container, (scale: number) => {
             document.dispatchEvent(new CustomEvent(VIEW_CHANGED_EVENT, { detail: { scale } }))
         })
+        this.#panzoom.wheelMode = this.#wheelMode
         this.#bondDrag.mount(this.#container)
 
         // Set up event handlers
@@ -481,6 +494,7 @@ export class CellDLEditor {
                 this.setSelectedObject(clickedObject)
             }
             this.enableContextMenuItem(CONTEXT_MENU.DELETE, this.selectionSet.size > 0)
+            this.enableContextMenuItem(CONTEXT_MENU.STRAIGHTEN, this.canStraighten())
             this.#contextMenuPoint = {
                 client: { x: event.clientX, y: event.clientY },
                 svg: this.#domToSvgCoords(event)
@@ -505,10 +519,12 @@ export class CellDLEditor {
                 }
             } else if (targetId === CONTEXT_MENU.DELETE) {
                 this.#deleteSelectedObjects()
+            } else if (targetId === CONTEXT_MENU.STRAIGHTEN) {
+                this.straightenSelection()
             } else if (targetId === CONTEXT_MENU.INFO) {
 // WIP               this.#showSelectedObjectInfo()
             } else if (targetId === CONTEXT_MENU.GROUP_OBJECTS) {
-                if (this.#boxMaker) {
+                if (this.#boxMaker && groupingState.enabled) {
                     this.#boxMaker.groupComponents()
                     this.#closeBoxMaker()
                 }
@@ -559,8 +575,9 @@ export class CellDLEditor {
         }
     }
 
-    setAnnotations(annotations: Annotations | undefined, options: SvgViewerOptions | undefined) {
-        this.#annotations = annotations || {}
+    /** The host's information about elements, and which of its fields is an element's tooltip */
+    setElementInfo(elementInfo: ElementInfoById | undefined, options: SvgViewerOptions | undefined) {
+        this.#elementInfo = elementInfo || {}
         this.#tooltipField = options?.tooltip
     }
 
@@ -591,8 +608,8 @@ export class CellDLEditor {
             const event: ViewerEvent = { type }
             if (object) {
                 event.component = { id: object.id }
-                if (Object.hasOwn(this.#annotations, object.id)) {
-                    event.component.annotation = this.#annotations[object.id]
+                if (Object.hasOwn(this.#elementInfo, object.id)) {
+                    event.component.info = this.#elementInfo[object.id]
                 }
             }
             this.#viewerEventHandler(event)
@@ -686,6 +703,12 @@ export class CellDLEditor {
         this.#events.dispatchEvent(new CustomEvent('diagram-opened', { detail: { diagram: celldlDiagram } }))
         this.#scheduleBondCounts()
         drawSideLabels(celldlDiagram)
+
+        // Species named before a leading number became a coefficient (3PG): open the diagram, but say so
+        const warning = leadingDigitSpeciesWarning()
+        if (warning) {
+            this.showAlert(warning, 'warn')
+        }
     }
 
     #bondCountsTimer: ReturnType<typeof setTimeout> | undefined
@@ -818,7 +841,7 @@ export class CellDLEditor {
     }
 
     enableContextMenuItem(itemId: CONTEXT_MENU, enable: boolean = true) {
-        if (enable) {
+        if (enable && !(GROUPING_MENU_ITEMS.has(itemId) && !groupingState.enabled)) {
             this.#contextMenuActiveItems.add(itemId)
         } else {
             this.#contextMenuActiveItems.delete(itemId)
@@ -858,8 +881,7 @@ export class CellDLEditor {
                     const object = this.selectionSet.objects[0]!
                     if (panel.panelId === PANEL_ID.PROPERTIES_PANEL
                      || (panel.panelId === PANEL_ID.METADATA_PANEL && object.isCompartment)) {
-                        // Undoable, as the host's `element` command's edits are, and as a compartment's label is
-                        // the location of what's inside it
+                        // Undoable, as the host's `element` command's edits are, and a compartment's label edits are
                         await this.editProperties([object], async () => {
                             await panel.updateObjectProperties(object, detail.itemId, detail.value)
                         })
@@ -1076,6 +1098,18 @@ export class CellDLEditor {
         }
     }
 
+    /** What a plain wheel does over the diagram: zoom for a mouse and pan for a trackpad, or always one */
+    get wheelMode(): WheelMode {
+        return this.#wheelMode
+    }
+
+    set wheelMode(mode: WheelMode) {
+        this.#wheelMode = wheelModeOrDefault(mode)
+        if (this.#panzoom) {
+            this.#panzoom.wheelMode = this.#wheelMode
+        }
+    }
+
     /** How long the pointer stays on an element before its tooltip shows, in milliseconds */
     get tooltipDelay(): number {
         return this.#tooltips.delay
@@ -1105,27 +1139,27 @@ export class CellDLEditor {
         }
     }
 
-    /** The host's annotation tooltip for an object, or `''`. */
-    #annotationTooltipText(object: CellDLObject): string {
-        const annotation = Object.hasOwn(this.#annotations, object.id) ? this.#annotations[object.id] : undefined
-        if (this.#tooltipField === undefined || !annotation || !Object.hasOwn(annotation, this.#tooltipField)) {
+    /** The host's tooltip for an object (its `elementInfo`'s `options.tooltip` field), or `''`. */
+    #infoTooltipText(object: CellDLObject): string {
+        const info = Object.hasOwn(this.#elementInfo, object.id) ? this.#elementInfo[object.id] : undefined
+        if (this.#tooltipField === undefined || !info || !Object.hasOwn(info, this.#tooltipField)) {
             return ''
         }
-        return String(annotation[this.#tooltipField])
+        return String(info[this.#tooltipField])
     }
 
     /**
      * Shows an object's hover tooltips once the pointer has stayed on it: a
      * plugin's hover (e.g. an element's law, else a reaction's equation) or,
-     * when there's none, the host's annotation tooltip.
+     * when there's none, the host's element-info tooltip.
      */
     #hoverTooltipAfterDelay(object: CellDLObject) {
         this.#tooltips.hoverAfterDelay(object, () => {
             this.#showHover(object)
             if (this.#editorMode === EDITOR_MODE.Selecting) {
-                const text = this.#annotationTooltipText(object)
+                const text = this.#infoTooltipText(object)
                 if (text !== '') {
-                    this.#tooltips.show('annotation', text, 'info')
+                    this.#tooltips.show('info', text, 'info')
                 }
             }
         })
@@ -1133,8 +1167,8 @@ export class CellDLEditor {
 
     /**
      * Shows a plugin's hover for an object (e.g. an element's law), with the
-     * host's annotation tooltip above it, so that is still seen. Without a
-     * hover, any hover shown is hidden and the annotation tooltip is left.
+     * host's element-info tooltip above it, so that is still seen. Without a
+     * hover, any hover shown is hidden and the element-info tooltip is left.
      */
     #showHover(object: CellDLObject) {
         const hoverHtml = componentLibraryPlugin.hoverHtml(object)
@@ -1143,11 +1177,11 @@ export class CellDLEditor {
             this.#tooltips.hideKind('hover')
             return
         }
-        const annotation = (this.#editorMode === EDITOR_MODE.Selecting) ? this.#annotationTooltipText(object) : ''
-        if (annotation === '' && hoverHtml === '') {
+        const info = (this.#editorMode === EDITOR_MODE.Selecting) ? this.#infoTooltipText(object) : ''
+        if (info === '' && hoverHtml === '') {
             this.#tooltips.show('hover', hoverText)
         } else {
-            const note = annotation ? `<div class="tooltip-annotation">${escapeHtml(annotation)}</div>` : ''
+            const note = info ? `<div class="tooltip-element-info">${escapeHtml(info)}</div>` : ''
             const body = hoverHtml || `<div>${escapeHtml(hoverText)}</div>`
             this.#tooltips.show('hover', `${note}${body}`, '', true)
         }
@@ -2122,8 +2156,11 @@ export class CellDLEditor {
 
     /**
      * Aligns or distributes the selected components, as one undoable step.
-     * Their bonds follow them, and those between two of them are straightened.
-     * Nothing snaps to the grid.
+     * Aligning centres puts them exactly on one line. Nothing snaps to the grid.
+     *
+     * Bonds between two of them are straightened, and squared up when nearly
+     * horizontal or vertical; straight bonds with one end among them are redrawn
+     * between centres. Bonds with one end among them keep their bends.
      *
      * @returns Whether anything moved or was straightened.
      */
@@ -2137,22 +2174,27 @@ export class CellDLEditor {
             return false
         }
         const bounds: ArrangeBounds[] = objects.map(object => {
-            const b = object.celldlSvgElement!.svgBounds()
-            return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }
+            const svgElement = object.celldlSvgElement!
+            const b = svgElement.svgBounds()
+            const c = svgElement.centroid
+            return { left: b.left, top: b.top, right: b.right, bottom: b.bottom, centre: { x: c.x, y: c.y } }
         })
         const deltas = arrangeTargets(bounds, op)
+        const line = centreLine(bounds, op)
         const moving = objects.map((object, i) => ({ object, delta: deltas[i]! }))
                               .filter(({ delta }) => Math.abs(delta.dx) > 1e-6 || Math.abs(delta.dy) > 1e-6)
-        const straightening = bondsWithin(objects)
-                                .filter(connection => (<SvgConnection|null>connection.celldlSvgElement)?.hasControlPoints)
-        if (moving.length === 0 && straightening.length === 0) {
-            return false
-        }
-        const moveOptions = { noAlign: true }
+        const within = bondsWithin(objects)
+        const leaving = bondsLeaving(objects)
+                            .filter(connection => !(<SvgConnection|null>connection.celldlSvgElement)?.hasControlPoints)
         undoRedo.beginGroup()
+        const moveOptions = { noAlign: true }
         for (const { object, delta } of moving) {
             const centroid = object.celldlSvgElement!.centroid
-            const target = { x: centroid.x + delta.dx, y: centroid.y + delta.dy }
+            // Exactly on the line, not just within rounding of it
+            const target = {
+                x: (op === 'centre' && line !== null) ? line : centroid.x + delta.dx,
+                y: (op === 'middle' && line !== null) ? line : centroid.y + delta.dy
+            }
             const undoState = undoRedo.setMoveUndoState(object, centroid)
             undoState.moveOptions = moveOptions
             object.reposition(centroid, target, moveOptions)
@@ -2161,14 +2203,61 @@ export class CellDLEditor {
             undoState.endMove(target)
         }
         // Once every end is where it goes
-        if (straightening.length) {
-            const pathsUndoState = undoRedo.setPathsUndoState(straightening)
-            for (const connection of straightening) {
-                (<SvgConnection>connection.celldlSvgElement).straighten()
+        this.#straightenConnections([...within, ...leaving], connection => within.includes(connection) ? SQUARE_UP_TOLERANCE : 0)
+        const changed = undoRedo.endGroup()
+        if (changed) {
+            this.setDirty()
+            notifyChanges()
+        }
+        return changed
+    }
+
+    /** Straightens connections' paths as one undoable change, recording nothing when none changes */
+    #straightenConnections(connections: CellDLConnection[], square: (connection: CellDLConnection) => number) {
+        const straightening = connections.filter(connection => connection.celldlSvgElement)
+        if (straightening.length === 0 || this.#celldlDiagram === null) {
+            return
+        }
+        const pathsUndoState = undoRedo.setPathsUndoState(straightening)
+        for (const connection of straightening) {
+            if ((<SvgConnection>connection.celldlSvgElement).straighten(square(connection))) {
                 this.#celldlDiagram.objectMoved(connection)
             }
-            undoRedo.endPathsEdit(pathsUndoState)
         }
+        undoRedo.endPathsEdit(pathsUndoState)
+    }
+
+    /** The bent bonds that Straighten acts on: those selected, and those between selected components */
+    #bentSelectedConnections(): CellDLConnection[] {
+        const selected = this.selectionSet.objects
+        const connections = new Set(selected.filter(object => object.isConnection) as CellDLConnection[])
+        for (const connection of bondsWithin(selected.filter(object => !object.isConnection))) {
+            connections.add(connection)
+        }
+        return [...connections].filter(connection => (<SvgConnection|null>connection.celldlSvgElement)?.hasControlPoints)
+    }
+
+    /** Whether any selected bond, or any bond between selected components, has bends to remove */
+    canStraighten(): boolean {
+        return this.#celldlDiagram !== null && this.#bentSelectedConnections().length > 0
+    }
+
+    /**
+     * Removes the bends of the selected bonds and of the bonds between selected
+     * components, as one undoable step.
+     *
+     * @returns Whether any bond was straightened.
+     */
+    straightenSelection(): boolean {
+        if (this.#celldlDiagram === null || this.moving || this.#pathMaker !== null || this.#bondDrag.active) {
+            return false
+        }
+        const bent = this.#bentSelectedConnections()
+        if (bent.length === 0) {
+            return false
+        }
+        undoRedo.beginGroup()
+        this.#straightenConnections(bent, () => 0)
         const changed = undoRedo.endGroup()
         if (changed) {
             this.setDirty()

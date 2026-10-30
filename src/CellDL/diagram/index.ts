@@ -121,6 +121,11 @@ type AddObjectOptions = {
 }
 //==============================================================================
 
+/** Why a bond can't be added: one of its ends isn't in the diagram. */
+export const MISSING_BOND_END = 'A bond needs both its ends in the diagram, and one of them is no longer there'
+
+//==============================================================================
+
 export class CellDLDiagram {
     #svgDiagram!: SVGSVGElement
     #defsElement: SVGDefsElement|null|undefined
@@ -504,6 +509,20 @@ export class CellDLDiagram {
     }
 
     #trimSVGDiagram(svgDiagram: SVGSVGElement): Extent | null {
+        // Editor-only elements in a layer (location shading) aren't saved, so take them out while measuring
+        const editorOnly = Array.from(svgDiagram.querySelectorAll(`svg > g.${CELLDL_STYLE_CLASS.Layer} > .editor-specific`))
+                                .map(element => ({ element, parent: element.parentNode as ParentNode, next: element.nextSibling }))
+        for (const { element } of editorOnly) {
+            element.remove()
+        }
+        const extent = this.#diagramExtent(svgDiagram)
+        for (const { element, parent, next } of editorOnly.reverse()) {
+            parent.insertBefore(element, next)
+        }
+        return extent
+    }
+
+    #diagramExtent(svgDiagram: SVGSVGElement): Extent | null {
         const bounds = (<SVGGraphicsElement[]>(
             Array.from(svgDiagram.children).filter(
                 (child) => 'getBBox' in child && !child.classList.contains('editor-specific')
@@ -673,7 +692,17 @@ export class CellDLDiagram {
         return object as CellDLConnectedObject
     }
 
+    /**
+     * Adds a bond drawn as `svgElement`. Throws (adding nothing) when an end isn't in the diagram, as when it has
+     * been deleted, so no bond goes to nothing.
+     */
     addNewConnection(svgElement: SVGGraphicsElement, template: ObjectTemplate): CellDLConnection {
+        const metadata = template.metadataProperties
+        const ends = [metadata.getProperty(CELLDL.uri('hasSource')), metadata.getProperty(CELLDL.uri('hasTarget'))]
+        if (!ends.every(end => this.hasConnector(end))) {
+            svgElement.remove()
+            throw new Error(MISSING_BOND_END)
+        }
         const connection = this.#addNewObject(svgElement, template) as CellDLConnection
         // let the plugins know
         componentLibraryPlugin.addConnection(connection)
@@ -733,6 +762,28 @@ export class CellDLDiagram {
         svgElement.remove()
         const before = this.#compartmentPlace(box.width * box.height)
         layer.insertBefore(svgElement, before)
+    }
+
+    /**
+     * Puts an editor-only element (never saved) in the diagram's layer, in front of its compartment and region boxes
+     * and behind everything else, as location shading is drawn. Boxes made or resized afterwards go behind it.
+     */
+    addOverBoxes(element: SVGElement) {
+        const layer = this.#currentLayer
+        if (!layer) {
+            return
+        }
+        element.classList.add('editor-specific')
+        let before: Element|null = null
+        for (const child of layer.children) {
+            if (child !== element && !child.classList.contains(CELLDL_STYLE_CLASS.Compartment)) {
+                before = child
+                break
+            }
+        }
+        if (element.parentNode !== layer || element.nextElementSibling !== before) {
+            layer.insertBefore(element, before)
+        }
     }
 
     groupComponents(bounds: Bounds, objects: CellDLObject[]): CellDLComponent {
@@ -1063,6 +1114,11 @@ export class CellDLDiagram {
         return null
     }
 
+    /** Whether `node` is a connector in the diagram and drawn in it (not deleted, nor inside a deleted group). */
+    hasConnector(node: MetadataPropertyValue | null): boolean {
+        return !!this.getConnector(node)?.celldlSvgElement?.svgElement.isConnected
+    }
+
     #loadConnections() {
         this.#loadObject(CELLDL.uri('Connection'), CellDLConnection)
     }
@@ -1132,6 +1188,8 @@ export class CellDLDiagram {
         if (celldlObject.isComponent) {
             editGuides.removeGuide(<CellDLComponent>celldlObject)
         }
+        // A group's members (and their bonds) are drawn inside it, so go with it
+        const members = celldlObject.isComponent ? this.#groupMembers(celldlObject) : []
         celldlObject.celldlSvgElement?.remove() // Will remove SVG element from DOM
         this.#kb.removeStatementsForSubject(celldlObject.uri)
         this.#objects.delete(celldlObject.id)
@@ -1151,6 +1209,21 @@ export class CellDLDiagram {
             }
             componentLibraryPlugin.connectionDeleted(connection)
         }
+        // after the group, so undo puts the group back before its members go back inside it
+        for (const member of members) {
+            if (this.#objects.has(member.id)) {
+                this.#removeObject(member, undoState)
+            }
+        }
+    }
+
+    // The objects drawn inside a component's SVG element: a group's members, their bonds and its interface ports
+    #groupMembers(component: CellDLObject): CellDLObject[] {
+        const svgElement = component.celldlSvgElement?.svgElement
+        if (!svgElement) return []
+        return [...svgElement.querySelectorAll('[id]')]
+            .map(element => this.#objects.get(element.id))
+            .filter((object): object is CellDLObject => object !== undefined && object !== component)
     }
 }
 

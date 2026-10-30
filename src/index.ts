@@ -25,10 +25,10 @@ import CellDLEditor from '#root/components/EditorComponent'
 export { DEFAULT_VIEW_STATE } from '#editor/editor/editguides'
 
 export {
-    type Annotation,
-    type Annotations,
-    type AnnotationValue,
     type EditorState,
+    type ElementInfo,
+    type ElementInfoById,
+    type ElementInfoValue,
     EditorStatus,
     type FileStatus,
     type SvgViewerOptions,
@@ -49,6 +49,7 @@ export type {
     EditorExportCommand,
     EditorFileCommand,
     EditorPanelName,
+    EditorReorganiseCommand,
     EditorSetStateCommand,
     EditorToolName,
     EditorViewCommand,
@@ -59,6 +60,15 @@ export type {
 } from '#root/components/WrappedEditor.vue'
 
 export type { EditorMessage, EditorMessageLevel } from '#editor/editor'
+
+export {
+    DEFAULT_REORGANISE_MODE,
+    REORGANISE_MODES,
+    type ReorganiseChrome,
+    type ReorganiseMode,
+    type ReorganiseResult,
+    type ReorganiseState
+} from '#editor/editor/reorganise'
 
 export type { ValuesMode } from '#root/plugins/bondgraph/values'
 
@@ -71,6 +81,8 @@ export { CANVAS_PRESS_EVENT } from '#editor/editor'
 export { CANVAS_EMPTY_CLICK_EVENT } from '#editor/editor'
 
 export { ARROW_STYLES, type ArrowStyle, DEFAULT_ARROW_STYLE } from '#root/utils/arrows'
+
+export { DEFAULT_WHEEL_MODE, WHEEL_MODES, type WheelMode } from '#editor/editor/panzoom'
 
 export type {
     DiagramElement,
